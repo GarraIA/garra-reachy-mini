@@ -24,6 +24,8 @@ import asyncio
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from pathlib import Path
 
 import numpy as np
@@ -34,8 +36,9 @@ from . import armazenamento
 from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
                       RespostaCerebro)
 from .cerebro import sondar as cerebro_sondar
+from . import conversa
 from .config import (FALA_MAXIMA_S, FALA_MINIMA_S, FIM_DE_FALA_S,
-                     FRASES_ESPERA, SAUDACAO, Config)
+                     FRASES_ESPERA, FRASES_PROGRESSO, SAUDACAO, Config)
 from .eventos import FilaEventos
 from .robo import intencoes
 from .robo.acoes import ControladorRobo
@@ -119,6 +122,10 @@ class GarraReachyMini(ReachyMiniApp):
         self._acordar = threading.Event()
         self._falhas_voz = 0
         self._avisou_sem_cerebro = 0.0
+        # Turno de conversa corrente. Uma pergunta nova invalida o
+        # anterior: sem isso a resposta atrasada de A falaria depois de B.
+        self._turno: conversa.Turno | None = None
+        self._aleatorio = random.Random()
         # Uma fala por vez. O loop de voz e o botão "falar" do painel disputam o
         # mesmo alto-falante; sem esta trava sairiam duas vozes sobrepostas.
         self._lock_fala = threading.Lock()
@@ -320,6 +327,7 @@ class GarraReachyMini(ReachyMiniApp):
                 chat=self.chat,
                 servicos=self.servicos,
                 falar=self._falar_async,
+                calar=self._calar_agora,
                 dir_estatico=Path(__file__).resolve().parent / "static",
             ),
         )
@@ -334,8 +342,14 @@ class GarraReachyMini(ReachyMiniApp):
             raise RuntimeError("a voz ainda não está pronta")
         await asyncio.to_thread(self._falar_texto, texto, False)
 
-    # Substituído dentro de run() pela função real, que tem acesso ao TTS.
+    def _calar_agora(self, motivo: str = "painel") -> None:
+        """Corta a fala em curso. Chamado pelo botão de parada do painel."""
+        if self._calar is not None:
+            self._calar(motivo)
+
+    # Substituídos dentro de run() pelas funções reais, que têm acesso ao TTS.
     _falar_texto = None
+    _calar = None
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
         cfg = Config.carregar()
@@ -468,6 +482,22 @@ class GarraReachyMini(ReachyMiniApp):
         assert gestos is not None
         gestos.ouvindo()
 
+        # Único dono do alto-falante. Ver conversa.py: o lock dele cobre a
+        # transição de estado, nunca a duração do áudio.
+        coordenador = conversa.CoordenadorAudio(reachy_mini.media, sr_out, log)
+        # Consultar o modelo numa thread é o que permite responder direto
+        # quando dá tempo: o laço principal fica livre para decidir se o aviso
+        # falado ainda faz sentido, em vez de bloquear na chamada.
+        executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cerebro")
+
+        def calar(motivo: str = "barge-in") -> None:
+            """Corta o áudio agora. É o e-stop do alto-falante, sem limite de 1,2 s."""
+            alvo = self._turno
+            if alvo is not None and alvo.vivo:
+                coordenador.cancelar(alvo, motivo)
+
+        self._calar = calar
+
         def ler_mono() -> np.ndarray:
             pedaco = reachy_mini.media.get_audio_sample()
             if pedaco is None:
@@ -484,11 +514,14 @@ class GarraReachyMini(ReachyMiniApp):
                     break
                 time.sleep(0.02)
 
-        def falar(texto: str, bloqueante: bool = True) -> None:
+        def falar(texto: str, bloqueante: bool = True,
+                  turno: conversa.Turno | None = None) -> None:
             """Sintetiza por frase, toca no robô e espera o áudio terminar.
 
             `bloqueante=False` é o caminho do painel: se o robô já estiver
             falando, desiste em vez de sobrepor duas vozes no mesmo alto-falante.
+            `turno` amarra o áudio ao turno corrente — sem ele, uma resposta
+            atrasada de um turno já substituído ainda sairia pelo alto-falante.
             """
             if not self._lock_fala.acquire(blocking=bloqueante):
                 raise RuntimeError("o robô já está falando")
@@ -505,7 +538,14 @@ class GarraReachyMini(ReachyMiniApp):
                         continue
                     if onda.size == 0:
                         continue
-                    reachy_mini.media.push_audio_sample(onda)
+                    # Pelo coordenador, nunca direto: ele é o único dono do
+                    # alto-falante e o que garante que a resposta não sobreponha
+                    # um aviso ainda tocando.
+                    if turno is not None:
+                        if not coordenador.tocar_final(turno, [onda]):
+                            break   # outro turno assumiu; esta fala morreu aqui
+                    else:
+                        reachy_mini.media.push_audio_sample(onda)
                     duracao += onda.size / sr_out
                 restante = inicio + duracao - time.time() + 0.6
                 while restante > 0 and not stop_event.is_set():
@@ -577,19 +617,98 @@ class GarraReachyMini(ReachyMiniApp):
                     falar(AVISO_SEM_CEREBRO)
                 return
 
-            # Reação imediata enquanto o Garra pensa
-            if esperas:
-                reachy_mini.media.push_audio_sample(random.choice(esperas))
+            # ── o turno ────────────────────────────────────────────────────
+            # O modelo é consultado JÁ, numa thread. O aviso falado vira um
+            # evento agendado que só acontece se a espera passar do limite — e
+            # que é cancelado se a resposta chegar antes. Antes daqui a frase
+            # saía sempre, inclusive quando o modelo respondia em meio segundo.
+            politica = conversa.Politica.de(Config.carregar().conversa)
+            turno = conversa.Turno(
+                id=f"trn_{int(time.time() * 1000)}", correlacao=correlacao,
+                inicio=time.monotonic(), politica=politica)
+            turno_anterior = self._turno
+            if turno_anterior is not None and turno_anterior.vivo:
+                # Pergunta nova durante a anterior: a antiga não fala mais.
+                turno_anterior.substituido_por = turno.id
+                coordenador.cancelar(turno_anterior, "pergunta nova")
+                controlador.eventos.publicar(
+                    "voice.turn.cancelled", correlation_id=turno_anterior.correlacao,
+                    turn_id=turno_anterior.id, reason="superseded_by",
+                    superseded_by=turno.id)
+            self._turno = turno
+            coordenador.abrir(turno)
+            controlador.eventos.publicar(
+                "voice.turn.started", correlation_id=correlacao, turn_id=turno.id,
+                mode=politica.modo, ack_delay_ms=politica.ack_atraso_ms)
 
             t0 = time.time()
-            try:
-                resposta = cerebro.perguntar(texto + complemento)
-            except Exception:
-                # Nenhum turno malformado pode derrubar o loop principal (ficaria
-                # mudo até o daemon reiniciar o app).
-                log.exception("Falha inesperada ao consultar o cérebro")
-                resposta = RespostaCerebro(False, FALHA_GENERICA, "nenhum", "erro",
-                                           erro="excecao")
+            futuro = executor.submit(cerebro.perguntar, texto + complemento)
+
+            # Prazos ABSOLUTOS a partir do início do turno. Encadear as esperas
+            # daria ack+progresso, e um progresso de 10 s viraria 14 s.
+            prazo_ack = politica.prazo_ack(turno.inicio)
+            # Nunca antes do aviso: com um progresso configurado mais curto que
+            # o acknowledgement, as duas frases sairiam coladas.
+            prazo_prog = max(politica.prazo_progresso(turno.inicio), prazo_ack)
+            def esperar_cerebro(ate: float | None) -> RespostaCerebro | None:
+                """A resposta, ou `None` se o prazo venceu antes.
+
+                Erro do cérebro vira resposta de falha aqui dentro: deixá-lo
+                subir mataria o laço de voz e o robô ficaria mudo até o daemon
+                reiniciar o app.
+                """
+                try:
+                    if ate is None:
+                        return futuro.result()
+                    return futuro.result(timeout=max(0.0, ate - time.monotonic()))
+                except FuturesTimeout:
+                    return None
+                except Exception:
+                    log.exception("Falha inesperada ao consultar o cérebro")
+                    return RespostaCerebro(False, FALHA_GENERICA, "nenhum",
+                                           "erro", erro="excecao")
+
+            resposta = None
+            for prazo, tipo in ((prazo_ack, "ack"), (prazo_prog, "progresso")):
+                resposta = esperar_cerebro(prazo)
+                if resposta is not None:
+                    break
+                if not turno.vivo:
+                    break
+                # O aviso só sai se o prazo venceu de verdade — é esta linha
+                # que separa "o modelo demorou" de "toda pergunta ganha frase".
+                falas = esperas if tipo == "ack" else progressos
+                pode = tipo == "ack" or (
+                    politica.progresso_falado
+                    and turno.progressos < politica.max_progresso)
+                if falas and pode:
+                    onda = self._aleatorio.choice(falas)
+                    if coordenador.tocar_ack(turno, onda):
+                        if tipo == "progresso":
+                            turno.progressos += 1
+                        controlador.eventos.publicar(
+                            "voice.turn.acknowledgement",
+                            correlation_id=correlacao, turn_id=turno.id, kind=tipo,
+                            at_ms=int((time.monotonic() - turno.inicio) * 1000))
+            if resposta is None:
+                resposta = esperar_cerebro(None)
+
+            cerebro_ms = int((time.time() - t0) * 1000)
+            decisao = coordenador.resolver_ack(turno)
+            if decisao != "none":
+                log.debug("Turno %s: aviso %s.", turno.id, decisao)
+
+            if not turno.vivo:
+                # Substituído ou cancelado enquanto o modelo pensava: o texto é
+                # descartado. Ferramenta física já executada NÃO se desfaz — o
+                # que se evita aqui é só a fala fora de hora.
+                log.info("Resposta do turno %s descartada (%s).", turno.id,
+                         turno.substituido_por or "cancelado")
+                controlador.eventos.publicar(
+                    "voice.turn.cancelled", correlation_id=correlacao,
+                    turn_id=turno.id, reason="late_response", brain_ms=cerebro_ms)
+                return
+
             fala = limpar_para_voz(resposta.texto)
             log.info("🤖 GarraIA [%s%s] (%.1fs): %s", resposta.modo,
                      f"/{resposta.erro}" if resposta.erro else "",
@@ -599,12 +718,24 @@ class GarraReachyMini(ReachyMiniApp):
                 content=fala, source="garra", brain=resposta.modo,
             )
             if fala:
-                falar(fala)
+                falar(fala, turno=turno)
             else:
                 # A frase de espera já saiu pelo alto-falante: drena o eco, senão
                 # o próprio robô vira "fala do usuário" no próximo ciclo.
                 drenar_mic(0.4)
                 gestos.ouvindo()
+            controlador.eventos.publicar(
+                "voice.turn.completed", correlation_id=correlacao,
+                turn_id=turno.id, mode=politica.modo, brain_ms=cerebro_ms,
+                total_ms=int((time.monotonic() - turno.inicio) * 1000),
+                brain=resposta.modo,
+                ack={"decision": turno.ack_decisao,
+                     "duration_ms": round(turno.ack_duracao_ms or 0.0, 1),
+                     "remaining_ms": turno.metricas.get("ack_restante_ms"),
+                     "clear_failed": turno.corte_falhou,
+                     "progress_messages": turno.progressos})
+            if self._turno is turno:
+                self._turno = None
             # Só agora o histórico pode ser marcado como falado.
             cerebro.confirmar_falado(resposta.marca)
 
@@ -620,7 +751,18 @@ class GarraReachyMini(ReachyMiniApp):
                         esperas.append(onda)
                 except Exception:
                     pass
-            log.info("%d frases de espera prontas.", len(esperas))
+            progressos: list[np.ndarray] = []
+            for f in FRASES_PROGRESSO:
+                if stop_event.is_set():
+                    return
+                try:
+                    onda = voz.falar(f, sr_out)
+                    if onda.size:
+                        progressos.append(onda)
+                except Exception:
+                    pass
+            log.info("%d frases de espera e %d de progresso prontas.",
+                     len(esperas), len(progressos))
 
             # Calibra o ruído ambiente por ~1,2s (ou usa limiar fixo)
             if cfg.limiar is None:
@@ -718,6 +860,8 @@ class GarraReachyMini(ReachyMiniApp):
                     return
         finally:
             self._falar_texto = None
+            self._calar = None
+            executor.shutdown(wait=False, cancel_futures=True)
             self.servicos.marcar(
                 "voice", False, codigo="stopped",
                 detalhe="voice loop not running")
