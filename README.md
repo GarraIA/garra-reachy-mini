@@ -23,12 +23,11 @@ require services you provide; the panel tells you exactly which ones are missing
 and what to do about each. Nothing is sent anywhere until you configure a
 provider yourself.
 
-![The control panel, connected to a real robot](assets/screenshots/panel.png)
+![The control panel running on a Reachy Mini](assets/screenshots/panel.png)
 
-With no AI provider and no voice server configured, the app still runs — it
-just says so, and names what is missing:
-
-![Limited mode](assets/screenshots/limited-mode.png)
+That is a real screenshot of a fresh install with nothing configured: the robot,
+its 85 emotions, 19 dances and camera are all there, and the banner names the
+two optional pieces that are not, with what to do about each.
 
 ## Features
 
