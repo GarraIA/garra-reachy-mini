@@ -1,0 +1,71 @@
+:root {
+  color-scheme: dark light;
+  --fundo: #14161a;
+  --cartao: #1e2128;
+  --borda: #343945;
+  --texto: #e8e8ea;
+  --destaque: #e05946;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: var(--fundo);
+  color: var(--texto);
+}
+
+main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+
+h1 { font-size: 1.5rem; }
+
+.dica { color: #aab; font-size: 0.9rem; }
+
+fieldset {
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--cartao);
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+}
+
+legend { padding: 0 0.4rem; font-weight: 600; }
+
+label { display: block; margin: 0.6rem 0; font-size: 0.95rem; }
+
+input {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--fundo);
+  color: var(--texto);
+}
+
+small { color: #99a; }
+
+button {
+  padding: 0.55rem 1.4rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--destaque);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+#status { margin-left: 0.75rem; }
+
+details { margin-top: 1.5rem; }
+
+pre {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+}

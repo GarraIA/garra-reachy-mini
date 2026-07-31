@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GarraIA no Reachy — Configurações</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main>
+    <h1>🦾 GarraIA no Reachy</h1>
+    <p class="dica">
+      Precedência: variável de ambiente &gt; valor salvo aqui &gt; padrão.
+      Mudanças valem no <strong>próximo início do app</strong>.
+    </p>
+
+    <form id="formulario">
+      <fieldset>
+        <legend>Modo completo (gateway do Garra)</legend>
+        <label>URL do gateway
+          <input name="gateway_url" placeholder="http://127.0.0.1:3888" />
+          <small>No robô wireless, use o IP do computador que roda o <code>garra start</code>.</small>
+        </label>
+        <label>Agente nomeado
+          <input name="agent_id" placeholder="reachy_voice" />
+        </label>
+        <label>Modelo (opcional)
+          <input name="gateway_model" placeholder="vazio = padrão do Garra" />
+        </label>
+        <label>Chave do gateway (Bearer)
+          <input name="gateway_key" type="password" autocomplete="off"
+                 placeholder="deixe em branco para não mexer" />
+          <small>Só necessária se o gateway roda com <code>GARRAIA_LOCK_LEGACY</code>.
+            Não é exibida de volta; digite algo para trocar.</small>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Servidor de voz</legend>
+        <label>URL do servidor de voz
+          <input name="voz_url" placeholder="http://127.0.0.1:8123" />
+          <small>No robô wireless, use o IP do computador com GPU.</small>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Modo reserva (sem ferramentas)</legend>
+        <label>Provider
+          <input name="provider" placeholder="openrouter" />
+        </label>
+        <label>Modelo
+          <input name="model" placeholder="anthropic/claude-haiku-4.5" />
+        </label>
+        <label>Binário do garra (opcional)
+          <input name="garra_bin" placeholder="vazio = descoberta automática" />
+        </label>
+        <label>Turnos de memória reenviada
+          <input name="janela_turnos" type="number" min="0" max="30" placeholder="8" />
+        </label>
+      </fieldset>
+
+      <button type="submit">Salvar</button>
+      <span id="status" role="status"></span>
+    </form>
+
+    <details>
+      <summary>Configuração efetiva agora</summary>
+      <pre id="efetiva">carregando…</pre>
+    </details>
+  </main>
+  <script src="/static/main.js"></script>
+</body>
+</html>

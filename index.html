@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GarraIA no Reachy Mini</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <header class="hero">
+    <div class="icone">🦾</div>
+    <h1>GarraIA no Reachy Mini</h1>
+    <p class="lema">O robô vira o corpo do Garra: ouve, pensa e responde em voz — com memória e ferramentas de verdade.</p>
+  </header>
+
+  <main class="container">
+    <section class="cartao">
+      <h2>Como funciona</h2>
+      <ol class="passos">
+        <li><strong>Ouço</strong> — o microfone do robô capta sua fala e o Whisper transcreve em português.</li>
+        <li><strong>Penso</strong> — o gateway do Garra responde com sessões reais; tarefas longas são delegadas e o robô avisa quando terminam.</li>
+        <li><strong>Falo</strong> — o Chatterbox sintetiza a resposta em pt-BR e as antenas acompanham a conversa.</li>
+      </ol>
+    </section>
+
+    <section class="cartao aviso">
+      <h2>⚠️ Pré-requisitos</h2>
+      <p>Este app depende de infraestrutura pessoal do dono: um servidor de voz
+        local (Whisper + Chatterbox, GPU recomendada) e um Garra configurado
+        (<code>garra start</code>). Instalar apenas o Space no seu robô não
+        funciona sem isso — leia o README.</p>
+    </section>
+
+    <section class="cartao">
+      <h2>Modos de cérebro</h2>
+      <p><strong>Gateway</strong> (completo: memória, ferramentas, delegação) →
+        <strong>garra ask</strong> (chat básico) →
+        <strong>OpenRouter</strong> (chat básico) — a troca é automática e o
+        robô avisa em voz alta quando muda de modo.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      <a href="https://github.com/michelbr84/GarraRUST">Garra (GarraIA)</a> ·
+      <a href="https://huggingface.co/spaces/pollen-robotics/reachy-mini-landing-page#apps">Apps do Reachy Mini</a>
+    </p>
+  </footer>
+</body>
+
+</html>

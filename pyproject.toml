@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=62.3"] # 62.3 introduziu o glob recursivo "**" do package-data
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "garra_reachy_mini"
+version = "0.1.0"
+description = "GarraIA falando e se movendo pelo Reachy Mini: voz, painel de controle e ferramentas de corpo para o Garra"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "reachy-mini>=1.9,<1.10",
+    "numpy",
+    "requests",
+    "pyyaml",
+    "pydantic>=2", # rotas da página de configurações (main.py importa direto)
+    "httpx",       # cliente async da ponte de chat com o gateway (web/chat.py)
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+keywords = ["reachy-mini-app"]
+
+[project.entry-points."reachy_mini_apps"]
+garra_reachy_mini = "garra_reachy_mini.main:GarraReachyMini"
+
+[tool.setuptools]
+package-dir = { "" = "." }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+# `garra_reachy_mini.mcp` entra junto: é o servidor MCP que dá ao Garra as ferramentas de
+# corpo do robô. O gateway o sobe por `python -m garra_reachy_mini.mcp`.
+include = ["garra_reachy_mini*", "garra_reachy_mini.mcp*"]
+
+[tool.setuptools.package-data]
+garra_reachy_mini = ["**/*"] # Also include all non-.py files

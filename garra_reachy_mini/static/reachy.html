@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reachy Mini — Garra</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/reachy.css">
+</head>
+<body>
+
+<header>
+  <h1><span class="logo">◉</span> Reachy Mini</h1>
+  <div id="pills-topo">
+    <span class="pill" id="p-conexao"><span class="status-dot offline"></span> conectando…</span>
+    <span class="pill" id="p-modo">modo —</span>
+    <span class="pill" id="p-estado">ocioso</span>
+    <span class="pill" id="p-camera"><span class="status-dot offline"></span> câmera</span>
+    <span class="pill" id="p-eventos"><span class="status-dot offline"></span> eventos</span>
+  </div>
+  <button id="estop" class="perigo" title="Interrompe qualquer movimento agora (Esc)">■ PARAR</button>
+</header>
+
+<div id="faixa-estop">
+  <span>Parada de emergência ativa. O robô está travado onde parou — nenhum movimento novo será aceito.</span>
+  <button id="btn-liberar" class="primario">Liberar</button>
+  <button id="btn-neutro-apos">Liberar e centralizar</button>
+</div>
+
+<main>
+
+  <!-- ── status ──────────────────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Status do sistema <span class="conta" id="uptime"></span></h2>
+    <div class="status-lista" id="status-lista"></div>
+    <div class="linha" style="margin-top:12px">
+      <button data-acao="wake_up">Acordar</button>
+      <button data-acao="sleep">Dormir</button>
+      <button id="btn-neutro">Posição neutra</button>
+      <button id="btn-tracking">Rastrear rosto</button>
+    </div>
+  </section>
+
+  <!-- ── câmera ──────────────────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Câmera <span class="conta" id="camera-info"></span></h2>
+    <div class="moldura-camera" id="moldura-camera">
+      <img id="video" alt="Transmissão ao vivo da câmera do robô">
+      <div class="aviso-camera" id="aviso-camera">Transmissão parada.</div>
+    </div>
+    <div class="linha" style="margin-top:10px">
+      <button id="btn-stream" class="primario">Iniciar</button>
+      <button id="btn-atualizar">Atualizar</button>
+      <button id="btn-capturar">Capturar</button>
+      <button id="btn-fullscreen">Tela cheia</button>
+    </div>
+  </section>
+
+  <!-- ── controle manual ─────────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Controle manual</h2>
+    <div class="joystick" id="joystick" role="application"
+         aria-label="Direção da cabeça: arraste, ou use as setas do teclado" tabindex="0">
+      <div class="knob" id="knob"></div>
+    </div>
+    <div class="controle-slider">
+      <label>Intensidade <b id="v-intensidade">0,60</b></label>
+      <input type="range" id="intensidade" min="0.05" max="1" step="0.05" value="0.6">
+    </div>
+    <div class="controle-slider">
+      <label>Duração <b id="v-duracao">0,8 s</b></label>
+      <input type="range" id="duracao" min="0.2" max="3" step="0.1" value="0.8">
+    </div>
+    <div class="grade-botoes" style="margin-top:10px">
+      <button data-antenas="up">Antenas ↑</button>
+      <button data-antenas="down">Antenas ↓</button>
+      <button data-antenas="wiggle">Balançar</button>
+      <button data-antenas="neutral">Antenas —</button>
+    </div>
+  </section>
+
+  <!-- ── expressões ──────────────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Expressões <span class="conta" id="conta-expressoes"></span></h2>
+    <div class="grade-botoes" id="expressoes-principais"></div>
+    <div class="linha" style="margin-top:12px">
+      <select id="sel-emocao" style="flex:1"></select>
+      <button id="btn-emocao">Executar</button>
+    </div>
+  </section>
+
+  <!-- ── movimentos e danças ─────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Movimentos e danças <span class="conta" id="conta-dancas"></span></h2>
+    <div class="linha">
+      <button data-acao="dance" class="primario">Dançar (aleatória)</button>
+      <button data-acao="greet">Cumprimentar</button>
+      <button data-acao="nod">Que sim</button>
+      <button data-acao="shake_head">Que não</button>
+    </div>
+    <div class="linha" style="margin-top:10px">
+      <select id="sel-danca" style="flex:1"></select>
+      <button id="btn-danca">Executar</button>
+    </div>
+  </section>
+
+  <!-- ── comandos rápidos ────────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Comandos rápidos</h2>
+    <div class="grade-botoes" id="rapidos"></div>
+  </section>
+
+  <!-- ── chat ────────────────────────────────────────────────────────────── -->
+  <section class="card glass-panel largo">
+    <h2>Conversa com o Garra <span class="conta" id="chat-info"></span></h2>
+    <div class="chat-corpo" id="chat-corpo"></div>
+    <div class="chat-entrada">
+      <textarea id="chat-texto" rows="2" placeholder="Peça algo ao Garra — ele controla o robô. Enter envia."></textarea>
+      <button id="btn-enviar" class="primario">Enviar</button>
+    </div>
+    <div class="linha" style="margin-top:9px">
+      <button id="btn-falar" title="Falar as respostas pelo alto-falante do robô">Fala: desligada</button>
+      <button id="btn-limpar-chat">Limpar conversa</button>
+      <span class="pill" id="p-chat">—</span>
+    </div>
+  </section>
+
+  <!-- ── apps ────────────────────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Aplicativos do robô <span class="conta" id="conta-apps"></span></h2>
+    <div class="lista-apps" id="lista-apps"><div class="vazio">Carregando…</div></div>
+    <div class="linha" style="margin-top:10px">
+      <button id="btn-apps-atualizar">Atualizar</button>
+      <button id="btn-app-parar">Parar o app atual</button>
+      <button id="btn-app-reiniciar">Reiniciar</button>
+    </div>
+  </section>
+
+  <!-- ── logs ────────────────────────────────────────────────────────────── -->
+  <section class="card glass-panel">
+    <h2>Eventos e erros <span class="conta" id="conta-eventos"></span></h2>
+    <div class="logs" id="logs"></div>
+  </section>
+
+</main>
+
+<script src="/static/reachy.js"></script>
+</body>
+</html>

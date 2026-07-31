@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Secrets and local configuration — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.jks
+credentials*
+secrets*
+config.json
+*.token
+
+# Runtime data produced by the app
+capturas/
+captures/
+estado.json
+*.log
+*.db
+*.sqlite*
+
+# Media recorded or captured locally (assets/ screenshots are opt-in via -f)
+*.wav
+*.mp3
+*.ogg
+*.mp4
+*.webm
+
+# Local tooling
+bin/
+garra-config/
+node_modules/
+
+# OS noise
+.DS_Store
+Thumbs.db
+*~
+*.swp
