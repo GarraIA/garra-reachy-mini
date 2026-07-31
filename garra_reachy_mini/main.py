@@ -33,6 +33,7 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 from . import armazenamento
 from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
                       RespostaCerebro)
+from .cerebro import sondar as cerebro_sondar
 from .config import (FALA_MAXIMA_S, FALA_MINIMA_S, FIM_DE_FALA_S,
                      FRASES_ESPERA, SAUDACAO, Config)
 from .eventos import FilaEventos
@@ -232,6 +233,34 @@ class GarraReachyMini(ReachyMiniApp):
                  "The camera stream needs a few seconds after start-up.")
         return controlador
 
+    def _marcar_cerebro(self, cfg: Config, codigo: str, descricao: str,
+                        disponivel: bool) -> None:
+        """Publica `gateway` e `brain` — dois estados, duas causas diferentes."""
+        alcancou = codigo == "gateway"
+        self.servicos.marcar(
+            "gateway", alcancou,
+            codigo="ok" if alcancou else "unreachable",
+            detalhe=cfg.gateway_url,
+            dica="" if alcancou else
+                 "The Garra gateway did not answer. Open the Reachy page on the "
+                 "Garra console and use Configure or reconnect Reachy.",
+        )
+        self.servicos.marcar(
+            "brain", disponivel,
+            codigo=codigo if disponivel else "not_configured",
+            detalhe=descricao,
+            dica="" if disponivel else
+                 "Set up the Garra gateway, or pick an AI provider on the "
+                 "settings page. Until then the robot obeys the panel and the "
+                 "local voice shortcuts, but cannot hold a conversation.",
+        )
+
+    def _sondar_cerebro(self, cfg: Config) -> bool:
+        """Health check barato — sem construir Cerebro nem criar sessão."""
+        disponivel, codigo, descricao = cerebro_sondar(cfg)
+        self._marcar_cerebro(cfg, codigo, descricao, disponivel)
+        return disponivel
+
     def _avaliar_cerebro(self, cfg: Config) -> Cerebro:
         """Constrói o cérebro e publica o estado dele em `services`.
 
@@ -244,28 +273,7 @@ class GarraReachyMini(ReachyMiniApp):
         cerebro = Cerebro(cfg, self.logger)
         cerebro.iniciar()
         codigo, descricao = cerebro.descrever()
-        # Dois estados distintos, e a diferença importa para quem está
-        # diagnosticando: `gateway` é conseguir falar com o Garra; `brain` é ter
-        # com o que pensar. Dá para ter gateway sem cérebro (nenhum provider
-        # configurado) e cérebro sem gateway (chave de API local).
-        alcancou = codigo == "gateway"
-        self.servicos.marcar(
-            "gateway", alcancou,
-            codigo="ok" if alcancou else "unreachable",
-            detalhe=cfg.gateway_url,
-            dica="" if alcancou else
-                 "The Garra gateway did not answer. Open the Reachy page on the "
-                 "Garra console and use Configure or reconnect Reachy.",
-        )
-        self.servicos.marcar(
-            "brain", cerebro.disponivel,
-            codigo=codigo if cerebro.disponivel else "not_configured",
-            detalhe=descricao,
-            dica="" if cerebro.disponivel else
-                 "Set up the Garra gateway, or pick an AI provider on the "
-                 "settings page. Until then the robot obeys the panel and the "
-                 "local voice shortcuts, but cannot hold a conversation.",
-        )
+        self._marcar_cerebro(cfg, codigo, descricao, cerebro.disponivel)
         return cerebro
 
     def _anunciar(self, cfg: Config) -> None:
@@ -386,7 +394,7 @@ class GarraReachyMini(ReachyMiniApp):
             # voz o `_laco_voz` nunca roda, e o estado do gateway ficava
             # congelado para sempre num robô recém-instalado — que é justamente
             # quem mais precisa ver se o desktop já respondeu.
-            self._avaliar_cerebro(cfg)
+            self._sondar_cerebro(cfg)
             if self.chat is not None and self.chat.reconfigurar(
                     cfg.gateway_url, cfg.gateway_key, cfg.agent_id):
                 log.info("Chat do painel repontado para %s (agente %s).",
@@ -690,15 +698,14 @@ class GarraReachyMini(ReachyMiniApp):
                 if time.time() - ultima_conferida > RECONFERIR_CEREBRO_S and not em_fala:
                     ultima_conferida = time.time()
                     cfg = Config.carregar()
-                    novo_cerebro = self._avaliar_cerebro(cfg)
-                    if novo_cerebro.disponivel and not cerebro.disponivel:
-                        log.info("Cérebro voltou (%s).", novo_cerebro.descrever()[1])
-                        cerebro = novo_cerebro
+                    if self._sondar_cerebro(cfg) and not cerebro.disponivel:
+                        log.info("Cérebro voltou; reconstruindo.")
+                        cerebro = self._avaliar_cerebro(cfg)
                     # E a voz? Esperar o STT falhar três vezes para perceber que
                     # ela caiu custa três falas do usuário, cada uma até o
                     # timeout de 60 s. Uma sondagem barata enquanto ninguém fala
                     # devolve o app ao supervisor em segundos.
-                    if not voz.pronto():
+                    if not voz.pronto(timeout=2.0):
                         log.warning("Servidor de voz sumiu; voltando ao modo sem voz.")
                         return
 

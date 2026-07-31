@@ -30,14 +30,14 @@ class VozClient:
         # loopback ele não pede, então token vazio continua funcionando.
         self._cab = {"Authorization": f"Bearer {token}"} if token else {}
 
-    def saude(self) -> dict:
-        r = requests.get(f"{self.base}/saude", timeout=5)
+    def saude(self, timeout: float = 5.0) -> dict:
+        r = requests.get(f"{self.base}/saude", timeout=timeout)
         r.raise_for_status()
         return r.json()
 
-    def pronto(self) -> bool:
+    def pronto(self, timeout: float = 5.0) -> bool:
         try:
-            s = self.saude()
+            s = self.saude(timeout)
             return bool(s.get("stt")) and bool(s.get("tts"))
         except requests.RequestException:
             return False

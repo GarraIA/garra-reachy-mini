@@ -440,6 +440,30 @@ class OpenRouterBrain:
         return RespostaCerebro(True, resposta, "openrouter")
 
 
+def sondar(cfg: Config, timeout: float = 2.0) -> tuple[bool, str, str]:
+    """Estado do cérebro sem construir nada — `(disponível, código, descrição)`.
+
+    Existe porque `Cerebro(...)` + `iniciar()` fazem bem mais do que olhar: o
+    `conectar()` retoma ou CRIA uma sessão no gateway, gastando até 12 s de
+    chamadas bloqueantes. Isso é certo uma vez, ao entrar no loop de voz; usar
+    o mesmo caminho como health check periódico criava sessão a cada 20 s e
+    segurava o encerramento do app — o SIGINT chegava no meio de um `requests`
+    e o daemon acabava matando o processo no limite de 20 s.
+    """
+    ok = False
+    try:
+        ok = requests.get(f"{cfg.gateway_url.rstrip('/')}/ping", timeout=timeout).ok
+    except requests.RequestException:
+        pass
+    if ok:
+        return True, "gateway", f"Garra gateway ({cfg.gateway_url})"
+    if descobrir_binario(cfg):
+        return True, "garra_bin", "garra ask (local binary)"
+    if chave_real(os.environ.get("OPENROUTER_API_KEY")):
+        return True, "openrouter", f"OpenRouter ({cfg.model})"
+    return False, "none", "no brain configured"
+
+
 class Cerebro:
     """Orquestra os cérebros e os avisos únicos de queda/retorno do modo completo."""
 

@@ -523,3 +523,42 @@ def test_sinal_de_configuracao_e_consumido_uma_vez_so():
         assert "self._acordar.clear()" in trecho, (
             "sinal de configuração tratado sem ser consumido em "
             f"main.py, offset {m.start()}")
+
+
+def test_sonda_do_cerebro_nao_cria_sessao():
+    """O health check periódico não pode passar por `conectar()`.
+
+    `Cerebro.iniciar()` retoma ou CRIA sessão no gateway — até 12 s de chamadas
+    bloqueantes. Usado a cada 20 s, isso segurava o SIGINT e o daemon matava o
+    app no limite de 20 s (medido: 2 s antes, 17 s depois).
+    """
+    import ast
+    import inspect
+
+    from garra_reachy_mini import cerebro as mod
+
+    arvore = ast.parse(inspect.getsource(mod.sondar))
+    # Olha as CHAMADAS, não o texto: a docstring cita `conectar()` de propósito.
+    chamadas = {
+        n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", "")
+        for n in ast.walk(arvore) if isinstance(n, ast.Call)
+    }
+    assert "Cerebro" not in chamadas, "a sonda voltou a construir o cérebro"
+    assert "conectar" not in chamadas and "iniciar" not in chamadas
+    assert "get" in chamadas, "a sonda precisa fazer o /ping"
+
+
+def test_supervisor_usa_a_sonda_barata_e_nao_o_cerebro_inteiro():
+    import pathlib
+    import re
+
+    texto = (pathlib.Path(__file__).parent.parent
+             / "garra_reachy_mini" / "main.py").read_text(encoding="utf-8")
+    sup = texto[texto.index("def _supervisionar"):texto.index("def _laco_voz")]
+    assert "_sondar_cerebro" in sup
+    assert "_avaliar_cerebro" not in sup, (
+        "o supervisor voltou a construir Cerebro a cada rodada")
+    # E o laço de voz só reconstrói quando o cérebro REALMENTE volta.
+    laco = texto[texto.index("def _laco_voz"):]
+    periodico = laco[laco.index("RECONFERIR_CEREBRO_S"):]
+    assert "_sondar_cerebro" in periodico[:400]
