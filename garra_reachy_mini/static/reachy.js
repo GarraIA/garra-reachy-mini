@@ -453,11 +453,18 @@ function pintarMetricasConversa(turnos) {
 async function carregarConversa() {
   try {
     pintarConversa(await api('/api/robot/conversation'));
+    $('conversa-bloco').hidden = false;
     const ev = await api(
       '/api/robot/events?limite=60&tipos=voice.turn.completed');
     pintarMetricasConversa((ev.events || []).slice(-10));
     pill($('p-conversa'), true, t('conversa.salvo'));
   } catch (e) {
+    // Aqui a rota é local: 404/405 significa que ESTE app é antigo demais para
+    // servi-la. Some com o card em vez de mostrar controles que não gravam.
+    if (e.status === 404 || e.status === 405) {
+      $('conversa-bloco').hidden = true;
+      return;
+    }
     pill($('p-conversa'), false, e.message);
   }
 }

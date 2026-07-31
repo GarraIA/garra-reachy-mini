@@ -148,6 +148,45 @@ def _painel_de(corpo_ou_query: str | None):
     return painel.rstrip("/")
 
 
+def _falha(e: Exception, painel: str) -> JSONResponse:
+    """Traduz a exceção num código ESTÁVEL, que o painel possa ler.
+
+    O frontend não deve depender do número HTTP: `error.code` é o contrato.
+    Cada código pede uma reação diferente — repetir sozinho, oferecer
+    reconexão, ou parar de tentar — e colapsar todos em "indisponível" foi
+    exatamente o que fez o painel dizer "robô indisponível" para um robô que
+    estava conectado e respondendo.
+    """
+    if isinstance(e, reachy.RecursoNaoSuportado):
+        return JSONResponse(
+            {"ok": False, "reachable": True, "supported": False,
+             "robot_version": e.robot_version,
+             "robot": reachy.identidade(painel),
+             "error": {"code": "robot_feature_unsupported",
+                       "upstream_status": e.upstream_status}},
+            status_code=501)
+    status = getattr(getattr(e, "response", None), "status_code", None)
+    if status in (401, 403):
+        # Token errado não é robô offline: reconectar não resolve, e oferecer
+        # reconexão mandaria o usuário para o lado errado do problema.
+        return JSONResponse(
+            {"ok": False, "reachable": True, "supported": True,
+             "error": {"code": "robot_auth_failed", "upstream_status": status}},
+            status_code=502)
+    if status is not None:
+        return JSONResponse(
+            {"ok": False, "reachable": True, "supported": True,
+             "error": {"code": "robot_error", "upstream_status": status,
+                       # Tipo da exceção, nunca o corpo: ele pode trazer
+                       # configuração do robô.
+                       "detail": type(e).__name__}},
+            status_code=502)
+    return JSONResponse(
+        {"ok": False, "reachable": False, "supported": None,
+         "error": {"code": "robot_unreachable", "detail": type(e).__name__}},
+        status_code=502)
+
+
 @app.get("/api/reachy/conversation/settings")
 async def conversa_ler(panel: str | None = None):
     painel = _painel_de(panel)
@@ -156,11 +195,7 @@ async def conversa_ler(panel: str | None = None):
     try:
         return {"ok": True, **await asyncio.to_thread(reachy.conversa_ler, painel)}
     except Exception as e:
-        # Robô fora do ar: o painel mostra indisponível e desabilita os
-        # controles. Nada de fila de mudanças pendentes.
-        return JSONResponse({"ok": False, "reachable": False,
-                             "erro": f"{type(e).__name__}: {e}"[:200]},
-                            status_code=502)
+        return _falha(e, painel)
 
 
 @app.put("/api/reachy/conversation/settings")
@@ -179,9 +214,7 @@ async def conversa_gravar(corpo: dict):
         return JSONResponse({"ok": False, "conflict": True, **e.atual},
                             status_code=409)
     except Exception as e:
-        return JSONResponse({"ok": False, "reachable": False,
-                             "erro": f"{type(e).__name__}: {e}"[:200]},
-                            status_code=502)
+        return _falha(e, painel)
 
 
 @app.get("/api/reachy/conversation/status")
@@ -190,12 +223,10 @@ async def conversa_estado(panel: str | None = None):
     if painel is None:
         return JSONResponse({"ok": False, "erro": "informe `panel`"}, status_code=400)
     try:
-        return {"ok": True, "reachable": True,
+        return {"ok": True, "reachable": True, "supported": True,
                 **await asyncio.to_thread(reachy.conversa_estado, painel)}
     except Exception as e:
-        return JSONResponse({"ok": False, "reachable": False,
-                             "erro": f"{type(e).__name__}: {e}"[:200]},
-                            status_code=502)
+        return _falha(e, painel)
 
 
 def _chave_do_gateway() -> str | None:

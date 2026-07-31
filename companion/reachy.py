@@ -101,6 +101,7 @@ def conversa_ler(painel: str) -> dict:
     mudanças pendentes que ninguém sabe quando (nem se) serão aplicadas.
     """
     r = requests.get(f"{painel}/api/robot/conversation", timeout=TIMEOUT_S)
+    _erguer_se_nao_suportado(r, painel)
     r.raise_for_status()
     return r.json()
 
@@ -115,6 +116,7 @@ def conversa_gravar(painel: str, mudancas: dict) -> dict:
                      timeout=TIMEOUT_S)
     if r.status_code == 409:
         raise ConflitoConversa(r.json())
+    _erguer_se_nao_suportado(r, painel)
     r.raise_for_status()
     return conversa_ler(painel)
 
@@ -130,6 +132,7 @@ def conversa_estado(painel: str) -> dict:
     except (requests.RequestException, ValueError):
         eventos = []
     dados["turns"] = eventos[-10:]
+    dados["robot"] = identidade(painel)
     return dados
 
 
@@ -137,6 +140,45 @@ class ConflitoConversa(RuntimeError):
     def __init__(self, atual: dict) -> None:
         super().__init__("revisão desatualizada")
         self.atual = atual
+
+
+class RecursoNaoSuportado(RuntimeError):
+    """O robô respondeu, mas esta versão dele não conhece a rota.
+
+    Separado de "robô fora do ar" porque a resposta ao usuário é oposta: aqui
+    não adianta reconectar nem tentar de novo — o app instalado é mais antigo
+    que o recurso, e a única saída é atualizá-lo.
+    """
+
+    def __init__(self, status: int, versao: str | None = None) -> None:
+        super().__init__(f"o app do robô não expõe esta rota (HTTP {status})")
+        self.upstream_status = status
+        self.robot_version = versao
+
+
+def identidade(painel: str) -> dict:
+    """Quem é o app do robô e o que ele sabe fazer. `{}` se ele não disser.
+
+    Um app anterior ao `build_info` não devolve nada disto — e devolver `{}` é
+    a resposta certa, não um erro: o painel decide por capacidade e trata a
+    ausência como "não sei", que é a verdade.
+    """
+    try:
+        r = requests.get(f"{painel}/api/robot/status", timeout=TIMEOUT_S)
+        r.raise_for_status()
+        d = r.json()
+    except (requests.RequestException, ValueError):
+        return {}
+    return {c: d.get(c) for c in ("app_id", "version", "channel", "commit",
+                                  "api_version", "capabilities")
+            if d.get(c) is not None}
+
+
+def _erguer_se_nao_suportado(r: requests.Response, painel: str) -> None:
+    """404/405 do robô é versão antiga, não robô inacessível."""
+    if r.status_code in (404, 405):
+        raise RecursoNaoSuportado(r.status_code,
+                                  identidade(painel).get("version"))
 
 
 def _config_atual(painel: str) -> dict:
