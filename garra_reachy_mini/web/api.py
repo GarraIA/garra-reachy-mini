@@ -33,7 +33,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from .. import armazenamento, conversa
+from .. import armazenamento, build_info, conversa
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
 from ..robo.barramento import Barramento
 from ..servicos import Servicos
@@ -185,6 +185,10 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         dados["uptime_s"] = round(time.monotonic() - ctx.iniciado_em, 1)
         dados.update(ctx.servicos.json())
         dados["voice"] = {"tts_disponivel": ctx.falar is not None}
+        # Quem é este app e o que ele sabe fazer. O console em `:3888` decide
+        # por `capabilities`, não por número de versão: comparar versões o
+        # obrigaria a saber em qual release cada recurso entrou.
+        dados.update(build_info.identidade())
         dados["chat"] = {
             "gateway": ctx.chat.base if ctx.chat else None,
             "agent_id": ctx.chat.agent_id if ctx.chat else None,
