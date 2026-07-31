@@ -20,6 +20,10 @@ import requests
 from . import voz
 
 PORTAS_PAINEL = (8042, 8043, 8044, 8045, 8046)
+# Mesmos nomes que `main.py` trata como segredo, pela mesma razão: nada disto
+# pode voltar num corpo de resposta que o navegador vai ler.
+SEGREDOS = ("gateway_key", "voz_token")
+MASCARA = "***"
 TIMEOUT_S = 8.0
 # Quanto esperamos o robô reavaliar depois de gravar. O supervisor é acordado
 # pelo próprio POST, então isto é folga, não expectativa.
@@ -206,7 +210,12 @@ def configurar(painel: str, *, agente: str = "reachy_voice") -> dict:
     relatorio = {
         "target": painel,
         "desktop_ip": ip,
-        "applied": {c: v for c, v in novo.items() if c != "voz_token"},
+        # Lista de segredos, não um nome só. `gateway_key` carrega EXATAMENTE o
+        # mesmo valor que `voz_token` (acima), então excluir apenas um deixava a
+        # credencial sair em claro no corpo da resposta e chegar ao navegador.
+        # `main.py` já trata os dois como segredo; aqui faltava.
+        "applied": {c: (MASCARA if c in SEGREDOS and v else v)
+                    for c, v in novo.items()},
         "previous": {"gateway_url": efetiva.get("gateway_url"),
                      "voz_url": efetiva.get("voz_url"),
                      "agent_id": efetiva.get("agent_id")},
