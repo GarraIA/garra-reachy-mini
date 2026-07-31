@@ -14,6 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import armazenamento
+from . import conversa as _conversa
 
 _log = logging.getLogger(__name__)
 
@@ -32,6 +33,13 @@ FRASES_ESPERA = [
     "Boa pergunta, um instante.",
     "Já te respondo.",
     "Deixa eu ver isso.",
+]
+
+# Segunda espera, só para tarefa realmente longa (padrão: 10 s). Diz que
+# continua trabalhando — o silêncio prolongado é que parece travamento.
+FRASES_PROGRESSO = [
+    "Ainda estou nisso, só um pouco.",
+    "Continuo trabalhando aqui.",
 ]
 
 SAUDACAO = "Olá! Aqui é o GarraIA falando pelo Reachy Mini. Pode falar comigo."
@@ -207,6 +215,10 @@ class Config:
     tracking_ambiente_peso: float
     wobbling_na_fala: bool         # balanço da cabeça reativo ao áudio (daemon)
     camera_fps: float
+    # Ritmo da conversa. Aninhado, e não achatado como as demais: os tempos
+    # pertencem a perfis por modo, para trocar de modo não apagar um ajuste
+    # feito à mão. Ver conversa.py.
+    conversa: dict
 
     @classmethod
     def carregar(cls) -> "Config":
@@ -248,4 +260,5 @@ class Config:
             wobbling_na_fala=_bool(
                 _opcao(salvo, "GARRA_WOBBLING", "wobbling_na_fala", None), True),
             camera_fps=_num(_opcao(salvo, "GARRA_CAMERA_FPS", "camera_fps", None), 12.0, float),
+            conversa=_conversa.normalizar(salvo.get("conversation")),
         )
