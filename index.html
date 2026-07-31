@@ -1,51 +1,72 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GarraIA no Reachy Mini</title>
+  <title>Garra Reachy Mini</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
   <header class="hero">
     <div class="icone">🦾</div>
-    <h1>GarraIA no Reachy Mini</h1>
-    <p class="lema">O robô vira o corpo do Garra: ouve, pensa e responde em voz — com memória e ferramentas de verdade.</p>
+    <h1>Garra Reachy Mini</h1>
+    <p class="lema">A complete control panel for your robot — expressions, dances, native face
+      tracking and a live camera — plus an optional AI layer that lets it listen, talk and move
+      on its own.</p>
+    <p class="acao"><a class="botao" href="https://github.com/GarraIA/garra-reachy-mini">Documentation
+        on GitHub</a></p>
   </header>
 
   <main class="container">
     <section class="cartao">
-      <h2>Como funciona</h2>
-      <ol class="passos">
-        <li><strong>Ouço</strong> — o microfone do robô capta sua fala e o Whisper transcreve em português.</li>
-        <li><strong>Penso</strong> — o gateway do Garra responde com sessões reais; tarefas longas são delegadas e o robô avisa quando terminam.</li>
-        <li><strong>Falo</strong> — o Chatterbox sintetiza a resposta em pt-BR e as antenas acompanham a conversa.</li>
-      </ol>
-    </section>
-
-    <section class="cartao aviso">
-      <h2>⚠️ Pré-requisitos</h2>
-      <p>Este app depende de infraestrutura pessoal do dono: um servidor de voz
-        local (Whisper + Chatterbox, GPU recomendada) e um Garra configurado
-        (<code>garra start</code>). Instalar apenas o Space no seu robô não
-        funciona sem isso — leia o README.</p>
+      <h2>Install it</h2>
+      <p>Open your Reachy Mini dashboard, go to <strong>Applications → Discover apps</strong>,
+        find <code>garra_reachy_mini</code> and press <strong>Install</strong>, then
+        <strong>Start</strong>. That is the whole setup.</p>
+      <p>The panel is then at <code>http://reachy-mini.local:8042/reachy</code> — the app prints
+        the exact URL, access token included, in its log.</p>
     </section>
 
     <section class="cartao">
-      <h2>Modos de cérebro</h2>
-      <p><strong>Gateway</strong> (completo: memória, ferramentas, delegação) →
-        <strong>garra ask</strong> (chat básico) →
-        <strong>OpenRouter</strong> (chat básico) — a troca é automática e o
-        robô avisa em voz alta quando muda de modo.</p>
+      <h2>Works straight away</h2>
+      <ul class="lista">
+        <li><strong>Manual control</strong> — head joystick, antennas, speed and intensity</li>
+        <li><strong>85 expressions and 19 dances</strong> from the robot's own libraries,
+          interruptible mid-move</li>
+        <li><strong>Native face tracking</strong> — the SDK's YuNet tracker, no
+          <code>mediapipe</code> and no extra dependency</li>
+        <li><strong>Live camera</strong> — stream, snapshot, fullscreen</li>
+        <li><strong>Emergency stop</strong> — cuts the current move in about 90&nbsp;ms and holds
+          the pose</li>
+        <li><strong>REST and WebSocket API</strong> for everything the panel does</li>
+      </ul>
+    </section>
+
+    <section class="cartao">
+      <h2>Optional, if you want it</h2>
+      <p>Conversation needs an AI provider you choose, and speech needs a companion server you
+        run on a GPU machine. Neither is required: without them the robot is still fully
+        controllable, and the panel says plainly which pieces are missing.</p>
+      <p><strong>Nothing leaves your network unless you configure it to.</strong> Camera frames
+        stay on the robot, and no transcripts are written to disk.</p>
+    </section>
+
+    <section class="cartao aviso">
+      <h2>⚠️ It moves a real robot</h2>
+      <p>Keep hands, hair and cables clear of the head and antennas. Every movement is clamped to
+        a fixed envelope, and the AI can only pick from an allowlist of named actions — never an
+        arbitrary pose.</p>
     </section>
   </main>
 
   <footer>
     <p>
-      <a href="https://github.com/michelbr84/GarraRUST">Garra (GarraIA)</a> ·
-      <a href="https://huggingface.co/spaces/pollen-robotics/reachy-mini-landing-page#apps">Apps do Reachy Mini</a>
+      Apache-2.0 ·
+      <a href="https://github.com/GarraIA/garra-reachy-mini">Source</a> ·
+      <a href="https://huggingface.co/spaces?filter=reachy_mini_python_app">More Reachy Mini apps</a>
     </p>
   </footer>
 </body>

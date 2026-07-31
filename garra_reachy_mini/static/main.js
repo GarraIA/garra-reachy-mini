@@ -39,9 +39,9 @@ async function carregar() {
     // ainda estar subindo. Tenta de novo em vez de deixar o form armado.
     salvaCarregada = null;
     botao.disabled = true;
-    status.textContent = "configuração indisponível (" + e.message + "); tentando de novo…";
+    status.textContent = t('cfg.indisponivel', { erro: e.message });
     status.dataset.erro = "1";
-    efetiva.textContent = "Não consegui ler a configuração: " + e;
+    efetiva.textContent = t('cfg.erro_ler', { erro: e });
     setTimeout(carregar, 2000);
   }
 }
@@ -49,7 +49,7 @@ async function carregar() {
 formulario.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (salvaCarregada === null) {
-    status.textContent = "espere a configuração carregar";
+    status.textContent = t('cfg.espere');
     return;
   }
   // Só envia o que o usuário mexeu; campo omitido = preservar no servidor,
@@ -62,10 +62,10 @@ formulario.addEventListener("submit", async (ev) => {
       : campo.value;
   }
   if (Object.keys(corpo).length === 0) {
-    status.textContent = "nada mudou";
+    status.textContent = t('cfg.nada_mudou');
     return;
   }
-  status.textContent = "salvando…";
+  status.textContent = t('cfg.salvando');
   try {
     const r = await fetch("/api/config", {
       method: "POST",
@@ -74,14 +74,16 @@ formulario.addEventListener("submit", async (ev) => {
     });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const dados = await r.json();
-    status.textContent = dados.ok ? "✔ " + dados.aviso : "erro ao salvar";
+    status.textContent = dados.ok ? '✔ ' + t('cfg.salvo') : t('cfg.erro_generico');
     for (const campo of formulario.elements) {
       if (campo.name && SEGREDOS.has(campo.name)) campo.value = "";
     }
     carregar();
   } catch (e) {
-    status.textContent = "erro ao salvar: " + e.message;
+    status.textContent = t('cfg.erro_salvar', { erro: e.message });
   }
 });
 
 carregar();
+
+aplicarTraducoes();

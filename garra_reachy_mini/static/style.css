@@ -22,6 +22,10 @@ h1 { font-size: 1.5rem; }
 
 .dica { color: #aab; font-size: 0.9rem; }
 
+/* O sublinhado padrão do link cruzava o texto na altura da seta. */
+.dica a { color: #7fb3ff; text-decoration: none; }
+.dica a:hover { text-decoration: underline; }
+
 fieldset {
   border: 1px solid var(--borda);
   border-radius: 8px;

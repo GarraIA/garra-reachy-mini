@@ -78,46 +78,67 @@ function pill(el, ligado, texto, classe = '') {
   el.innerHTML = `<span class="status-dot ${ligado ? '' : 'offline'}"></span> ${esc(texto)}`;
 }
 
+function pintarServicos(dados) {
+  const faixa = $('faixa-servicos');
+  if (!faixa || !Array.isArray(dados.services)) return;
+  const faltando = dados.services.filter((s) => !s.available);
+  faixa.hidden = faltando.length === 0;
+  $('lista-servicos').innerHTML = faltando.map((s) => {
+    const nome = t(`servico.${s.name}`);
+    const motivo = t(`motivo.${s.reason_code}`);
+    // A dica vem do servidor em inglês; quando existe tradução para o mesmo
+    // `reason_code`, ela vence. `t()` devolve a própria chave quando não acha.
+    // Só onde o servidor achou que cabia uma dica — senão o mesmo conselho
+    // aparece repetido em três serviços que caíram pelo mesmo motivo.
+    const traduzida = t(`dica.${s.reason_code}`);
+    const texto = s.hint ? (traduzida.startsWith('dica.') ? s.hint : traduzida) : '';
+    const dica = texto ? ` <span class="dica">${esc(texto)}</span>` : '';
+    return `<li><b>${esc(nome)}</b>: ${esc(motivo)}${dica}</li>`;
+  }).join('');
+}
+
 function pintarStatus(s) {
   estado.status = s;
+  pintarServicos(s);
   const conectado = s.connected;
-  pill($('p-conexao'), conectado, conectado ? 'robô conectado' : 'robô desconectado',
+  pill($('p-conexao'), conectado, conectado ? t('pill.robo_conectado') : t('pill.robo_desconectado'),
        conectado ? 'success' : 'danger');
   $('p-modo').className = `pill ${s.mode === 'real' ? 'success' : 'warning'}`;
-  $('p-modo').textContent = s.mode === 'real' ? 'hardware real' : 'simulado';
+  $('p-modo').textContent = s.mode === 'real' ? t('motivo.connected') : t('motivo.simulated');
   const emMovimento = s.moving;
   $('p-estado').className = `pill ${s.estopped ? 'danger' : emMovimento ? 'accent' : ''}`;
-  $('p-estado').textContent = s.estopped ? 'parada de emergência'
-    : s.current_action ? `executando ${s.current_action.action}`
-    : emMovimento ? 'movendo' : 'ocioso';
+  $('p-estado').textContent = s.estopped ? t('pill.estop')
+    : s.current_action ? s.current_action.action
+    : emMovimento ? '…' : t('pill.ocioso');
   const cam = s.camera || {};
-  pill($('p-camera'), cam.available, cam.available ? `câmera ${cam.width || '?'}×${cam.height || '?'}` : 'sem câmera',
+  pill($('p-camera'), cam.available, cam.available ? `${t('pill.camera')} ${cam.width || '?'}×${cam.height || '?'}` : t('pill.sem_camera'),
        cam.available ? '' : 'warning');
   $('camera-info').textContent = cam.available
-    ? `${cam.width}×${cam.height} · ${cam.fps} fps${cam.stale ? ' · quadro antigo' : ''}`
-    : 'indisponível';
+    ? `${cam.width}×${cam.height} · ${cam.fps} fps${cam.stale ? ' · stale' : ''}`
+    : t('status.indisponivel');
   document.body.classList.toggle('estopped', !!s.estopped);
-  $('uptime').textContent = s.uptime_s ? `no ar há ${Math.round(s.uptime_s / 60)} min` : '';
+  $('uptime').textContent = s.uptime_s ? t('status.no_ar', { min: Math.round(s.uptime_s / 60) }) : '';
 
   const trk = s.tracking || {};
   estado.trackingLigado = !!trk.active_on_robot;
   $('btn-tracking').classList.toggle('ativo', estado.trackingLigado);
-  $('btn-tracking').textContent = estado.trackingLigado ? 'Parar de rastrear' : 'Rastrear rosto';
+  $('btn-tracking').textContent = t('status.tracking');
 
+  const ligadoDesligado = (v) => (v ? t('lista.ligado') : t('lista.desligado'));
   const itens = [
-    ['Reachy Mini', conectado ? 'conectado' : 'desconectado', conectado],
-    ['Modo', s.mode === 'real' ? 'hardware real' : 'simulado', s.mode === 'real'],
-    ['Controlador', s.controller_state, !s.estopped],
-    ['Motores', s.motors, s.motors === 'enabled'],
-    ['Câmera', cam.available ? `ativa (${cam.clients || 0} espectador(es))` : 'indisponível', cam.available],
-    ['Rastreamento de rosto', trk.active_on_robot ? 'ligado' : 'desligado', trk.active_on_robot],
-    ['Rosto à vista', s.face_detected ? 'sim' : 'não', s.face_detected],
-    ['Movimento', s.current_action ? s.current_action.action : 'nenhum', !!s.current_action],
-    ['Fila', `${s.queued} pendente(s)`, s.queued === 0],
-    ['Síntese de voz', s.voice?.tts_disponivel ? 'disponível' : 'indisponível', s.voice?.tts_disponivel],
-    ['Garra (chat)', s.chat?.agent_id || '—', !!s.chat?.session_id],
-    ['Latência', `${s.latency_ms} ms`, s.latency_ms < 300],
-    ['Erros recentes', String((s.recent_errors || []).length), (s.recent_errors || []).length === 0],
+    [t('lista.robo'), conectado ? t('motivo.connected') : t('motivo.disconnected'), conectado],
+    [t('lista.modo'), s.mode === 'real' ? t('lista.hardware_real') : t('motivo.simulated'), s.mode === 'real'],
+    [t('lista.controlador'), s.controller_state, !s.estopped],
+    [t('lista.motores'), s.motors, s.motors === 'enabled'],
+    [t('lista.camera'), cam.available ? t('lista.camera_ativa', { n: cam.clients || 0 }) : t('status.indisponivel'), cam.available],
+    [t('lista.tracking'), ligadoDesligado(trk.active_on_robot), trk.active_on_robot],
+    [t('lista.rosto'), s.face_detected ? t('status.sim') : t('status.nao'), s.face_detected],
+    [t('lista.movimento'), s.current_action ? s.current_action.action : t('lista.nenhum'), !!s.current_action],
+    [t('lista.fila'), t('lista.fila_val', { n: s.queued }), s.queued === 0],
+    [t('lista.voz'), s.voice?.tts_disponivel ? t('status.disponivel') : t('status.indisponivel'), s.voice?.tts_disponivel],
+    [t('lista.chat'), s.chat?.agent_id || '—', !!s.chat?.session_id],
+    [t('lista.latencia'), `${s.latency_ms} ms`, s.latency_ms < 300],
+    [t('lista.erros'), String((s.recent_errors || []).length), (s.recent_errors || []).length === 0],
   ];
   $('status-lista').innerHTML = itens.map(([rot, val, ok]) =>
     `<div class="status-item"><span class="status-dot ${ok ? '' : 'warning'}"></span>${esc(rot)}<b>${esc(val)}</b></div>`
@@ -126,7 +147,7 @@ function pintarStatus(s) {
 
 async function atualizarStatus() {
   try { pintarStatus(await api('/api/robot/status')); }
-  catch (e) { pill($('p-conexao'), false, 'API fora do ar', 'danger'); }
+  catch (e) { pill($('p-conexao'), false, t('ws.api_fora'), 'danger'); }
 }
 
 // ─── eventos em tempo real ───────────────────────────────────────────────────
@@ -136,10 +157,10 @@ function conectarEventos() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = `${proto}//${location.host}/ws/eventos${TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : ''}`;
   ws = new WebSocket(url);
-  ws.onopen = () => { tentativas = 0; pill($('p-eventos'), true, 'eventos ao vivo', 'success'); };
+  ws.onopen = () => { tentativas = 0; pill($('p-eventos'), true, t('ws.ao_vivo'), 'success'); };
   ws.onmessage = (ev) => tratarEvento(JSON.parse(ev.data));
   ws.onclose = () => {
-    pill($('p-eventos'), false, 'eventos offline', 'warning');
+    pill($('p-eventos'), false, t('ws.offline'), 'warning');
     // Reconexão com espera crescente, teto de 10 s: o app pode estar
     // reiniciando e não adianta martelar.
     const espera = Math.min(1000 * 2 ** tentativas++, 10000);
@@ -148,28 +169,26 @@ function conectarEventos() {
   ws.onerror = () => ws.close();
 }
 
-const ROTULOS = {
-  turn_head: 'virou a cabeça', look_at: 'mudou o olhar', set_expression: 'fez uma expressão',
-  move_antennas: 'mexeu as antenas', nod: 'fez que sim', shake_head: 'fez que não',
-  greet: 'cumprimentou', dance: 'dançou', run_movement: 'executou um movimento',
-  return_to_neutral: 'voltou ao neutro', wake_up: 'acordou', sleep: 'foi dormir',
-  face_tracking: 'mudou o rastreamento', capture_image: 'capturou uma imagem',
-};
+// Rótulos das ações na linha do tempo. Traduzidos por `rot.<acao>`; ação
+// desconhecida cai no próprio nome, que é melhor do que sumir da linha.
+const rotulo = (acao) => t(`rot.${acao}`).startsWith('rot.') ? acao : t(`rot.${acao}`);
 
 function tratarEvento(e) {
   switch (e.type) {
     case 'robot.status':
       pintarStatus(e); break;
+    case 'robot.services':
+      pintarServicos(e); break;
     case 'robot.action.started':
       $('p-estado').className = 'pill accent';
-      $('p-estado').textContent = `executando ${e.action}`;
+      $('p-estado').textContent = e.action;
       break;
     case 'robot.action.completed': {
       const simulado = e.executed === false;
       // A linha do tempo do chat mostra o que EXECUTOU, não o que foi prometido.
-      addAcao(`Garra ${ROTULOS[e.action] || e.action}${e.duration_ms ? ` (${(e.duration_ms / 1000).toFixed(1)} s)` : ''}`,
+      addAcao(`Garra ${rotulo(e.action)}${e.duration_ms ? ` (${(e.duration_ms / 1000).toFixed(1)} s)` : ''}`,
               simulado ? 'simulada' : '');
-      registrarLog(`${e.action} concluído`, 'ok');
+      registrarLog(t('acao.concluida', { acao: e.action }), 'ok');
       atualizarStatus();
       break;
     }
@@ -180,7 +199,7 @@ function tratarEvento(e) {
     case 'robot.action.cancelled':
       registrarLog(`${e.action} interrompido`); break;
     case 'robot.estop':
-      addAcao('Parada de emergência: movimentos interrompidos', 'falhou');
+      addAcao(t('estop.evento'), 'falhou');
       registrarLog(`PARADA DE EMERGÊNCIA (${e.latency_ms} ms)`, 'err');
       atualizarStatus();
       break;
@@ -217,7 +236,7 @@ function addMsg(papel, texto, origem) {
   if (!texto) return;
   const el = document.createElement('div');
   el.className = `msg ${papel === 'user' ? 'user' : 'assistant'}`;
-  const quem = papel === 'user' ? (origem === 'voz' ? 'você (voz)' : 'você') : 'Garra';
+  const quem = papel === 'user' ? (origem === 'voz' ? t('chat.voce_voz') : t('chat.voce')) : 'Garra';
   el.innerHTML = `<span class="quem">${esc(quem)}</span>${esc(texto)}`;
   const c = $('chat-corpo');
   c.appendChild(el); c.scrollTop = c.scrollHeight;
@@ -252,7 +271,7 @@ async function enviarMensagem() {
   } catch (e) {
     const el = document.createElement('div');
     el.className = 'msg erro';
-    el.textContent = `Não consegui falar com o Garra: ${e.message}`;
+    el.textContent = t('chat.erro', { erro: e.message });
     $('chat-corpo').appendChild(el);
   } finally {
     estado.enviando = false;
@@ -266,8 +285,8 @@ function alternarStream() {
   const img = $('video'), moldura = $('moldura-camera');
   if (estado.streaming) {
     img.src = ''; moldura.classList.remove('tem-imagem');
-    $('aviso-camera').textContent = 'Transmissão parada.';
-    $('btn-stream').textContent = 'Iniciar';
+    $('aviso-camera').textContent = t('camera.parada');
+    $('btn-stream').textContent = t('camera.iniciar');
     $('btn-stream').classList.add('primario');
   } else {
     // MJPEG: o navegador mantém a conexão aberta e troca o quadro sozinho —
@@ -276,10 +295,10 @@ function alternarStream() {
     img.onload = () => moldura.classList.add('tem-imagem');
     img.onerror = () => {
       moldura.classList.remove('tem-imagem');
-      $('aviso-camera').textContent = 'A câmera do robô não está disponível.';
+      $('aviso-camera').textContent = t('camera.indisponivel');
     };
     moldura.classList.add('tem-imagem');
-    $('btn-stream').textContent = 'Parar';
+    $('btn-stream').textContent = t('camera.parar');
     $('btn-stream').classList.remove('primario');
   }
   estado.streaming = !estado.streaming;
@@ -291,7 +310,7 @@ async function instantaneo() {
   img.onload = () => $('moldura-camera').classList.add('tem-imagem');
   img.onerror = () => {
     $('moldura-camera').classList.remove('tem-imagem');
-    $('aviso-camera').textContent = 'A câmera do robô não está disponível.';
+    $('aviso-camera').textContent = t('camera.indisponivel');
   };
 }
 
@@ -346,11 +365,11 @@ function montarJoystick() {
 
 // ─── capacidades ─────────────────────────────────────────────────────────────
 const RAPIDOS = [
-  ['Dance', 'dance', {}], ['Look at me', 'look_at', { target: 'user' }],
-  ['Say hello', 'greet', {}], ['Happy', 'set_expression', { name: 'happy' }],
-  ['Curious', 'set_expression', { name: 'curious' }], ['Nod', 'nod', {}],
-  ['Shake head', 'shake_head', {}], ['Center', 'return_to_neutral', {}],
-  ['Sleep', 'sleep', {}], ['Wake up', 'wake_up', {}],
+  ['rapido.dance', 'dance', {}], ['rapido.look_at', 'look_at', { target: 'user' }],
+  ['rapido.greet', 'greet', {}], ['rapido.happy', 'set_expression', { name: 'happy' }],
+  ['rapido.curious', 'set_expression', { name: 'curious' }], ['rapido.nod', 'nod', {}],
+  ['rapido.shake_head', 'shake_head', {}], ['rapido.center', 'return_to_neutral', {}],
+  ['rapido.sleep', 'sleep', {}], ['rapido.wake_up', 'wake_up', {}],
 ];
 
 async function carregarCapacidades() {
@@ -364,18 +383,18 @@ async function carregarCapacidades() {
   $('expressoes-principais').innerHTML = disponiveis
     .map((n) => `<button data-expressao="${esc(n)}">${esc(n)}</button>`).join('');
   $('conta-expressoes').textContent =
-    `${Object.values(cap.expressions).filter((e) => e.available).length} disponíveis`
-    + (faltando.length ? ` · ${faltando.length} sem move no robô` : '');
+    t('expr.disponiveis', { n: Object.values(cap.expressions).filter((e) => e.available).length })
+    + (faltando.length ? t('expr.faltando', { n: faltando.length }) : '');
 
   $('sel-emocao').innerHTML = Object.entries(cap.expressions)
     .filter(([, v]) => v.available)
     .map(([n, v]) => `<option value="${esc(n)}">${esc(n)}${v.resolved_move ? ` — ${esc(v.resolved_move)}` : ''}</option>`)
     .join('');
   $('sel-danca').innerHTML = cap.dances.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join('');
-  $('conta-dancas').textContent = `${cap.dances.length} danças · ${cap.emotions.length} emoções`;
+  $('conta-dancas').textContent = t('mov.conta', { dancas: cap.dances.length, emocoes: cap.emotions.length });
 
   $('rapidos').innerHTML = RAPIDOS
-    .map(([rot, nome, p], i) => `<button data-rapido="${i}">${esc(rot)}</button>`).join('');
+    .map(([rot, nome, p], i) => `<button data-rapido="${i}">${esc(t(rot))}</button>`).join('');
   $('rapidos').querySelectorAll('[data-rapido]').forEach((b) => {
     const [, nome, params] = RAPIDOS[+b.dataset.rapido];
     b.addEventListener('click', () => acao(nome, params, { wait: false }));
@@ -390,7 +409,7 @@ async function carregarApps() {
   try {
     const d = await api('/api/robot/apps');
     const rodando = d.current?.info?.name;
-    $('conta-apps').textContent = `${d.apps.length} instalado(s)`;
+    $('conta-apps').textContent = t('apps.conta', { n: d.apps.length });
     caixa.innerHTML = d.apps.length ? d.apps.map((a) => {
       const oficial = APPS_OFICIAIS.test(a.name);
       const ativo = a.name === rodando;
@@ -402,18 +421,18 @@ async function carregarApps() {
         </div>
         <button data-app="${esc(a.name)}" ${ativo ? 'disabled' : ''}>${ativo ? 'rodando' : 'iniciar'}</button>
       </div>`;
-    }).join('') : '<div class="vazio">Nenhum app instalado no robô.</div>';
+    }).join('') : `<div class="vazio">${esc(t('apps.vazio'))}</div>`;
     caixa.querySelectorAll('[data-app]').forEach((b) => b.addEventListener('click', async () => {
       b.disabled = true;
       // Iniciar um app do robô toma a mídia: avisa em vez de deixar o painel
       // "quebrar" sozinho.
-      registrarLog(`iniciando ${b.dataset.app} — isso toma a câmera e o áudio do robô`);
+      registrarLog(t('apps.iniciando', { app: b.dataset.app }));
       await api(`/api/robot/apps/${encodeURIComponent(b.dataset.app)}/start`, { method: 'POST' })
         .catch((e) => registrarLog(`falha ao iniciar: ${e.message}`, 'err'));
       carregarApps();
     }));
   } catch (e) {
-    caixa.innerHTML = `<div class="aviso-caixa">Não consegui listar os apps: ${esc(e.message)}</div>`;
+    caixa.innerHTML = `<div class="aviso-caixa">${esc(t('apps.erro', { erro: e.message }))}</div>`;
   }
 }
 
@@ -467,7 +486,7 @@ function ligar() {
   });
   $('btn-falar').addEventListener('click', () => {
     estado.falar = !estado.falar;
-    $('btn-falar').textContent = `Fala: ${estado.falar ? 'ligada' : 'desligada'}`;
+    $('btn-falar').textContent = t(estado.falar ? 'chat.fala_ligada' : 'chat.fala_desligada');
     $('btn-falar').classList.toggle('ativo', estado.falar);
   });
   $('btn-limpar-chat').addEventListener('click', async () => {
@@ -497,6 +516,12 @@ function ligar() {
 
 // ─── arranque ────────────────────────────────────────────────────────────────
 (async function iniciar() {
+  aplicarTraducoes();
+  const sel = $('idioma');
+  if (sel) {
+    sel.value = IDIOMA;
+    sel.addEventListener('change', (e) => trocarIdioma(e.target.value));
+  }
   ligar();
   await atualizarStatus();
   await carregarCapacidades();
@@ -507,10 +532,10 @@ function ligar() {
   setInterval(() => { if (!ws || ws.readyState !== WebSocket.OPEN) atualizarStatus(); }, 5000);
   try {
     const c = await api('/api/chat/status');
-    $('chat-info').textContent = c.available ? `agente ${c.agent_id}` : 'gateway fora do ar';
+    $('chat-info').textContent = c.available ? c.agent_id : t('motivo.unreachable');
     if (!c.available) {
       $('chat-corpo').innerHTML =
-        '<div class="msg erro">O gateway do Garra não respondeu. O chat fica indisponível; os controles do robô continuam funcionando.</div>';
+        `<div class="msg erro">${esc(t('chat.sem_gateway'))}</div>`;
     }
-  } catch { $('chat-info').textContent = 'chat indisponível'; }
+  } catch { $('chat-info').textContent = t('pill.chat_indisponivel'); }
 })();

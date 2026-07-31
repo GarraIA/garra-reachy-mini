@@ -1,28 +1,54 @@
 [build-system]
-requires = ["setuptools>=62.3"] # 62.3 introduziu o glob recursivo "**" do package-data
+requires = ["setuptools>=62.3"]
 build-backend = "setuptools.build_meta"
 
 
 [project]
 name = "garra_reachy_mini"
-version = "0.1.0"
-description = "GarraIA falando e se movendo pelo Reachy Mini: voz, painel de controle e ferramentas de corpo para o Garra"
+version = "1.0.0"
+description = "AI control panel for Reachy Mini: expressions, dances, native face tracking, camera and an optional voice assistant"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Michel Duek", email = "michelduek@gmail.com" }]
+keywords = ["reachy-mini-app", "reachy-mini", "robotics", "voice-assistant"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
-    "reachy-mini>=1.9,<1.10",
+    # Toda dependência daqui é instalada num `apps_venv` COMPARTILHADO com os
+    # outros apps do robô (`apps/sources/local_common_venv.py:55-65`, sem
+    # `--no-deps`). Por isso: poucas, e sem pino apertado — um `==` nosso vira
+    # conflito no app do vizinho. O teto em 2.0 existe porque uma major nova do
+    # SDK pode trocar a API sob os pés de todo mundo no mesmo venv.
+    "reachy-mini>=1.9,<2.0",
     "numpy",
     "requests",
     "pyyaml",
-    "pydantic>=2", # rotas da página de configurações (main.py importa direto)
-    "httpx",       # cliente async da ponte de chat com o gateway (web/chat.py)
+    "fastapi",      # rotas do painel (web/api.py importa direto)
+    "pydantic>=2",  # página de configurações (main.py importa direto)
+    "httpx",        # cliente async da ponte de chat com o gateway (web/chat.py)
+    "scipy",        # decomposição de euler em robo/limites.py
 ]
+
+[project.urls]
+Homepage = "https://github.com/GarraIA/garra-reachy-mini"
+Source = "https://github.com/GarraIA/garra-reachy-mini"
+Issues = "https://github.com/GarraIA/garra-reachy-mini/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-keywords = ["reachy-mini-app"]
 
 [project.entry-points."reachy_mini_apps"]
+# A chave, o `project.name` e o diretório do pacote têm de ser a MESMA string:
+# o daemon lê `site_packages/<chave>/main.py` por regex para achar a
+# `custom_app_url`, desinstala com `pip uninstall <chave>` e procura o
+# `<chave>*.dist-info` para saber se há atualização. Divergir quebra os três em
+# silêncio.
 garra_reachy_mini = "garra_reachy_mini.main:GarraReachyMini"
 
 [tool.setuptools]
@@ -31,9 +57,9 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-# `garra_reachy_mini.mcp` entra junto: é o servidor MCP que dá ao Garra as ferramentas de
-# corpo do robô. O gateway o sobe por `python -m garra_reachy_mini.mcp`.
-include = ["garra_reachy_mini*", "garra_reachy_mini.mcp*"]
+include = ["garra_reachy_mini*"]
 
 [tool.setuptools.package-data]
-garra_reachy_mini = ["**/*"] # Also include all non-.py files
+# Explícito em vez de `**/*`: o glob recursivo empacotava os `__pycache__/*.pyc`
+# junto com o wheel.
+garra_reachy_mini = ["static/*.html", "static/*.css", "static/*.js"]

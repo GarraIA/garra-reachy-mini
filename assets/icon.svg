@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img"
+     aria-label="Garra Reachy Mini">
+  <defs>
+    <linearGradient id="fundo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a1d22"/>
+      <stop offset="1" stop-color="#14161a"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="256" height="256" rx="56" fill="url(#fundo)"/>
+
+  <!-- antenas -->
+  <g stroke="#e05946" stroke-width="9" stroke-linecap="round" fill="none">
+    <path d="M92 74 C 82 48, 66 40, 56 44"/>
+    <path d="M164 74 C 174 48, 190 40, 200 44"/>
+  </g>
+  <circle cx="54" cy="43" r="11" fill="#e05946"/>
+  <circle cx="202" cy="43" r="11" fill="#e05946"/>
+
+  <!-- cabeça -->
+  <rect x="68" y="72" width="120" height="98" rx="34" fill="#e8e8ea"/>
+
+  <!-- olhos, olhando para a direita: o robô rastreia rostos -->
+  <circle cx="106" cy="119" r="16" fill="#14161a"/>
+  <circle cx="154" cy="119" r="16" fill="#14161a"/>
+  <circle cx="112" cy="114" r="5.5" fill="#ffffff"/>
+  <circle cx="160" cy="114" r="5.5" fill="#ffffff"/>
+
+  <!-- corpo -->
+  <path d="M84 178 h88 a26 26 0 0 1 26 26 v12 H58 v-12 a26 26 0 0 1 26-26 z"
+        fill="#343945"/>
+  <rect x="112" y="192" width="32" height="7" rx="3.5" fill="#e05946"/>
+</svg>

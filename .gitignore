@@ -33,12 +33,14 @@ estado.json
 *.db
 *.sqlite*
 
-# Media recorded or captured locally (assets/ screenshots are opt-in via -f)
+# Media recorded or captured locally. assets/ is documentation, not runtime
+# output, so it is deliberately excluded from these rules.
 *.wav
 *.mp3
 *.ogg
 *.mp4
 *.webm
+!assets/**
 
 # Local tooling
 bin/

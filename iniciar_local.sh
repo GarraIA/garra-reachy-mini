@@ -32,8 +32,10 @@ fi
 
 # ── dependências ─────────────────────────────────────────────────────────────
 faltando=""
+VOZ_PY="$BASE_DIR/servidor_voz.py"
+[ -f "$VOZ_PY" ] || VOZ_PY="$APP_DIR/tools/servidor_voz.py"
 for caminho in "$BASE_DIR/reachy_mini_env/bin/python" "$BASE_DIR/voz_env/bin/python" \
-               "$BASE_DIR/servidor_voz.py"; do
+               "$VOZ_PY"; do
   [ -e "$caminho" ] || faltando="$faltando\n  - $caminho"
 done
 if [ -n "$faltando" ]; then
@@ -78,7 +80,7 @@ trap limpar EXIT INT TERM
 
 if ! curl -sf -m 4 "$VOZ_URL/saude" >/dev/null 2>&1; then
   echo "Subindo servidor de voz (carrega Whisper e Chatterbox na GPU, ~1 min)..."
-  "$BASE_DIR/voz_env/bin/python" "$BASE_DIR/servidor_voz.py" &
+  "$BASE_DIR/voz_env/bin/python" "$VOZ_PY" &
   VOZ_PID=$!
   until curl -sf -m 4 "$VOZ_URL/saude" >/dev/null 2>&1; do
     kill -0 $VOZ_PID 2>/dev/null || { echo "$(vermelho 'servidor_voz morreu')"; exit 1; }
@@ -91,7 +93,7 @@ fi
 curl -sf -m 10 -X POST "$ROBO_API/api/apps/stop-current-app" >/dev/null 2>&1 || true
 sleep 3
 
-# Binário do garra instalado pelo install_garra.sh, se houver
+# Binário do garra instalado pelo tools/install_garra.sh, se houver
 [ -x "$APP_DIR/bin/garra" ] && export GARRA_BIN="${GARRA_BIN:-$APP_DIR/bin/garra}"
 
 # Pacote importável no reachy_mini_env (instala editável na primeira vez)

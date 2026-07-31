@@ -1,147 +1,252 @@
 ---
-title: Garraia Reachy
+title: Garra Reachy Mini
 emoji: 🦾
 colorFrom: red
 colorTo: blue
 sdk: static
 pinned: false
-short_description: GarraIA no Reachy Mini — voz, movimento e painel de controle
+short_description: Control panel, expressions, dances and face tracking
 tags:
  - reachy_mini
  - reachy_mini_python_app
 ---
 
-# GarraIA no Reachy Mini
+# Garra Reachy Mini
 
-O Reachy Mini vira o corpo do **Garra** (GarraIA), o assistente pessoal do dono
-deste Space. Você fala com o robô; ele transcreve com Whisper, pensa com o
-Garra, responde em voz (Chatterbox pt-BR) — e **se move de verdade**: vira a
-cabeça, demonstra emoções, dança, rastreia seu rosto e obedece tanto por voz
-quanto por um painel web.
+A complete control panel for Reachy Mini — head control, 85 emotions, 19 dances,
+native face tracking, live camera and an emergency stop — plus an **optional** AI
+layer that lets the robot listen, talk and move on its own.
+
+**Works the moment you install it.** Everything that only needs the robot works
+with no configuration at all. Conversation and voice are opt-in extras that
+require services you provide; the panel tells you exactly which ones are missing
+and what to do about each. Nothing is sent anywhere until you configure a
+provider yourself.
+
+![The control panel](assets/screenshots/panel.png)
+
+## Features
+
+**Available immediately, no setup**
+
+- **Manual control** — joystick for the head, antennas, speed and intensity
+  sliders, recentre
+- **Expressions** — 9 canonical ones (happy, sad, curious, surprised, confused,
+  excited, sleepy, attentive, neutral) resolved against the robot's own emotion
+  library, plus all 85 raw moves
+- **Dances** — the full 19-move library, played through the daemon so they can
+  be interrupted mid-move
+- **Native face tracking** — the SDK's own YuNet/ONNX tracker running inside the
+  daemon. No `mediapipe`, no extra dependency, no separate venv.
+- **Live camera** — MJPEG stream, snapshot, fullscreen, single frame producer
+  shared by every consumer
+- **Emergency stop** — a fixed button, the `Esc` key and `POST /api/robot/stop`.
+  It cuts the current move in ~90 ms and holds the pose; it never authenticates
+  and it never auto-recovers.
+- **Robot apps** — list, start, stop and restart the other apps installed on your
+  robot
+- **REST + WebSocket API** — every panel action is a documented endpoint, and
+  every state change is a real-time event
+
+**Optional, once you configure them**
+
+- **Conversation** — text chat from the panel, and voice if you run a speech
+  server. The model can move the robot through a controlled allowlist of 20
+  tools; it can never send an arbitrary pose.
+- **Voice** — speech-to-text and text-to-speech through a companion server you
+  run yourself (see [Voice](#voice-optional))
+- **Ambient behaviour** — subtle head movement while listening, antennas while
+  thinking, audio-reactive wobbling while speaking
+
+## Requirements
+
+| | |
+|---|---|
+| **Required** | A Reachy Mini (wireless or Lite) with daemon 1.9 or newer |
+| **Optional — conversation** | An OpenRouter API key, or a [Garra](https://github.com/michelbr84/GarraRUST) gateway on your network |
+| **Optional — voice** | A machine with a GPU running `tools/servidor_voz.py` (Whisper + Chatterbox) |
+
+The app itself installs nothing heavy: no GPU libraries, no models, no
+`mediapipe`. It runs on the robot's ARM CPU alongside the other apps.
+
+## Install from your Reachy Mini
+
+1. Open the Reachy Mini dashboard and go to **Applications → Discover apps**
+2. Find **garra_reachy_mini** and press **Install**
+3. Press **Start**
+
+That is the whole installation. The panel comes up immediately and the robot is
+controllable straight away.
+
+### Opening the panel
+
+The app serves its panel on port **8042**. From the robot's own screen that is
+`http://localhost:8042/reachy`; from any other machine on your network:
 
 ```
-mic do robô ─→ /transcrever (Whisper) ─→ gateway do Garra (:3888, sessões reais)
-                                          │  reservas: garra ask → OpenRouter HTTP
-alto-falante ←─ /falar (Chatterbox pt) ←──┘
-                     ferramentas reachy__* ─→ ControladorRobo ─→ movimento real
+http://reachy-mini.local:8042/reachy?token=<token>
 ```
 
-> 📖 **Corpo, painel e ferramentas estão documentados à parte em
-> [DOCS_REACHY.md](DOCS_REACHY.md)**: arquitetura, endpoints, eventos em tempo
-> real, movimentos e expressões suportados, como adicionar novos, modo simulado
-> e solução de problemas (inclusive o Face Tracker quebrado do app store).
+The app prints that full URL, token included, in its log as soon as it starts —
+look at the app's output in the dashboard. The token is generated on first run
+and stored at `~/.config/garra_reachy_mini/token` with mode `600`, so the URL
+keeps working across restarts and you can bookmark it.
 
-Painel de controle: `http://localhost:3888/#/reachy` (aba "Reachy Mini" no
-console do Garra) ou direto em `http://localhost:8042/reachy`.
+> The **Settings** link the dashboard shows for any app points at
+> `http://0.0.0.0:8042`, which in a browser on your laptop means *your laptop*,
+> not the robot. That is a platform-wide limitation — the daemon passes the URL
+> through without rewriting it — so use the address above instead.
 
-> ⚠️ **Este app depende de infraestrutura pessoal do dono.** Ele precisa de um
-> `servidor_voz.py` (Whisper + Chatterbox, GPU recomendada) e de um Garra
-> configurado. Instalar só o Space no seu robô **não** funciona sem isso.
+### Start and stop
 
-## Modos de cérebro
+**Start** launches the app and hands it exclusive ownership of the robot.
+**Stop** sends `SIGINT`; the app shuts down its threads, camera and audio and
+releases the robot, normally in under two seconds. The daemon then returns the
+robot to its neutral pose by itself.
 
-| Modo | O que é | Memória | Ferramentas |
-|---|---|---|---|
-| **Gateway** (padrão) | `garra start` na porta 3888, sessões reais, agente `reachy_voice` | do Garra (servidor) | sim — pode delegar tarefas e avisar depois |
-| **garra ask** (reserva) | binário local, LLM puro | reenvio dos últimos turnos | não — avisa que está no modo básico |
-| **OpenRouter HTTP** (reserva) | chamada direta à API | reenvio dos últimos turnos | não |
+### Uninstall
 
-A troca é automática por turno: caiu o gateway, o app avisa uma vez e segue no
-modo básico; voltou, ele volta sozinho. Resultados de tarefas delegadas são
-falados quando chegam ao histórico da sessão (poll a cada ~4 s, apenas quando
-você está em silêncio). *Hoje* o endpoint de mensagens do gateway é síncrono —
-a API de tarefas assíncronas está especificada em `ESPEC_GATEWAY_TAREFAS.md`.
+**Applications → Installed → garra_reachy_mini → Remove.** That runs
+`pip uninstall` in the shared apps venv and deletes the app's metadata.
 
-## Onde o app roda (importante!)
-
-- **Desktop (recomendado hoje)**: o app roda no seu computador e controla o
-  robô pela rede. `127.0.0.1` funciona para tudo. Use `bash iniciar_local.sh`.
-- **Robô wireless via dashboard**: o app roda **dentro do Raspberry Pi** —
-  `127.0.0.1` passa a ser o Pi! Configure `GARRA_GATEWAY_URL` e `GARRA_VOZ_URL`
-  com o **IP do seu computador** (página de configurações em `:8042` ou env
-  vars no daemon). O `servidor_voz.py` escuta só em 127.0.0.1 por padrão; para
-  o robô alcançá-lo é preciso bind em 0.0.0.0 + firewall, túnel SSH ou
-  Tailscale. Não há binário `garra` para linux-aarch64 no release atual — no
-  Pi, o modo reserva usa OpenRouter por HTTP.
-
-> A página de configurações em `:8042` é servida pelo daemon em `0.0.0.0` **sem
-> autenticação** — qualquer dispositivo da sua rede a alcança. Por isso o
-> `GET /api/config` mascara a chave do gateway (`***`) e nunca devolve segredos.
-
-## Instalação (máquina que fará o papel de cérebro)
+Two things the daemon does *not* clean up, for any app:
 
 ```bash
-bash install_garra.sh     # instala o binário do garra p/ modo reserva (idempotente)
-garra init && garra start # modo completo (se ainda não tiver o gateway rodando)
+rm -rf ~/.config/garra_reachy_mini          # settings, session state, token, captures
+rm -rf ~/.cache/huggingface/hub/spaces--*   # downloaded app snapshots
 ```
 
-Chaves de API dos modos reserva: copie `.env.example` para
-`~/.config/garra_reachy_mini/.env` e **descomente** a chave que você usa, **ou**
-exporte `OPENROUTER_API_KEY` no ambiente do daemon. Nenhuma chave vai para o
-git (veja `.gitignore`), e placeholders (`coloque_sua_chave_aqui`) são tratados
-como ausentes — o robô avisa que não tem cérebro em vez de chamar a API com
-credencial inválida.
+## Configuration
 
-## Uso
+Everything is optional. Set it on the settings page (`http://<robot>:8042/`), or
+as an environment variable, or in `~/.config/garra_reachy_mini/.env`. The
+settings page wins over the defaults; environment variables win over both.
 
-```bash
-bash iniciar_local.sh                 # desktop: sobe voz + app; Ctrl+C encerra
-bash publicar.sh "mensagem"           # publica/atualiza este Space
-```
+### Conversation (optional)
 
-O `iniciar_local.sh` mata no Ctrl+C **apenas** o `servidor_voz.py` que ele
-mesmo subiu (libera a VRAM); um servidor que já estava de pé é reaproveitado e
-fica rodando.
-
-Pelo dashboard do robô: instale o Space, configure as URLs em `:8042` e dê
-play. O daemon encerra o app com SIGINT; o encerramento é limpo.
-
-Se o servidor de voz não estiver acessível, o app **não** desiste: ele registra
-o erro e fica tentando, relendo a configuração a cada rodada — assim a própria
-página `:8042` continua no ar para você corrigir o `GARRA_VOZ_URL`, e ele
-conecta sozinho quando a URL passar a responder (sem reiniciar).
-
-> O link da página no dashboard wireless usa `http://0.0.0.0:8042`, que só
-> funciona em `localhost`. É literal de propósito: o daemon lê essa string por
-> regex no fonte. De outra máquina, abra `http://<ip-do-robô>:8042`.
-
-## Variáveis de ambiente
-
-| Variável | Padrão | Para quê |
+| Variable | Default | Purpose |
 |---|---|---|
-| `GARRA_GATEWAY_URL` | `http://127.0.0.1:3888` | gateway do Garra |
-| `GARRA_GATEWAY_KEY` | lida do config.yml local | Bearer (necessária com `GARRAIA_LOCK_LEGACY`); também na página `:8042`, e nunca devolvida por ela |
-| `GARRA_AGENT_ID` | `reachy_voice` | agente nomeado (enviado a cada mensagem) |
-| `GARRA_GATEWAY_MODEL` | vazio | override de modelo no gateway |
-| `GARRA_VOZ_URL` | `http://127.0.0.1:8123` | servidor_voz (Whisper/Chatterbox) |
-| `GARRA_PROVIDER` / `GARRA_MODEL` | `openrouter` / `anthropic/claude-haiku-4.5` | modo reserva |
-| `GARRA_BIN` | descoberta automática | caminho do binário garra |
-| `GARRA_TIMEOUT_GATEWAY_S` / `GARRA_TIMEOUT_ASK_S` | 120 / 60 | timeouts |
-| `GARRA_HISTORICO_TURNOS` | 8 | memória reenviada nos modos reserva |
-| `GARRA_NOTIFICACOES_S` | 4.0 | intervalo do poll de notificações |
-| `GARRA_LIMIAR` | auto | limiar de voz fixo |
-| `GARRA_REACHY_DIR` | `~/.config/garra_reachy_mini` | config/estado locais |
+| `OPENROUTER_API_KEY` | — | Enables conversation through OpenRouter |
+| `GARRA_MODEL` | `anthropic/claude-haiku-4.5` | Model to use |
+| `GARRA_GATEWAY_URL` | `http://127.0.0.1:3888` | Garra gateway, if you run one |
+| `GARRA_GATEWAY_KEY` | — | Bearer token for the gateway |
+| `GARRA_USUARIO` | — | Your name, so the assistant can address you |
 
-## Problemas comuns
+With none of these set, the robot still listens and obeys the local shortcuts
+("stop", "dance"), but says once that conversation is not configured.
 
-- **"problema para falar com o provedor"** → chave de API errada/ausente
-  (`garra ask` saiu com código 69). Confira o `.env`.
-- **"demorei demais para pensar"** → timeout (código 124 / requests.Timeout).
-  Aumente `GARRA_TIMEOUT_*`.
-- **"modo completo está fora do ar"** → o gateway não respondeu; veja
-  `systemctl --user status garraia` na máquina do Garra.
-- **Robô mudo/ surdo** → outro app da Pollen segurando a mídia; o
-  `iniciar_local.sh` já chama `stop-current-app` antes de abrir.
-- **Log repetindo "Servidor de voz indisponível"** → é o comportamento
-  esperado: suba o `servidor_voz.py` ou corrija a URL em `:8042` e ele entra
-  sozinho. Nada de reiniciar o app.
-- **Pi (wireless)** → sem binário aarch64: compile com `cross` ou confie no
-  modo reserva OpenRouter.
+### Voice (optional)
 
-## Desenvolvimento
+Speech needs a companion server, because speech-to-text and text-to-speech do
+not fit on the robot's CPU. `tools/servidor_voz.py` in this repository runs
+Whisper and Chatterbox on a GPU machine:
 
-Estrutura: `config.py` (opções/persona), `voz.py` (cliente HTTP do
-servidor_voz), `gestos.py` (antenas), `cerebro.py` (gateway + reservas),
-`eventos.py` (fila de notificações), `armazenamento.py` (config/estado local),
-`main.py` (loop VAD + app do SDK). O app irmão `ponte_garraia.py` (com o
-Hermes) continua intacto no diretório pai.
+```bash
+pip install torch torchaudio faster-whisper chatterbox-tts fastapi uvicorn
+python tools/servidor_voz.py --host 0.0.0.0     # bind 0.0.0.0 so the robot reaches it
+```
+
+Then point the app at it with `GARRA_VOZ_URL=http://<your-machine>:8123`.
+
+### Network and behaviour
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GARRA_REACHY_BIND` | auto | `127.0.0.1` to keep the panel local-only |
+| `GARRA_REACHY_TOKEN` | auto-generated | API token |
+| `GARRA_REACHY_PORTA` | `8042`, else 8043–8046 | Panel port |
+| `GARRA_ROBO_API` | auto-detected | Robot daemon REST URL |
+| `GARRA_COMPORTAMENTO_AMBIENTE` | `true` | Ambient movement during conversation |
+| `GARRA_TRACKING_AMBIENTE` | `false` | Look at the user while talking |
+| `GARRA_CAMERA_FPS` | `12` | Camera capture rate |
+
+The full list is in [`.env.example`](.env.example).
+
+## Safety
+
+**This app moves a physical robot.**
+
+- Keep hands, hair and cables clear of the head and antennas while it runs.
+- Every movement passes through a fixed envelope — ±45° yaw, ±28° pitch, ±22°
+  roll, ±1.5 rad antennas, 0.15–6 s duration — enforced in `robo/limites.py`.
+  Requests outside it are clamped, not rejected, and the clamp is reported in
+  the response.
+- The AI model cannot send arbitrary poses. It picks from an allowlist of named
+  actions with validated parameters, and each one is clamped again before it
+  reaches the robot.
+- The emergency stop cuts the current move and **holds the pose** — it does not
+  return to neutral, because returning to neutral is itself a movement.
+  Recovering is two deliberate steps: clear the stop, then recentre.
+- Motors are re-enabled and the robot returns to zero by the daemon when the app
+  stops. Expect a short movement right after you press Stop.
+
+## Privacy
+
+- **Nothing leaves your network unless you configure it to.** With no API key
+  and no voice server, the app makes no outbound connections beyond your robot's
+  own daemon.
+- **With conversation enabled**, what you type or say is sent to the provider you
+  chose (OpenRouter, or your own Garra gateway) so it can reply.
+- **With voice enabled**, microphone audio is sent to the speech server *you* run
+  and pointed the app at.
+- **Camera frames stay on the robot.** They are served on your local network for
+  the panel and are never uploaded anywhere.
+- **No transcripts are written to disk.** Only settings, a session id and the
+  API token live in `~/.config/garra_reachy_mini/`. Photos you take with the
+  capture button are saved there too, and nowhere else.
+- **Credentials are never returned by the API.** `GET /api/config` masks the
+  gateway key; the panel can set it but never read it back.
+- On a wireless robot the panel listens on the network behind a token. Set
+  `GARRA_REACHY_BIND=127.0.0.1` to keep it strictly local.
+
+## Architecture
+
+```
+Reachy Mini (this app is the single owner of the robot)
+├── ControladorRobo ....... priority queue, preemption, e-stop, physical limits
+│    └── daemon REST ...... /api/move/goto (cancellable), tracking, apps
+├── FrameHub .............. one camera producer, fanned out to MJPEG/snapshot
+├── FastAPI :8042 ......... /reachy panel · REST · WebSocket events
+└── voice loop (optional) . VAD → speech-to-text → model → speech → speaker
+```
+
+One process owns the robot. The panel, the voice shortcuts and the AI tools all
+go through the same single-threaded executor, which is what stops two commands
+from fighting over the head. Movement goes through the daemon's REST API rather
+than the SDK's blocking `goto_target`, because that is the only path that can be
+cancelled mid-move — which is what makes the emergency stop real.
+
+Detailed documentation, in Portuguese, is in [`DOCS_REACHY.md`](DOCS_REACHY.md):
+endpoints, real-time events, the tool catalogue, how to add new movements, and
+troubleshooting.
+
+## Running from source
+
+```bash
+git clone https://github.com/GarraIA/garra-reachy-mini
+cd garra-reachy-mini
+pip install -e ".[dev]"
+
+python -m garra_reachy_mini.main --simulado   # panel with no robot at all
+pytest tests -q                               # 191 tests, no hardware needed
+```
+
+`--simulado` accepts every action and reports `executed: false` for all of them,
+so nothing can quietly pretend a movement happened.
+
+## Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| Panel says "limited" | Normal with no AI or voice configured. The banner lists what is missing. |
+| Cannot open the panel from another machine | Use `http://<robot>:8042/reachy?token=…`, not the dashboard's Settings link. Check the app log for the URL. |
+| `401` on every action | The token is missing from the URL. Open the tokenized URL again. |
+| Dances and expressions are empty | The move library is still loading from Hugging Face, or the daemon is unreachable. `catalog_ready` in `/api/robot/status` says which. |
+| Robot deaf or mute | Another app is holding the media. Stop it from the dashboard. |
+| Port is 8043 instead of 8042 | Something already holds 8042 — on a desktop, usually Pollen's `reachy-mini-control`. |
+| App does not stop | It gets `SIGINT` and 20 seconds before `SIGKILL`. If it is stuck, the daemon kills the process tree. |
+
+## Licence
+
+[Apache-2.0](LICENSE). Built on the [Reachy Mini
+SDK](https://github.com/pollen-robotics/reachy_mini) by Pollen Robotics.

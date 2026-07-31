@@ -9,7 +9,7 @@ APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="${GARRA_BIN_DIR:-$APP_DIR/bin}"
 DASH_DIR="${GARRA_REACHY_DIR:-$HOME/.config/garra_reachy_mini}"
 LOCAL_SRC="${GARRA_SRC_DIR:-$HOME/Documents/Projetos/GarraIA}"
-REPO_PUBLICO="michelbr84/GarraRUST"   # GarraIA/GarraIA é privado no GitHub
+REPO_PUBLICO="michelbr84/GarraRUST"   # instalador oficial do Garra
 
 diga()  { printf '\033[1;36m[garra]\033[0m %s\n' "$*"; }
 aviso() { printf '\033[1;33m[aviso]\033[0m %s\n' "$*"; }

@@ -30,6 +30,24 @@ body {
 
 .lema { color: var(--suave); max-width: 34rem; margin: 0 auto; }
 
+.acao { margin: 1.5rem 0 0; }
+
+.botao {
+  display: inline-block;
+  background: var(--destaque);
+  color: #fff;
+  text-decoration: none;
+  border-radius: 8px;
+  padding: 0.55rem 1.25rem;
+  font-weight: 600;
+}
+
+.botao:hover { filter: brightness(1.1); }
+
+.lista { margin: 0; padding-left: 1.25rem; }
+
+.lista li { margin: 0.4rem 0; }
+
 .container {
   max-width: 44rem;
   margin: 0 auto;

@@ -32,7 +32,7 @@ Para a parte de voz (mic → Whisper → Garra → Chatterbox → alto-falante),
 └───────────────────────────────────────────────────────────────────┘
                     │ WebSocket /ws/sdk + WebRTC + REST :8000
                     ▼
-              Reachy Mini @ 10.0.0.142 (daemon 1.9.0)
+              Reachy Mini @ 192.0.2.10 (daemon 1.9.0)
 ```
 
 `*` A porta preferida é 8042, mas no desktop o `reachy-mini-control` da Pollen
@@ -78,7 +78,7 @@ Garra Reachy Mini iniciado com sucesso.
   Web:        http://127.0.0.1:3888/
   Reachy UI:  http://127.0.0.1:3888/#/reachy   (direto: http://localhost:8043/reachy)
   API:        http://localhost:8043/api/robot
-  Status:     Reachy conectado (10.0.0.142, daemon 1.9.0)
+  Status:     Reachy conectado (192.0.2.10, daemon 1.9.0)
   Garra:      ativo
   Voz:        http://127.0.0.1:8123
   Mode:       hardware real

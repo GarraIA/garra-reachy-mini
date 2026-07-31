@@ -171,6 +171,22 @@ main {
 .card.largo { grid-column: span 2; }
 @media (max-width: 760px) { .card.largo { grid-column: span 1; } }
 
+/* No celular as pílulas embrulhavam numa coluna alta e empurravam o título e o
+   botão de parada para fora do alcance do polegar. Uma faixa que rola na
+   horizontal mantém o cabeçalho com uma linha só. */
+@media (max-width: 620px) {
+  header { flex-wrap: nowrap; gap: 8px; padding: 10px 12px; }
+  header h1 { font-size: 1rem; }
+  #pills-topo {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  #pills-topo::-webkit-scrollbar { display: none; }
+  #estop { flex-shrink: 0; }
+}
+
 .card > h2 {
   margin: 0 0 12px;
   font-size: 0.78rem;
@@ -354,4 +370,40 @@ body.estopped main { filter: saturate(0.65); }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ── faixa de serviços indisponíveis ───────────────────────────────────────
+   Instalado da loja, sem provedor de IA e sem servidor de voz, o app funciona
+   mas parcialmente. Sem esta faixa isso parece defeito; com ela, parece o que
+   é: configuração pendente, com a instrução do lado. */
+#faixa-servicos {
+  margin: 0 clamp(14px, 3vw, 28px) 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--garra-warning);
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--garra-warning) 10%, transparent);
+  font-size: 0.9rem;
+}
+
+#faixa-servicos[hidden] { display: none; }
+
+#faixa-servicos strong { display: block; margin-bottom: 6px; }
+
+#lista-servicos { margin: 0; padding-left: 1.1rem; }
+
+#lista-servicos li { margin: 3px 0; }
+
+#lista-servicos .dica { color: var(--garra-muted); }
+
+/* seletor de idioma no cabeçalho */
+#idioma {
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--garra-border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
 }

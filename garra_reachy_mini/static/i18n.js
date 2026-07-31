@@ -1,0 +1,467 @@
+/* Tradução do painel. Inglês por padrão, português para quem já está nele.
+ *
+ * O app é publicado numa loja internacional, então a interface precisa abrir em
+ * inglês para quem chega de fora. Quem tem o navegador em pt-* continua vendo
+ * português, e o seletor no cabeçalho grava a escolha — idioma é preferência,
+ * não geografia.
+ *
+ * Sem framework e sem build: um dicionário, `t()` para texto dinâmico e
+ * `data-i18n` no HTML para o estático.
+ */
+'use strict';
+
+const TEXTOS = {
+  en: {
+    'estop.botao': '■ STOP',
+    'estop.dica': 'Interrupt any movement right now (Esc)',
+    'estop.faixa': 'Emergency stop active. The robot is holding where it stopped — no new movement will be accepted.',
+    'estop.liberar': 'Clear',
+    'estop.liberar_centralizar': 'Clear and recentre',
+    'estop.evento': 'Emergency stop: movement interrupted',
+
+    'pill.conectando': 'connecting…',
+    'pill.modo': 'mode —',
+    'pill.ocioso': 'idle',
+    'pill.camera': 'camera',
+    'pill.eventos': 'events',
+    'pill.robo_conectado': 'robot connected',
+    'pill.robo_desconectado': 'robot disconnected',
+    'pill.estop': 'emergency stop',
+    'pill.sem_camera': 'no camera',
+    'pill.chat_indisponivel': 'chat unavailable',
+
+    'limitado.titulo': 'Running with limited features',
+
+    'servico.robot': 'Robot',
+    'servico.movement': 'Movement',
+    'servico.camera': 'Camera',
+    'servico.voice': 'Voice',
+    'servico.brain': 'Conversation',
+    'motivo.ok': 'ready',
+    'motivo.starting': 'starting…',
+    'motivo.unavailable': 'unavailable',
+    'motivo.unreachable': 'not reachable',
+    'motivo.not_configured': 'not configured',
+    'motivo.not_running': 'not running',
+    'motivo.stopped': 'stopped',
+    'motivo.simulated': 'simulated',
+    'motivo.no_daemon': 'robot daemon did not answer',
+    'motivo.no_frame': 'waiting for the first frame',
+    'motivo.no_audio_device': 'no audio device',
+    'motivo.disconnected': 'disconnected',
+    'motivo.connected': 'connected',
+    'motivo.gateway': 'Garra gateway',
+    'motivo.openrouter': 'OpenRouter',
+    'motivo.garra_bin': 'local garra binary',
+    'motivo.none': 'no provider configured',
+
+    'dica.simulated': 'Start the app from your Reachy Mini dashboard to drive a real robot.',
+    'dica.unreachable': 'Start the optional voice server and point GARRA_VOZ_URL at it.',
+    'dica.not_configured': 'Choose an AI provider on the settings page. Until then the robot listens but cannot reply.',
+    'dica.no_daemon': 'The robot daemon did not answer. Check GARRA_ROBO_API.',
+    'dica.no_frame': 'The camera stream needs a few seconds after start-up.',
+    'dica.no_audio_device': 'The robot reported no audio device. Check its microphone and speaker.',
+
+
+    'cfg.precedencia': 'Precedence: environment variable > value saved here > default. Changes take effect the next time the app starts.',
+    'cfg.abrir_painel': '→ Open the control panel',
+    'cfg.conversa': 'Conversation (optional)',
+    'cfg.conversa_nota': 'Leave all of this empty and the robot is still fully controllable — it just will not talk back. Nothing is sent anywhere until you set a provider.',
+    'cfg.gateway_url': 'Gateway URL',
+    'cfg.gateway_url_ajuda': 'Your own Garra gateway, if you run one. On the robot, use the IP of the machine running it.',
+    'cfg.agente': 'Named agent',
+    'cfg.modelo_gateway': 'Model (optional)',
+    'cfg.vazio_padrao': "empty = the gateway's default",
+    'cfg.chave_gateway': 'Gateway key (Bearer)',
+    'cfg.deixe_em_branco': 'leave blank to keep the current one',
+    'cfg.chave_ajuda': 'Never shown back. Type something to replace it.',
+    'cfg.voz': 'Voice (optional)',
+    'cfg.voz_url': 'Voice server URL',
+    'cfg.voz_ajuda': 'Speech does not fit on the robot CPU. Point this at a GPU machine running tools/servidor_voz.py.',
+    'cfg.reserva': 'Fallback provider',
+    'cfg.reserva_nota': 'Used when no gateway answers. Set OPENROUTER_API_KEY in the environment to enable it.',
+    'cfg.provider': 'Provider',
+    'cfg.modelo': 'Model',
+    'cfg.binario': 'garra binary (optional)',
+    'cfg.vazio_auto': 'empty = auto-discover',
+    'cfg.turnos': 'Turns of replayed memory',
+    'cfg.salvar': 'Save',
+    'cfg.efetiva': 'Configuration in effect right now',
+    'cfg.carregando': 'loading…',
+    'cfg.salvo': 'Saved. Applies the next time the app starts.',
+    'cfg.indisponivel': 'configuration unavailable ({erro}); retrying…',
+    'cfg.erro_ler': 'Could not read the configuration: {erro}',
+    'cfg.espere': 'wait for the configuration to load',
+    'cfg.nada_mudou': 'nothing changed',
+    'cfg.salvando': 'saving…',
+    'cfg.erro_generico': 'could not save',
+    'cfg.erro_salvar': 'Could not save: {erro}',
+
+    'status.titulo': 'System status',
+    'status.acordar': 'Wake up',
+    'status.dormir': 'Sleep',
+    'status.neutro': 'Neutral pose',
+    'status.tracking': 'Track face',
+    'status.no_ar': 'up for {min} min',
+    'status.sim': 'yes',
+    'status.nao': 'no',
+    'status.disponivel': 'available',
+    'status.indisponivel': 'unavailable',
+
+    'camera.titulo': 'Camera',
+    'camera.iniciar': 'Start',
+    'camera.parar': 'Stop',
+    'camera.atualizar': 'Refresh',
+    'camera.capturar': 'Capture',
+    'camera.fullscreen': 'Fullscreen',
+    'camera.parada': 'Stream stopped.',
+    'camera.indisponivel': "The robot's camera is not available.",
+    'camera.alt': 'Live stream from the robot camera',
+
+    'manual.titulo': 'Manual control',
+    'manual.joystick': 'Head direction: drag, or use the arrow keys',
+    'manual.intensidade': 'Intensity',
+    'manual.duracao': 'Duration',
+    'manual.antenas_cima': 'Antennas ↑',
+    'manual.antenas_baixo': 'Antennas ↓',
+    'manual.antenas_balancar': 'Wiggle',
+    'manual.antenas_neutro': 'Antennas —',
+
+    'expr.titulo': 'Expressions',
+    'expr.executar': 'Play',
+    'expr.disponiveis': '{n} available',
+    'expr.faltando': ' · {n} with no move on the robot',
+
+    'mov.titulo': 'Movements and dances',
+    'mov.dancar': 'Dance (random)',
+    'mov.cumprimentar': 'Greet',
+    'mov.sim': 'Nod yes',
+    'mov.nao': 'Shake no',
+    'mov.executar': 'Play',
+    'mov.conta': '{dancas} dances · {emocoes} emotions',
+
+    'rapidos.titulo': 'Quick commands',
+
+    'chat.titulo': 'Conversation',
+    'chat.placeholder': 'Ask for something — it can control the robot. Enter sends.',
+    'chat.enviar': 'Send',
+    'chat.fala_ligada': 'Speech: on',
+    'chat.fala_desligada': 'Speech: off',
+    'chat.fala_dica': 'Speak the replies through the robot speaker',
+    'chat.limpar': 'Clear conversation',
+    'chat.voce': 'you',
+    'chat.voce_voz': 'you (voice)',
+    'chat.erro': 'Could not reach the assistant: {erro}',
+    'chat.sem_gateway': 'No AI provider is configured, so chat is unavailable. The robot controls keep working — set a provider on the settings page to enable conversation.',
+
+    'apps.titulo': 'Robot apps',
+    'apps.carregando': 'Loading…',
+    'apps.vazio': 'No apps installed on the robot.',
+    'apps.atualizar': 'Refresh',
+    'apps.parar': 'Stop the current app',
+    'apps.reiniciar': 'Restart',
+    'apps.iniciando': 'starting {app} — this takes over the robot camera and audio',
+    'apps.erro': 'Could not list the apps: {erro}',
+
+    'logs.titulo': 'Events and errors',
+
+    'apps.conta': '{n} installed',
+    'rapido.dance': 'Dance',
+    'rapido.look_at': 'Look at me',
+    'rapido.greet': 'Say hello',
+    'rapido.happy': 'Happy',
+    'rapido.curious': 'Curious',
+    'rapido.nod': 'Nod',
+    'rapido.shake_head': 'Shake head',
+    'rapido.center': 'Center',
+    'rapido.sleep': 'Sleep',
+    'rapido.wake_up': 'Wake up',
+    'acao.concluida': '{acao} finished',
+
+    'lista.robo': 'Reachy Mini',
+    'lista.modo': 'Mode',
+    'lista.controlador': 'Controller',
+    'lista.motores': 'Motors',
+    'lista.camera': 'Camera',
+    'lista.camera_ativa': 'live ({n} viewer(s))',
+    'lista.tracking': 'Face tracking',
+    'lista.rosto': 'Face in view',
+    'lista.movimento': 'Movement',
+    'lista.fila': 'Queue',
+    'lista.fila_val': '{n} pending',
+    'lista.voz': 'Speech synthesis',
+    'lista.chat': 'Conversation',
+    'lista.latencia': 'Latency',
+    'lista.erros': 'Recent errors',
+    'lista.ligado': 'on',
+    'lista.desligado': 'off',
+    'lista.nenhum': 'none',
+    'lista.hardware_real': 'real hardware',
+
+    'ws.ao_vivo': 'events live',
+    'ws.offline': 'events offline',
+    'ws.api_fora': 'API is down',
+
+    'rot.turn_head': 'turned its head',
+    'rot.look_at': 'shifted its gaze',
+    'rot.set_expression': 'made an expression',
+    'rot.move_antennas': 'moved its antennas',
+    'rot.nod': 'nodded yes',
+    'rot.shake_head': 'shook its head',
+    'rot.greet': 'greeted',
+    'rot.dance': 'danced',
+    'rot.run_movement': 'played a movement',
+    'rot.return_to_neutral': 'returned to neutral',
+    'rot.wake_up': 'woke up',
+    'rot.sleep': 'went to sleep',
+    'rot.face_tracking': 'changed face tracking',
+    'rot.capture_image': 'captured an image',
+  },
+
+  pt: {
+    'estop.botao': '■ PARAR',
+    'estop.dica': 'Interrompe qualquer movimento agora (Esc)',
+    'estop.faixa': 'Parada de emergência ativa. O robô está travado onde parou — nenhum movimento novo será aceito.',
+    'estop.liberar': 'Liberar',
+    'estop.liberar_centralizar': 'Liberar e centralizar',
+    'estop.evento': 'Parada de emergência: movimentos interrompidos',
+
+    'pill.conectando': 'conectando…',
+    'pill.modo': 'modo —',
+    'pill.ocioso': 'ocioso',
+    'pill.camera': 'câmera',
+    'pill.eventos': 'eventos',
+    'pill.robo_conectado': 'robô conectado',
+    'pill.robo_desconectado': 'robô desconectado',
+    'pill.estop': 'parada de emergência',
+    'pill.sem_camera': 'sem câmera',
+    'pill.chat_indisponivel': 'chat indisponível',
+
+    'limitado.titulo': 'Rodando com recursos limitados',
+
+    'servico.robot': 'Robô',
+    'servico.movement': 'Movimento',
+    'servico.camera': 'Câmera',
+    'servico.voice': 'Voz',
+    'servico.brain': 'Conversa',
+    'motivo.ok': 'pronto',
+    'motivo.starting': 'subindo…',
+    'motivo.unavailable': 'indisponível',
+    'motivo.unreachable': 'não respondeu',
+    'motivo.not_configured': 'não configurado',
+    'motivo.not_running': 'não está rodando',
+    'motivo.stopped': 'parado',
+    'motivo.simulated': 'simulado',
+    'motivo.no_daemon': 'o daemon do robô não respondeu',
+    'motivo.no_frame': 'esperando o primeiro quadro',
+    'motivo.no_audio_device': 'sem dispositivo de áudio',
+    'motivo.disconnected': 'desconectado',
+    'motivo.connected': 'conectado',
+    'motivo.gateway': 'gateway do Garra',
+    'motivo.openrouter': 'OpenRouter',
+    'motivo.garra_bin': 'binário garra local',
+    'motivo.none': 'nenhum provedor configurado',
+
+    'dica.simulated': 'Inicie o app pelo painel do seu Reachy Mini para controlar um robô de verdade.',
+    'dica.unreachable': 'Suba o servidor de voz opcional e aponte GARRA_VOZ_URL para ele.',
+    'dica.not_configured': 'Escolha um provedor de IA na página de configurações. Até lá o robô ouve mas não responde.',
+    'dica.no_daemon': 'O daemon do robô não respondeu. Confira GARRA_ROBO_API.',
+    'dica.no_frame': 'A câmera leva alguns segundos para começar depois do arranque.',
+    'dica.no_audio_device': 'O robô informou que não há dispositivo de áudio. Confira microfone e alto-falante.',
+
+
+    'cfg.precedencia': 'Precedência: variável de ambiente > valor salvo aqui > padrão. Mudanças valem no próximo início do app.',
+    'cfg.abrir_painel': '→ Abrir o painel de controle',
+    'cfg.conversa': 'Conversa (opcional)',
+    'cfg.conversa_nota': 'Deixe tudo isto vazio e o robô continua totalmente controlável — ele só não responde. Nada é enviado a lugar nenhum até você escolher um provedor.',
+    'cfg.gateway_url': 'URL do gateway',
+    'cfg.gateway_url_ajuda': 'Seu próprio gateway do Garra, se você roda um. No robô, use o IP da máquina que o executa.',
+    'cfg.agente': 'Agente nomeado',
+    'cfg.modelo_gateway': 'Modelo (opcional)',
+    'cfg.vazio_padrao': 'vazio = padrão do gateway',
+    'cfg.chave_gateway': 'Chave do gateway (Bearer)',
+    'cfg.deixe_em_branco': 'deixe em branco para não mexer',
+    'cfg.chave_ajuda': 'Nunca é exibida de volta. Digite algo para trocar.',
+    'cfg.voz': 'Voz (opcional)',
+    'cfg.voz_url': 'URL do servidor de voz',
+    'cfg.voz_ajuda': 'Síntese e transcrição não cabem na CPU do robô. Aponte para uma máquina com GPU rodando tools/servidor_voz.py.',
+    'cfg.reserva': 'Provedor reserva',
+    'cfg.reserva_nota': 'Usado quando nenhum gateway responde. Defina OPENROUTER_API_KEY no ambiente para ligá-lo.',
+    'cfg.provider': 'Provider',
+    'cfg.modelo': 'Modelo',
+    'cfg.binario': 'Binário do garra (opcional)',
+    'cfg.vazio_auto': 'vazio = descoberta automática',
+    'cfg.turnos': 'Turnos de memória reenviada',
+    'cfg.salvar': 'Salvar',
+    'cfg.efetiva': 'Configuração efetiva agora',
+    'cfg.carregando': 'carregando…',
+    'cfg.salvo': 'Salvo. Vale no próximo início do app.',
+    'cfg.indisponivel': 'configuração indisponível ({erro}); tentando de novo…',
+    'cfg.erro_ler': 'Não consegui ler a configuração: {erro}',
+    'cfg.espere': 'espere a configuração carregar',
+    'cfg.nada_mudou': 'nada mudou',
+    'cfg.salvando': 'salvando…',
+    'cfg.erro_generico': 'erro ao salvar',
+    'cfg.erro_salvar': 'Não consegui salvar: {erro}',
+
+    'status.titulo': 'Status do sistema',
+    'status.acordar': 'Acordar',
+    'status.dormir': 'Dormir',
+    'status.neutro': 'Posição neutra',
+    'status.tracking': 'Rastrear rosto',
+    'status.no_ar': 'no ar há {min} min',
+    'status.sim': 'sim',
+    'status.nao': 'não',
+    'status.disponivel': 'disponível',
+    'status.indisponivel': 'indisponível',
+
+    'camera.titulo': 'Câmera',
+    'camera.iniciar': 'Iniciar',
+    'camera.parar': 'Parar',
+    'camera.atualizar': 'Atualizar',
+    'camera.capturar': 'Capturar',
+    'camera.fullscreen': 'Tela cheia',
+    'camera.parada': 'Transmissão parada.',
+    'camera.indisponivel': 'A câmera do robô não está disponível.',
+    'camera.alt': 'Transmissão ao vivo da câmera do robô',
+
+    'manual.titulo': 'Controle manual',
+    'manual.joystick': 'Direção da cabeça: arraste, ou use as setas do teclado',
+    'manual.intensidade': 'Intensidade',
+    'manual.duracao': 'Duração',
+    'manual.antenas_cima': 'Antenas ↑',
+    'manual.antenas_baixo': 'Antenas ↓',
+    'manual.antenas_balancar': 'Balançar',
+    'manual.antenas_neutro': 'Antenas —',
+
+    'expr.titulo': 'Expressões',
+    'expr.executar': 'Executar',
+    'expr.disponiveis': '{n} disponíveis',
+    'expr.faltando': ' · {n} sem move no robô',
+
+    'mov.titulo': 'Movimentos e danças',
+    'mov.dancar': 'Dançar (aleatória)',
+    'mov.cumprimentar': 'Cumprimentar',
+    'mov.sim': 'Que sim',
+    'mov.nao': 'Que não',
+    'mov.executar': 'Executar',
+    'mov.conta': '{dancas} danças · {emocoes} emoções',
+
+    'rapidos.titulo': 'Comandos rápidos',
+
+    'chat.titulo': 'Conversa',
+    'chat.placeholder': 'Peça algo — ele controla o robô. Enter envia.',
+    'chat.enviar': 'Enviar',
+    'chat.fala_ligada': 'Fala: ligada',
+    'chat.fala_desligada': 'Fala: desligada',
+    'chat.fala_dica': 'Falar as respostas pelo alto-falante do robô',
+    'chat.limpar': 'Limpar conversa',
+    'chat.voce': 'você',
+    'chat.voce_voz': 'você (voz)',
+    'chat.erro': 'Não consegui falar com o assistente: {erro}',
+    'chat.sem_gateway': 'Nenhum provedor de IA está configurado, então o chat fica indisponível. Os controles do robô continuam funcionando — escolha um provedor na página de configurações para liberar a conversa.',
+
+    'apps.titulo': 'Aplicativos do robô',
+    'apps.carregando': 'Carregando…',
+    'apps.vazio': 'Nenhum app instalado no robô.',
+    'apps.atualizar': 'Atualizar',
+    'apps.parar': 'Parar o app atual',
+    'apps.reiniciar': 'Reiniciar',
+    'apps.iniciando': 'iniciando {app} — isso toma a câmera e o áudio do robô',
+    'apps.erro': 'Não consegui listar os apps: {erro}',
+
+    'logs.titulo': 'Eventos e erros',
+
+    'apps.conta': '{n} instalado(s)',
+    'rapido.dance': 'Dançar',
+    'rapido.look_at': 'Olhe para mim',
+    'rapido.greet': 'Diga oi',
+    'rapido.happy': 'Feliz',
+    'rapido.curious': 'Curioso',
+    'rapido.nod': 'Que sim',
+    'rapido.shake_head': 'Que não',
+    'rapido.center': 'Centralizar',
+    'rapido.sleep': 'Dormir',
+    'rapido.wake_up': 'Acordar',
+    'acao.concluida': '{acao} concluído',
+
+    'lista.robo': 'Reachy Mini',
+    'lista.modo': 'Modo',
+    'lista.controlador': 'Controlador',
+    'lista.motores': 'Motores',
+    'lista.camera': 'Câmera',
+    'lista.camera_ativa': 'ativa ({n} espectador(es))',
+    'lista.tracking': 'Rastreamento de rosto',
+    'lista.rosto': 'Rosto à vista',
+    'lista.movimento': 'Movimento',
+    'lista.fila': 'Fila',
+    'lista.fila_val': '{n} pendente(s)',
+    'lista.voz': 'Síntese de voz',
+    'lista.chat': 'Conversa',
+    'lista.latencia': 'Latência',
+    'lista.erros': 'Erros recentes',
+    'lista.ligado': 'ligado',
+    'lista.desligado': 'desligado',
+    'lista.nenhum': 'nenhum',
+    'lista.hardware_real': 'hardware real',
+
+    'ws.ao_vivo': 'eventos ao vivo',
+    'ws.offline': 'eventos offline',
+    'ws.api_fora': 'API fora do ar',
+
+    'rot.turn_head': 'virou a cabeça',
+    'rot.look_at': 'mudou o olhar',
+    'rot.set_expression': 'fez uma expressão',
+    'rot.move_antennas': 'mexeu as antenas',
+    'rot.nod': 'fez que sim',
+    'rot.shake_head': 'fez que não',
+    'rot.greet': 'cumprimentou',
+    'rot.dance': 'dançou',
+    'rot.run_movement': 'executou um movimento',
+    'rot.return_to_neutral': 'voltou ao neutro',
+    'rot.wake_up': 'acordou',
+    'rot.sleep': 'foi dormir',
+    'rot.face_tracking': 'mudou o rastreamento',
+    'rot.capture_image': 'capturou uma imagem',
+  },
+};
+
+const IDIOMA = (() => {
+  // `?lang=pt` vence tudo: é como se manda um link já no idioma certo, e é o
+  // único jeito de conferir a tradução num navegador sem interação.
+  const daUrl = new URLSearchParams(location.search).get('lang');
+  if (daUrl && TEXTOS[daUrl]) return daUrl;
+  try {
+    const salvo = localStorage.getItem('garra_idioma');
+    if (salvo && TEXTOS[salvo]) return salvo;
+  } catch { /* modo privado sem storage */ }
+  return (navigator.language || 'en').toLowerCase().startsWith('pt') ? 'pt' : 'en';
+})();
+
+/** Texto traduzido. `{chave}` em `vars` é substituído; chave desconhecida
+ *  volta como ela mesma, para o buraco aparecer em vez de virar string vazia. */
+function t(chave, vars) {
+  let texto = (TEXTOS[IDIOMA] && TEXTOS[IDIOMA][chave]) || TEXTOS.en[chave] || chave;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) texto = texto.split(`{${k}}`).join(v);
+  }
+  return texto;
+}
+
+/** Aplica `data-i18n` (texto) e `data-i18n-<atributo>` no DOM já montado. */
+function aplicarTraducoes(raiz = document) {
+  raiz.querySelectorAll('[data-i18n]').forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  for (const attr of ['title', 'placeholder', 'aria-label', 'alt']) {
+    raiz.querySelectorAll(`[data-i18n-${attr}]`).forEach((el) => {
+      el.setAttribute(attr, t(el.getAttribute(`data-i18n-${attr}`)));
+    });
+  }
+  document.documentElement.lang = IDIOMA === 'pt' ? 'pt-BR' : 'en';
+}
+
+function trocarIdioma(novo) {
+  try { localStorage.setItem('garra_idioma', novo); } catch { /* sem storage */ }
+  location.reload();
+}

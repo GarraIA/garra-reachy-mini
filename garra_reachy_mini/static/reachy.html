@@ -1,12 +1,15 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reachy Mini — Garra</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Sem bloquear o render: o robô pode estar numa rede sem saída para a
+     internet, e aí o painel esperaria o DNS estourar antes de desenhar. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="/static/reachy.css">
 </head>
 <body>
@@ -14,138 +17,148 @@
 <header>
   <h1><span class="logo">◉</span> Reachy Mini</h1>
   <div id="pills-topo">
-    <span class="pill" id="p-conexao"><span class="status-dot offline"></span> conectando…</span>
-    <span class="pill" id="p-modo">modo —</span>
-    <span class="pill" id="p-estado">ocioso</span>
-    <span class="pill" id="p-camera"><span class="status-dot offline"></span> câmera</span>
-    <span class="pill" id="p-eventos"><span class="status-dot offline"></span> eventos</span>
+    <span class="pill" id="p-conexao"><span class="status-dot offline"></span> <span data-i18n="pill.conectando"></span></span>
+    <span class="pill" id="p-modo" data-i18n="pill.modo"></span>
+    <span class="pill" id="p-estado" data-i18n="pill.ocioso"></span>
+    <span class="pill" id="p-camera"><span class="status-dot offline"></span> <span data-i18n="pill.camera"></span></span>
+    <span class="pill" id="p-eventos"><span class="status-dot offline"></span> <span data-i18n="pill.eventos"></span></span>
   </div>
-  <button id="estop" class="perigo" title="Interrompe qualquer movimento agora (Esc)">■ PARAR</button>
+  <select id="idioma" aria-label="Language / Idioma">
+    <option value="en">EN</option>
+    <option value="pt">PT</option>
+  </select>
+  <button id="estop" class="perigo" data-i18n="estop.botao" data-i18n-title="estop.dica"></button>
 </header>
 
 <div id="faixa-estop">
-  <span>Parada de emergência ativa. O robô está travado onde parou — nenhum movimento novo será aceito.</span>
-  <button id="btn-liberar" class="primario">Liberar</button>
-  <button id="btn-neutro-apos">Liberar e centralizar</button>
+  <span data-i18n="estop.faixa"></span>
+  <button id="btn-liberar" class="primario" data-i18n="estop.liberar"></button>
+  <button id="btn-neutro-apos" data-i18n="estop.liberar_centralizar"></button>
+</div>
+
+<div id="faixa-servicos" hidden>
+  <strong data-i18n="limitado.titulo"></strong>
+  <ul id="lista-servicos"></ul>
 </div>
 
 <main>
 
   <!-- ── status ──────────────────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Status do sistema <span class="conta" id="uptime"></span></h2>
+    <h2><span data-i18n="status.titulo"></span> <span class="conta" id="uptime"></span></h2>
     <div class="status-lista" id="status-lista"></div>
     <div class="linha" style="margin-top:12px">
-      <button data-acao="wake_up">Acordar</button>
-      <button data-acao="sleep">Dormir</button>
-      <button id="btn-neutro">Posição neutra</button>
-      <button id="btn-tracking">Rastrear rosto</button>
+      <button data-acao="wake_up" data-i18n="status.acordar"></button>
+      <button data-acao="sleep" data-i18n="status.dormir"></button>
+      <button id="btn-neutro" data-i18n="status.neutro"></button>
+      <button id="btn-tracking" data-i18n="status.tracking"></button>
     </div>
   </section>
 
   <!-- ── câmera ──────────────────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Câmera <span class="conta" id="camera-info"></span></h2>
+    <h2><span data-i18n="camera.titulo"></span> <span class="conta" id="camera-info"></span></h2>
     <div class="moldura-camera" id="moldura-camera">
-      <img id="video" alt="Transmissão ao vivo da câmera do robô">
-      <div class="aviso-camera" id="aviso-camera">Transmissão parada.</div>
+      <img id="video" data-i18n-alt="camera.alt" alt="">
+      <div class="aviso-camera" id="aviso-camera" data-i18n="camera.parada"></div>
     </div>
     <div class="linha" style="margin-top:10px">
-      <button id="btn-stream" class="primario">Iniciar</button>
-      <button id="btn-atualizar">Atualizar</button>
-      <button id="btn-capturar">Capturar</button>
-      <button id="btn-fullscreen">Tela cheia</button>
+      <button id="btn-stream" class="primario" data-i18n="camera.iniciar"></button>
+      <button id="btn-atualizar" data-i18n="camera.atualizar"></button>
+      <button id="btn-capturar" data-i18n="camera.capturar"></button>
+      <button id="btn-fullscreen" data-i18n="camera.fullscreen"></button>
     </div>
   </section>
 
   <!-- ── controle manual ─────────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Controle manual</h2>
+    <h2 data-i18n="manual.titulo"></h2>
     <div class="joystick" id="joystick" role="application"
-         aria-label="Direção da cabeça: arraste, ou use as setas do teclado" tabindex="0">
+         data-i18n-aria-label="manual.joystick" aria-label="" tabindex="0">
       <div class="knob" id="knob"></div>
     </div>
     <div class="controle-slider">
-      <label>Intensidade <b id="v-intensidade">0,60</b></label>
+      <label><span data-i18n="manual.intensidade"></span> <b id="v-intensidade">0.60</b></label>
       <input type="range" id="intensidade" min="0.05" max="1" step="0.05" value="0.6">
     </div>
     <div class="controle-slider">
-      <label>Duração <b id="v-duracao">0,8 s</b></label>
+      <label><span data-i18n="manual.duracao"></span> <b id="v-duracao">0.8 s</b></label>
       <input type="range" id="duracao" min="0.2" max="3" step="0.1" value="0.8">
     </div>
     <div class="grade-botoes" style="margin-top:10px">
-      <button data-antenas="up">Antenas ↑</button>
-      <button data-antenas="down">Antenas ↓</button>
-      <button data-antenas="wiggle">Balançar</button>
-      <button data-antenas="neutral">Antenas —</button>
+      <button data-antenas="up" data-i18n="manual.antenas_cima"></button>
+      <button data-antenas="down" data-i18n="manual.antenas_baixo"></button>
+      <button data-antenas="wiggle" data-i18n="manual.antenas_balancar"></button>
+      <button data-antenas="neutral" data-i18n="manual.antenas_neutro"></button>
     </div>
   </section>
 
   <!-- ── expressões ──────────────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Expressões <span class="conta" id="conta-expressoes"></span></h2>
+    <h2><span data-i18n="expr.titulo"></span> <span class="conta" id="conta-expressoes"></span></h2>
     <div class="grade-botoes" id="expressoes-principais"></div>
     <div class="linha" style="margin-top:12px">
       <select id="sel-emocao" style="flex:1"></select>
-      <button id="btn-emocao">Executar</button>
+      <button id="btn-emocao" data-i18n="expr.executar"></button>
     </div>
   </section>
 
   <!-- ── movimentos e danças ─────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Movimentos e danças <span class="conta" id="conta-dancas"></span></h2>
+    <h2><span data-i18n="mov.titulo"></span> <span class="conta" id="conta-dancas"></span></h2>
     <div class="linha">
-      <button data-acao="dance" class="primario">Dançar (aleatória)</button>
-      <button data-acao="greet">Cumprimentar</button>
-      <button data-acao="nod">Que sim</button>
-      <button data-acao="shake_head">Que não</button>
+      <button data-acao="dance" class="primario" data-i18n="mov.dancar"></button>
+      <button data-acao="greet" data-i18n="mov.cumprimentar"></button>
+      <button data-acao="nod" data-i18n="mov.sim"></button>
+      <button data-acao="shake_head" data-i18n="mov.nao"></button>
     </div>
     <div class="linha" style="margin-top:10px">
       <select id="sel-danca" style="flex:1"></select>
-      <button id="btn-danca">Executar</button>
+      <button id="btn-danca" data-i18n="mov.executar"></button>
     </div>
   </section>
 
   <!-- ── comandos rápidos ────────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Comandos rápidos</h2>
+    <h2 data-i18n="rapidos.titulo"></h2>
     <div class="grade-botoes" id="rapidos"></div>
   </section>
 
   <!-- ── chat ────────────────────────────────────────────────────────────── -->
   <section class="card glass-panel largo">
-    <h2>Conversa com o Garra <span class="conta" id="chat-info"></span></h2>
+    <h2><span data-i18n="chat.titulo"></span> <span class="conta" id="chat-info"></span></h2>
     <div class="chat-corpo" id="chat-corpo"></div>
     <div class="chat-entrada">
-      <textarea id="chat-texto" rows="2" placeholder="Peça algo ao Garra — ele controla o robô. Enter envia."></textarea>
-      <button id="btn-enviar" class="primario">Enviar</button>
+      <textarea id="chat-texto" rows="2" data-i18n-placeholder="chat.placeholder" placeholder=""></textarea>
+      <button id="btn-enviar" class="primario" data-i18n="chat.enviar"></button>
     </div>
     <div class="linha" style="margin-top:9px">
-      <button id="btn-falar" title="Falar as respostas pelo alto-falante do robô">Fala: desligada</button>
-      <button id="btn-limpar-chat">Limpar conversa</button>
+      <button id="btn-falar" data-i18n-title="chat.fala_dica" data-i18n="chat.fala_desligada"></button>
+      <button id="btn-limpar-chat" data-i18n="chat.limpar"></button>
       <span class="pill" id="p-chat">—</span>
     </div>
   </section>
 
   <!-- ── apps ────────────────────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Aplicativos do robô <span class="conta" id="conta-apps"></span></h2>
-    <div class="lista-apps" id="lista-apps"><div class="vazio">Carregando…</div></div>
+    <h2><span data-i18n="apps.titulo"></span> <span class="conta" id="conta-apps"></span></h2>
+    <div class="lista-apps" id="lista-apps"><div class="vazio" data-i18n="apps.carregando"></div></div>
     <div class="linha" style="margin-top:10px">
-      <button id="btn-apps-atualizar">Atualizar</button>
-      <button id="btn-app-parar">Parar o app atual</button>
-      <button id="btn-app-reiniciar">Reiniciar</button>
+      <button id="btn-apps-atualizar" data-i18n="apps.atualizar"></button>
+      <button id="btn-app-parar" data-i18n="apps.parar"></button>
+      <button id="btn-app-reiniciar" data-i18n="apps.reiniciar"></button>
     </div>
   </section>
 
   <!-- ── logs ────────────────────────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2>Eventos e erros <span class="conta" id="conta-eventos"></span></h2>
+    <h2><span data-i18n="logs.titulo"></span> <span class="conta" id="conta-eventos"></span></h2>
     <div class="logs" id="logs"></div>
   </section>
 
 </main>
 
+<script src="/static/i18n.js"></script>
 <script src="/static/reachy.js"></script>
 </body>
 </html>
