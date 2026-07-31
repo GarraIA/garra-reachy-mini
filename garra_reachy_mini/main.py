@@ -694,6 +694,13 @@ class GarraReachyMini(ReachyMiniApp):
                     if novo_cerebro.disponivel and not cerebro.disponivel:
                         log.info("Cérebro voltou (%s).", novo_cerebro.descrever()[1])
                         cerebro = novo_cerebro
+                    # E a voz? Esperar o STT falhar três vezes para perceber que
+                    # ela caiu custa três falas do usuário, cada uma até o
+                    # timeout de 60 s. Uma sondagem barata enquanto ninguém fala
+                    # devolve o app ao supervisor em segundos.
+                    if not voz.pronto():
+                        log.warning("Servidor de voz sumiu; voltando ao modo sem voz.")
+                        return
 
                 if self._falhas_voz >= FALHAS_VOZ_ATE_DESISTIR:
                     # A voz caiu no meio da conversa. Voltar ao supervisor faz o
