@@ -12,7 +12,9 @@ First public release, and the first that a stranger can install and use.
   priority queue with real preemption, a formal state machine
   (`IDLE ⇄ RUNNING → STOPPING → ESTOPPED → RECOVERING`) and a physical envelope
   every angle passes through.
-- **Emergency stop** that cuts the current move in ~90 ms and holds the pose. It
+- **Emergency stop** that costs one round-trip to the robot daemon — local, and
+  therefore near-instant, when the app runs on the robot; measured 190–640 ms
+  from a desktop over Wi-Fi, where the network dominates. It holds the pose,
   never authenticates and never auto-recovers; clearing it and recentring are
   two deliberate steps.
 - **Native face tracking** using the SDK's YuNet/ONNX tracker inside the daemon.

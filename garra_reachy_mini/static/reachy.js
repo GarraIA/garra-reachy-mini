@@ -204,7 +204,7 @@ function tratarEvento(e) {
       atualizarStatus();
       break;
     case 'robot.estop_cleared':
-      registrarLog('parada liberada', 'ok'); atualizarStatus(); break;
+      registrarLog(t('log.parada_liberada'), 'ok'); atualizarStatus(); break;
     case 'robot.error':
       registrarLog(`${e.action}: ${e.error}`, 'err'); break;
     case 'chat.message':
@@ -228,7 +228,7 @@ function registrarLog(texto, classe = '') {
   caixa.appendChild(el);
   while (caixa.childElementCount > 200) caixa.removeChild(caixa.firstChild);
   caixa.scrollTop = caixa.scrollHeight;
-  $('conta-eventos').textContent = `${++nLogs} evento(s)`;
+  $('conta-eventos').textContent = t('log.eventos', { n: ++nLogs });
 }
 
 // ─── chat ────────────────────────────────────────────────────────────────────
@@ -258,7 +258,7 @@ async function enviarMensagem() {
   addMsg('user', texto);
   estado.enviando = true;
   $('btn-enviar').disabled = true;
-  $('btn-enviar').textContent = 'Pensando…';
+  $('btn-enviar').textContent = t('chat.pensando');
   try {
     const r = await api('/api/chat/enviar', {
       method: 'POST',
@@ -276,7 +276,7 @@ async function enviarMensagem() {
   } finally {
     estado.enviando = false;
     $('btn-enviar').disabled = false;
-    $('btn-enviar').textContent = 'Enviar';
+    $('btn-enviar').textContent = t('chat.enviar');
   }
 }
 
@@ -417,9 +417,9 @@ async function carregarApps() {
         <span class="status-dot ${ativo ? '' : 'offline'}"></span>
         <div class="meio">
           <div class="nome">${esc(a.name)}</div>
-          <div class="desc">${oficial ? 'oficial Pollen' : 'de terceiros'}${a.description ? ' · ' + esc(a.description.slice(0, 70)) : ''}</div>
+          <div class="desc">${esc(t(oficial ? 'apps.oficial' : 'apps.terceiros'))}${a.description ? ' · ' + esc(a.description.slice(0, 70)) : ''}</div>
         </div>
-        <button data-app="${esc(a.name)}" ${ativo ? 'disabled' : ''}>${ativo ? 'rodando' : 'iniciar'}</button>
+        <button data-app="${esc(a.name)}" ${ativo ? 'disabled' : ''}>${esc(t(ativo ? 'apps.rodando' : 'apps.iniciar'))}</button>
       </div>`;
     }).join('') : `<div class="vazio">${esc(t('apps.vazio'))}</div>`;
     caixa.querySelectorAll('[data-app]').forEach((b) => b.addEventListener('click', async () => {
@@ -428,7 +428,7 @@ async function carregarApps() {
       // "quebrar" sozinho.
       registrarLog(t('apps.iniciando', { app: b.dataset.app }));
       await api(`/api/robot/apps/${encodeURIComponent(b.dataset.app)}/start`, { method: 'POST' })
-        .catch((e) => registrarLog(`falha ao iniciar: ${e.message}`, 'err'));
+        .catch((e) => registrarLog(t('apps.falha_iniciar', { erro: e.message }), 'err'));
       carregarApps();
     }));
   } catch (e) {
@@ -477,7 +477,7 @@ function ligar() {
   $('btn-fullscreen').addEventListener('click', () => {
     const m = $('moldura-camera');
     if (document.fullscreenElement) document.exitFullscreen();
-    else m.requestFullscreen?.().catch(() => registrarLog('tela cheia recusada pelo navegador'));
+    else m.requestFullscreen?.().catch(() => registrarLog(t('log.fullscreen_recusado')));
   });
 
   $('btn-enviar').addEventListener('click', enviarMensagem);
@@ -492,7 +492,7 @@ function ligar() {
   $('btn-limpar-chat').addEventListener('click', async () => {
     await api('/api/chat/limpar', { method: 'POST' }).catch(() => {});
     $('chat-corpo').innerHTML = '';
-    registrarLog('conversa limpa');
+    registrarLog(t('log.conversa_limpa'));
   });
 
   $('btn-apps-atualizar').addEventListener('click', carregarApps);

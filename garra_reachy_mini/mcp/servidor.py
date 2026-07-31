@@ -63,13 +63,13 @@ QUANDO_USAR = {
     "shake_head": "Use para 'faça que não', 'discorde', 'shake your head'.",
     "greet": "Use para 'cumprimente', 'diga oi com o corpo', 'say hello'.",
     "dance": "Use para 'dance', 'dance comigo', 'dance for me'.",
-    "run_movement": "Use quando o Michel pedir um movimento pelo nome exato da biblioteca.",
+    "run_movement": "Use quando pedirem um movimento pelo nome exato da biblioteca.",
     "face_tracking": "Use para 'me siga com o olhar', 'pare de me seguir'.",
     "return_to_neutral": "Use para 'volte para a posição inicial', 'centralize', 'reset'.",
     "wake_up": "Use para 'acorde', 'wake up'.",
     "sleep": "Use para 'vá dormir', 'go to sleep'.",
     "stop": "Use IMEDIATAMENTE para 'pare', 'para', 'stop', 'chega' — sem pedir confirmação.",
-    "clear_estop": "Use só depois de uma parada de emergência, quando o Michel pedir para voltar.",
+    "clear_estop": "Use só depois de uma parada de emergência, quando pedirem para voltar.",
     "list_apps": "Use para 'quais apps o robô tem', antes de iniciar um app.",
     "start_app": "Use para 'abra o app X'. Confira o nome com list_apps antes.",
     "stop_app": "Use para 'feche o app'.",
@@ -78,7 +78,7 @@ QUANDO_USAR = {
 }
 
 REGRA_HONESTIDADE = (
-    "Só diga ao Michel que o robô se mexeu se a resposta trouxer executed=true. "
+    "Só diga que o robô se mexeu se a resposta trouxer executed=true. "
     "Com executed=false o movimento NÃO aconteceu: diga o que a mensagem explica."
 )
 
@@ -170,7 +170,7 @@ def _chamar(nome: str, args: dict[str, Any]) -> tuple[str, bool]:
         return (
             "O controlador do robô não está no ar (procurei nas portas "
             f"{', '.join(str(p) for p in PORTAS_CANDIDATAS)} do localhost). "
-            "O robô NÃO se mexeu. Diga isso ao Michel e sugira conferir se o "
+            "O robô NÃO se mexeu. Diga isso e sugira conferir se o "
             "`iniciar_local.sh` está rodando.",
             True,
         )
@@ -184,7 +184,7 @@ def _chamar(nome: str, args: dict[str, Any]) -> tuple[str, bool]:
         _api_descoberta_reset()
         return (
             f"Não consegui falar com o controlador do robô em {base} "
-            f"({type(e).__name__}). O robô NÃO se mexeu. Diga isso ao Michel e "
+            f"({type(e).__name__}). O robô NÃO se mexeu. Diga isso e "
             "sugira conferir se o `iniciar_local.sh` está rodando.",
             True,
         )
@@ -328,7 +328,7 @@ def tratar(msg: dict[str, Any]) -> None:
             log(f"erro inesperado em {nome}: {type(e).__name__}: {e}")
             texto = (
                 f"A ferramenta {nome} falhou por um erro interno, então o robô NÃO se "
-                "mexeu. Diga isso ao Michel e não invente o que teria acontecido."
+                "mexeu. Diga isso e não invente o que teria acontecido."
             )
             falhou = True
         responder(id_, {"content": [{"type": "text", "text": texto}], "isError": falhou})

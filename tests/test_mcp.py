@@ -50,7 +50,7 @@ def test_resultado_carrega_a_regra_de_honestidade():
          "message": "O robô virou a cabeça para a direita.", "action": "turn_head"}
     )
     assert "executed=true" in texto
-    assert "executed=true" in texto and "Só diga ao Michel" in texto
+    assert "executed=true" in texto and "Só diga que o robô se mexeu" in texto
 
 
 def test_simulado_avisa_em_alto_e_bom_som():

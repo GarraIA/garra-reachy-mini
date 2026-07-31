@@ -58,11 +58,15 @@ class GatewayIndisponivel(Exception):
 def _prompt_com_historia(texto: str, historia) -> str:
     if not historia:
         return texto + BREVIDADE
+    # Quem fala é `GARRA_USUARIO`, ou simplesmente "Usuário". Fixar um nome
+    # próprio aqui faria o app instalado da loja chamar todo mundo pelo nome
+    # do autor — e, pior, dizê-lo em voz alta.
+    eu = (os.environ.get("GARRA_USUARIO") or "").strip() or "Usuário"
     linhas = ["Conversa até agora:"]
     for usuario, robo in historia:
-        linhas.append(f"Michel: {usuario[:500]}")
+        linhas.append(f"{eu}: {usuario[:500]}")
         linhas.append(f"GarraIA: {robo[:500]}")
-    linhas.append(f"Michel: {texto}")
+    linhas.append(f"{eu}: {texto}")
     return "\n".join(linhas) + BREVIDADE
 
 

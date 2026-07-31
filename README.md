@@ -23,7 +23,12 @@ require services you provide; the panel tells you exactly which ones are missing
 and what to do about each. Nothing is sent anywhere until you configure a
 provider yourself.
 
-![The control panel](assets/screenshots/panel.png)
+![The control panel, connected to a real robot](assets/screenshots/panel.png)
+
+With no AI provider and no voice server configured, the app still runs — it
+just says so, and names what is missing:
+
+![Limited mode](assets/screenshots/limited-mode.png)
 
 ## Features
 
@@ -41,8 +46,9 @@ provider yourself.
 - **Live camera** — MJPEG stream, snapshot, fullscreen, single frame producer
   shared by every consumer
 - **Emergency stop** — a fixed button, the `Esc` key and `POST /api/robot/stop`.
-  It cuts the current move in ~90 ms and holds the pose; it never authenticates
-  and it never auto-recovers.
+  It costs exactly one round-trip to the robot daemon, which is local when the
+  app runs on the robot. It holds the pose, never authenticates and never
+  auto-recovers.
 - **Robot apps** — list, start, stop and restart the other apps installed on your
   robot
 - **REST + WebSocket API** — every panel action is a documented endpoint, and

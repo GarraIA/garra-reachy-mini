@@ -98,19 +98,60 @@ responde `executed: false` — útil para mexer na interface e para diagnosticar
 
 ### Acessar de outro aparelho
 
-Por padrão a API fica em `127.0.0.1`. Para abrir na rede:
+**Dentro do robô wireless a API já escuta na rede, atrás de um token gerado
+sozinho.** Não é relaxamento: nesse modo o daemon da Pollen também está em
+`0.0.0.0` e **sem autenticação nenhuma**, então quem alcança a LAN já move o robô
+por `POST :8000/api/move/goto`. Ficar no loopback não protegeria nada e deixaria
+o painel inalcançável justamente de onde ele precisa abrir.
+
+Fora do robô — desktop, Lite — o padrão continua sendo `127.0.0.1`. A detecção
+não se contenta com o `wireless_version` do daemon local: no desktop o
+`reachy-mini-control` da Pollen faz proxy da 127.0.0.1:8000 para o robô e
+responde igualzinho. O desempate é o `wlan_ip`, que dentro do robô é um endereço
+nosso.
 
 ```bash
-export GARRA_REACHY_ALLOW_REMOTE=1
-export GARRA_REACHY_TOKEN="$(openssl rand -hex 24)"
-bash garra_reachy_mini/iniciar_local.sh
+export GARRA_REACHY_BIND=127.0.0.1        # forçar loopback mesmo no robô
+export GARRA_REACHY_BIND=0.0.0.0          # forçar rede em qualquer lugar
+export GARRA_REACHY_TOKEN="$(openssl rand -hex 24)"   # em vez do automático
 ```
 
-Sem token, o pedido de acesso remoto é **ignorado** e a API continua no loopback
-com um aviso. Falhar fechado é deliberado: a API move o robô e o daemon do robô
-não tem autenticação nenhuma.
+O token automático fica em `~/.config/garra_reachy_mini/token` com modo 600 e é
+estável entre arranques, para a URL do painel poder virar favorito. A URL
+completa, com token, sai no log do app no arranque.
 
 ---
+
+### Modo limitado — o que sobrevive sem o quê
+
+Instalado da loja, num robô que nunca vai ter um gateway do Garra nem um
+servidor de voz com GPU, o app precisava continuar valendo a pena. A versão
+anterior travava num `while not voz.esperar_pronto(...)` sem saída: o botão
+Start acendia e o robô não fazia nada.
+
+Hoje o loop de voz é **um subsistema supervisionado entre vários**. Painel,
+câmera, movimento, expressões, danças e rastreamento sobem primeiro e se
+sustentam sozinhos; a voz entra quando a URL dela responde e sai depois de três
+falhas seguidas de STT, voltando ao supervisor em vez de insistir contra um
+servidor morto.
+
+| Subsistema | Depende de | Sem ele |
+|---|---|---|
+| `robot` | conexão com o Reachy Mini | nada funciona (é o único essencial) |
+| `movement` | REST do daemon | primitivos ainda vão; danças e expressões, não |
+| `camera` | WebRTC do robô | painel sem vídeo, resto intacto |
+| `voice` | `servidor_voz.py` externo | sem fala e sem escuta; painel e API intactos |
+| `brain` | gateway do Garra ou chave de API | atalhos locais ainda obedecem; conversa não |
+
+`GET /api/robot/status` traz um bloco `services` com `available`, `reason_code`
+e `hint` por subsistema, mais `limited` e `missing`. O painel desenha isso como
+faixa no topo — o objetivo é que uma instalação sem IA pareça **configurável**,
+e não quebrada. Os `reason_code` são estáveis e em inglês porque atravessam a
+API pública; quem traduz é o `static/i18n.js`.
+
+O catálogo de moves carrega em thread separada: são duas chamadas de até 25 s ao
+daemon, e em primeiro plano elas viravam meia dança de espera no botão Start.
+Até chegar, `catalog_ready` é `false` e as danças ficam vazias.
 
 ## 3. Endpoints
 
@@ -383,10 +424,16 @@ exposto ao modelo.
 
 ### Rede
 
-Loopback por padrão. Rede exige `GARRA_REACHY_ALLOW_REMOTE=1` **e**
-`GARRA_REACHY_TOKEN` — sem token, cai para o loopback com aviso. No modo remoto:
-token obrigatório (comparado em tempo constante), `Origin` validado nas rotas que
-mudam algo, e limitador de 8 req/s por IP com balde de 40.
+Rede dentro do robô wireless, loopback em qualquer outro lugar (ver §2). No modo
+remoto: token obrigatório em tudo — inclusive em `/api/config`, que guarda a
+chave do gateway — comparado em tempo constante; `Origin` validado nas rotas que
+mudam algo, aceitando também a mesma origem que serviu a página (o painel aberto
+em `http://reachy-mini.local:8042` não teria como estar numa allowlist montada no
+arranque); e limitador de 8 req/s por IP com balde de 40.
+
+**`POST /api/robot/stop` é a única rota que nunca pede token.** Um botão de
+pânico que responde 401 é um risco de segurança física maior do que o acesso que
+ele barraria: quem alcança o robô com a mão precisa conseguir pará-lo.
 
 ### Estados que não podem se atropelar
 
