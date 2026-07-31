@@ -27,6 +27,7 @@ from __future__ import annotations
 import hmac
 import logging
 import re
+import time
 
 import httpx
 from fastapi import FastAPI, Request
@@ -38,10 +39,27 @@ PORTA = 8126
 AGENTE = "reachy_voice"
 GATEWAY = "http://127.0.0.1:3888"
 
+# `GET /ping` é a sonda de saúde do app do robô, e ela chega SEM `Authorization`
+# (`cerebro.sondar()` usa um `requests.get` pelado). Contra a allowlist isso dava
+# 401, o app concluía "gateway inalcançável" e nunca construía o cérebro.
+#
+# A saída não é responder 200 daqui: isso provaria só que a ponte está viva, e um
+# gateway parado apareceria como `available` até a primeira conversa falhar. Esta
+# rota vai até o gateway de verdade, em loopback, e só devolve 200 se ele
+# responder. Sem token porque não há o que proteger — a resposta é uma palavra —
+# e sem repassar o `Authorization` do cliente, que aqui não significa nada.
+PING_TIMEOUT_S = 1.0
+# Sonda barata e frequente (o supervisor do robô repete a cada 20 s), mas exposta
+# na LAN: o teto evita que ela vire um amplificador contra o gateway.
+PING_MAX_POR_MINUTO = 120
+_ping_janela: list[float] = []
+
 # Só isto atravessa. `re.fullmatch`, e não `startswith`: um prefixo deixaria
 # passar `/api/sessions/../algo`.
+#
+# `/ping` NÃO está aqui: ele tem rota própria, registrada antes do catch-all,
+# porque é a única que dispensa token. Tudo o que cai neste catch-all exige.
 ROTAS = (
-    ("GET", re.compile(r"/ping")),
     ("POST", re.compile(r"/api/sessions")),
     ("POST", re.compile(r"/api/sessions/[0-9a-fA-F-]{36}/messages")),
     ("GET", re.compile(r"/api/sessions/[0-9a-fA-F-]{36}/history")),
@@ -62,8 +80,46 @@ def _autorizado(request: Request, token: str) -> bool:
     return bool(enviado) and hmac.compare_digest(enviado, token)
 
 
+def _ping_liberado(agora: float | None = None) -> bool:
+    """Janela deslizante de um minuto. Barata, e não guarda quem chamou."""
+    agora = time.monotonic() if agora is None else agora
+    corte = agora - 60.0
+    _ping_janela[:] = [t for t in _ping_janela if t > corte]
+    if len(_ping_janela) >= PING_MAX_POR_MINUTO:
+        return False
+    _ping_janela.append(agora)
+    return True
+
+
 def montar(token: str, chave_gateway: str | None) -> FastAPI:
     """Devolve o app da ponte já com o token e a chave real do gateway."""
+
+    @app.api_route("/ping", methods=["GET", "HEAD"])
+    async def saude(request: Request) -> Response:
+        """Compatibilidade com a sonda do robô — e ela precisa dizer a verdade.
+
+        200 só quando o gateway responde. 503 quando não responde: `available`
+        tem de significar que o cérebro está lá, não que a ponte está de pé.
+        """
+        cabecalhos = {"Cache-Control": "no-store"}
+        if not _ping_liberado():
+            return Response(status_code=429, headers=cabecalhos)
+        global _cliente
+        if _cliente is None:
+            _cliente = httpx.AsyncClient(base_url=GATEWAY, timeout=180.0)
+        try:
+            # Sem `Authorization`: nem o do cliente (não vale nada aqui) nem o do
+            # gateway (uma sonda não precisa de credencial para provar vida).
+            r = await _cliente.get("/ping", timeout=PING_TIMEOUT_S)
+        except httpx.HTTPError:
+            # Sem o tipo da exceção: a sonda é pública e o motivo é interno.
+            return Response(content=b"gateway unavailable", status_code=503,
+                            media_type="text/plain", headers=cabecalhos)
+        if not r.is_success:
+            return Response(content=b"gateway unavailable", status_code=503,
+                            media_type="text/plain", headers=cabecalhos)
+        return Response(content=b"pong", status_code=200,
+                        media_type="text/plain", headers=cabecalhos)
 
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "DELETE", "OPTIONS"])
