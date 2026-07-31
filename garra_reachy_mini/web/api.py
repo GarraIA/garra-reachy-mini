@@ -16,6 +16,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -32,6 +33,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from .. import armazenamento, conversa
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
 from ..robo.barramento import Barramento
 from ..servicos import Servicos
@@ -66,6 +68,9 @@ class ContextoWeb:
     limitador: Limitador = field(default_factory=Limitador)
     # Registrado pelo loop de voz: é o único que pode tocar áudio no robô.
     falar: Callable[[str], Awaitable[None]] | None = None
+    # Corta o áudio em curso. Separado de `falar` porque a parada de emergência
+    # precisa silenciar o robô sem esperar a frase atual terminar.
+    calar: Callable[[str], None] | None = None
     dir_estatico: Path | None = None
     iniciado_em: float = field(default_factory=time.monotonic)
 
@@ -225,6 +230,9 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
     @r.post("/stop")
     async def parar(corpo: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
         corpo = corpo or {}
+        if ctx.calar is not None:
+            # Parar o corpo e continuar falando seria contraditório.
+            await asyncio.to_thread(ctx.calar, "stop")
         resultado = await asyncio.to_thread(
             ctrl.parar_tudo,
             source=str(corpo.get("source") or "painel"),
@@ -334,8 +342,12 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
 
     # ── observabilidade ─────────────────────────────────────────────────────
     @r.get("/events")
-    async def eventos(limite: int = Query(default=100, ge=1, le=400)) -> dict[str, Any]:
-        return {"events": ctx.eventos.historico(limite)}
+    async def eventos(limite: int = Query(default=100, ge=1, le=400),
+                      tipos: str | None = None) -> dict[str, Any]:
+        # `tipos` (separados por vírgula) existe para o painel poder acompanhar
+        # só as métricas de turno sem baixar 400 eventos a cada segundo.
+        filtro = frozenset(t for t in (tipos or "").split(",") if t) or None
+        return {"events": ctx.eventos.historico(limite, filtro)}
 
     @r.get("/logs")
     async def logs(limite: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
@@ -344,7 +356,67 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
             "events": ctx.eventos.historico(limite),
         }
 
+    # ── ritmo da conversa ───────────────────────────────────────────────────
+    # Este arquivo é a ÚNICA cópia persistente da configuração: o console em
+    # :3888 escreve aqui pelo companion, e o painel do robô escreve aqui direto.
+    # Um segundo armazenamento no desktop criaria duas verdades e um laço de
+    # sincronização — e o comportamento roda aqui, então aqui é o lugar.
+    @r.get("/conversation")
+    async def conversa_ler() -> dict[str, Any]:
+        return await asyncio.to_thread(_ler_conversa)
+
+    @r.put("/conversation")
+    async def conversa_gravar(corpo: dict[str, Any] = Body(...)) -> Any:
+        try:
+            return await asyncio.to_thread(_gravar_conversa, corpo)
+        except _Conflito as e:
+            # 409 com o estado atual no corpo: o cliente recarrega e avisa, em
+            # vez de sobrescrever em silêncio uma alteração feita no outro painel.
+            return JSONResponse(e.atual, status_code=409)
+        except ValueError as e:
+            raise _erro(400, str(e)) from e
+
     return r
+
+
+class _Conflito(RuntimeError):
+    def __init__(self, atual: dict[str, Any]) -> None:
+        super().__init__("revisão desatualizada")
+        self.atual = atual
+
+
+def _ler_conversa() -> dict[str, Any]:
+    salvo = armazenamento.carregar_config()
+    conf = conversa.normalizar(salvo.get("conversation"))
+    return {
+        "conversation": conf,
+        "effective": conversa.Politica.de(conf).__dict__,
+        "updated_at": salvo.get("conversation_updated_at"),
+        "updated_by": salvo.get("conversation_updated_by"),
+    }
+
+
+def _gravar_conversa(corpo: dict[str, Any]) -> dict[str, Any]:
+    salvo = armazenamento.carregar_config()
+    atual = conversa.normalizar(salvo.get("conversation"))
+
+    esperada = corpo.get("revision")
+    if esperada is not None and int(esperada) != atual["revision"]:
+        raise _Conflito(_ler_conversa())
+
+    mudancas = {k: v for k, v in corpo.items()
+                if k not in ("revision", "updated_by")}
+    novo = conversa.perfil_atualizado(atual, mudancas)
+    novo["revision"] = atual["revision"] + 1
+
+    salvo["conversation"] = novo
+    salvo["conversation_updated_at"] = datetime.now(timezone.utc).isoformat(
+        timespec="seconds")
+    salvo["conversation_updated_by"] = str(corpo.get("updated_by") or "unknown")[:60]
+    # Gravação atômica (mkstemp + os.replace) já vem do armazenamento: o arquivo
+    # anterior sobrevive se a escrita falhar no meio.
+    armazenamento.salvar_config(salvo)
+    return _ler_conversa()
 
 
 # ─── rotas de chat ───────────────────────────────────────────────────────────
