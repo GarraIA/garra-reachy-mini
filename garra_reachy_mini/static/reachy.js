@@ -12,7 +12,17 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const TOKEN = new URLSearchParams(location.search).get('token') || '';
+
+// O token chega uma vez pela URL (`/reachy?token=…`, que o app imprime no log)
+// e fica guardado na aba. Sem isto, qualquer navegação interna perderia a query
+// e o painel passaria a levar 401 em tudo que muda estado.
+const TOKEN = (() => {
+  const daUrl = new URLSearchParams(location.search).get('token');
+  try {
+    if (daUrl) { sessionStorage.setItem('garra_token', daUrl); return daUrl; }
+    return sessionStorage.getItem('garra_token') || '';
+  } catch { return daUrl || ''; }   // modo privado sem storage
+})();
 
 // ─── HTTP ────────────────────────────────────────────────────────────────────
 async function api(caminho, opcoes = {}) {

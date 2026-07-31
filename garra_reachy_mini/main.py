@@ -75,10 +75,17 @@ class OpcoesSalvas(BaseModel):
 
 
 class GarraReachyMini(ReachyMiniApp):
-    # Literal por exigência do `reachy-mini-app-assistant check`, que lê este
-    # valor do FONTE por regex. O `__init__` sobrepõe com a política de rede
-    # resolvida em tempo de execução — que por padrão dá exatamente isto.
-    custom_app_url: str | None = "http://127.0.0.1:8042"
+    # Literal obrigatório: o daemon lê este valor do FONTE por regex
+    # (`apps/sources/local_common_venv.py:186`) sem importar o módulo, e o
+    # repassa ao dashboard sem reescrever nada. `0.0.0.0:8042` é a convenção do
+    # template oficial. O `__init__` sobrepõe o atributo de instância com a
+    # política resolvida em tempo de execução, e é ela que decide o bind real.
+    #
+    # Consequência conhecida da plataforma: no navegador de outra máquina
+    # `0.0.0.0` aponta para a própria máquina, então o link do dashboard não
+    # abre o painel do robô. Não há como consertar do nosso lado — por isso
+    # `_anunciar()` imprime a URL que funciona de verdade.
+    custom_app_url: str | None = "http://0.0.0.0:8042"
     request_media_backend: str | None = None
 
     def __init__(self, running_on_wireless: bool = False) -> None:

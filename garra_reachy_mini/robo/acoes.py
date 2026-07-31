@@ -846,6 +846,14 @@ class ControladorRobo:
             adjustments=[str(a) for a in (ajustes or [])],
             duration_ms=ms,
         )
+        # Sair de `_atual` ANTES de liberar quem espera. O `_laco` também limpa
+        # isto no `finally`, mas só depois de publicar os eventos — e nesse
+        # intervalo `submeter(esperar=True)` já retornou, então um chamador que
+        # consultasse a fila em seguida veria a ação terminada como "corrente".
+        with self._cond:
+            if self._atual is pedido:
+                self._atual = None
+            self._cond.notify_all()
         pedido.pronto.set()
         if estado == "failed":
             self._registrar_erro(pedido.nome, erro or mensagem)

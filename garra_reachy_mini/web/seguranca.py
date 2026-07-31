@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import socket
 import threading
 import time
@@ -67,6 +68,77 @@ def _verdadeiro(valor: str | None) -> bool:
     return (valor or "").strip().lower() in ("1", "true", "yes", "sim", "on")
 
 
+def _endereco_e_nosso(ip: str) -> bool:
+    """O IP pertence a uma interface desta máquina?
+
+    `bind()` num endereço que não é local falha com EADDRNOTAVAIL — é o teste
+    mais direto que existe, e não depende de resolver o próprio hostname (que
+    no Raspberry Pi costuma devolver só 127.0.1.1).
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((ip, 0))
+        return True
+    except OSError:
+        return False
+
+
+def dentro_do_robo(timeout: float = 1.0) -> bool:
+    """Este processo está rodando DENTRO de um Reachy Mini wireless?
+
+    Só nesse caso faz sentido escutar na rede: lá o daemon da Pollen já está em
+    `0.0.0.0` sem autenticação nenhuma (`daemon/app/main.py:109-119`), então
+    quem alcança a LAN já move o robô por `POST :8000/api/move/goto` — recusar o
+    bind não protegeria nada e deixaria o painel inalcançável.
+
+    Perguntar só `wireless_version` ao daemon local não serve: no desktop o
+    `reachy-mini-control` da Pollen ocupa a 127.0.0.1:8000 fazendo proxy para o
+    robô, e a resposta vem idêntica. O que desempata é o `wlan_ip`: dentro do
+    robô ele é um endereço nosso, do desktop não é.
+    """
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+            "http://127.0.0.1:8000/api/daemon/status", timeout=timeout
+        ) as r:
+            dados = json.loads(r.read())
+    except Exception:
+        return False
+    if not dados.get("wireless_version"):
+        return False
+    ip = (dados.get("wlan_ip") or "").strip()
+    return bool(ip) and _endereco_e_nosso(ip)
+
+
+def token_persistente() -> str:
+    """Token estável do app, criado na primeira execução com modo 0600.
+
+    Estável de propósito: a URL do painel carrega o token na query, e um token
+    novo a cada arranque quebraria o favorito de quem já o guardou.
+    """
+    from .. import armazenamento
+
+    pasta = armazenamento.diretorio()
+    arquivo = pasta / "token"
+    try:
+        atual = arquivo.read_text(encoding="utf-8").strip()
+        if atual:
+            return atual
+    except OSError:
+        pass
+    novo = secrets.token_urlsafe(24)
+    try:
+        pasta.mkdir(parents=True, exist_ok=True)
+        arquivo.write_text(novo + "\n", encoding="utf-8")
+        os.chmod(arquivo, 0o600)
+    except OSError:
+        log.warning("não consegui gravar o token em %s; ele muda a cada arranque",
+                    arquivo)
+    return novo
+
+
 @dataclass
 class Politica:
     """Decisão de rede tomada uma vez, no arranque."""
@@ -103,11 +175,22 @@ def resolver_politica(
     ambiente: dict[str, str] | None = None,
     *,
     escolher_porta: bool = True,
+    no_robo: bool | None = None,
 ) -> Politica:
     env = ambiente if ambiente is not None else os.environ
     fixada = env.get("GARRA_REACHY_PORTA")
+    bind = (env.get("GARRA_REACHY_BIND") or "").strip()
     quer_remoto = _verdadeiro(env.get("GARRA_REACHY_ALLOW_REMOTE"))
     token = (env.get("GARRA_REACHY_TOKEN") or "").strip() or None
+    # Instalado da loja, o app roda dentro do robô e o painel precisa abrir do
+    # laptop de quem o instalou. Aí escutar na rede não é opção, é requisito —
+    # e o token automático é o que impede isso de virar uma API aberta.
+    if not bind and not quer_remoto:
+        quer_remoto = dentro_do_robo() if no_robo is None else no_robo
+    if bind:
+        quer_remoto = bind not in HOSTS_LOCAIS
+    if quer_remoto and not token:
+        token = token_persistente()
     if fixada:
         # Porta explícita é ordem: se estiver ocupada, é melhor falhar alto do
         # que servir num lugar que ninguém está olhando.
@@ -120,28 +203,34 @@ def resolver_politica(
         origens += [o.strip() for o in extra.split(",") if o.strip()]
 
     if not quer_remoto:
-        return Politica(host="127.0.0.1", porta=porta, remoto=False, token=token,
-                        origens=tuple(dict.fromkeys(origens)))
+        return Politica(host=bind or "127.0.0.1", porta=porta, remoto=False,
+                        token=token, origens=tuple(dict.fromkeys(origens)))
 
-    if not token:
+    if not token:  # token_persistente() não conseguiu gravar nem gerar
         return Politica(
             host="127.0.0.1", porta=porta, remoto=False, token=None,
             origens=tuple(dict.fromkeys(origens)),
             aviso=(
-                "GARRA_REACHY_ALLOW_REMOTE=1 sem GARRA_REACHY_TOKEN: mantendo a API "
-                "em 127.0.0.1. Defina um token para liberar o acesso pela rede."
+                "Sem token utilizável: mantendo a API em 127.0.0.1. Defina "
+                "GARRA_REACHY_TOKEN para liberar o acesso pela rede."
             ),
         )
-    return Politica(host="0.0.0.0", porta=porta, remoto=True, token=token,
+    return Politica(host=bind or "0.0.0.0", porta=porta, remoto=True, token=token,
                     origens=tuple(dict.fromkeys(origens)))
 
 
-def origem_permitida(origem: str | None, politica: Politica) -> bool:
+def origem_permitida(origem: str | None, politica: Politica,
+                     host_pedido: str | None = None) -> bool:
     """Anti-CSRF: aceita ausência de Origin (curl) e a allowlist.
 
     Um navegador SEMPRE manda `Origin` em requisição cross-origin que muda
     estado, então ausência não é o caso perigoso — o caso perigoso é uma origem
     presente e desconhecida.
+
+    Na rede, `host_pedido` (o cabeçalho Host) permite aceitar a mesma origem que
+    serviu a página: o painel aberto em `http://reachy-mini.local:8042` não tem
+    como estar na allowlist, que é montada no arranque sem saber por qual nome o
+    robô seria chamado. Mesma origem não é CSRF por definição.
     """
     if not origem:
         return True
@@ -153,6 +242,9 @@ def origem_permitida(origem: str | None, politica: Politica) -> bool:
         return False
     if not politica.remoto:
         return url.hostname in HOSTS_LOCAIS
+    if host_pedido:
+        alvo = host_pedido if ":" in host_pedido else f"{host_pedido}:{politica.porta}"
+        return f"{url.hostname}:{url.port or 80}" == alvo
     return False
 
 

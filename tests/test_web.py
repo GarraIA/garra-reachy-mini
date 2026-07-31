@@ -34,27 +34,64 @@ LARGURA_ESPERADA, ALTURA_ESPERADA = 320, 240
 
 # ─── segurança ───────────────────────────────────────────────────────────────
 def test_padrao_e_loopback():
-    p = resolver_politica(ambiente={}, escolher_porta=False)
+    p = resolver_politica(ambiente={}, escolher_porta=False, no_robo=False)
     assert p.host == "127.0.0.1" and p.remoto is False
 
 
-def test_remoto_sem_token_cai_para_loopback():
-    """Falhar fechado: expor o robô sem porteiro não é opção."""
-    p = resolver_politica(ambiente={"GARRA_REACHY_ALLOW_REMOTE": "1"}, escolher_porta=False)
+def test_remoto_sem_token_gera_um(tmp_path, monkeypatch):
+    """Expor o robô sem porteiro não é opção — mas exigir token manual tornava
+    o modo rede inútil. Agora ele se gera sozinho, com modo 0600."""
+    monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
+    p = resolver_politica(ambiente={"GARRA_REACHY_ALLOW_REMOTE": "1"},
+                          escolher_porta=False, no_robo=False)
+    assert p.host == "0.0.0.0" and p.remoto and p.exige_token()
+    assert p.token and len(p.token) >= 20
+    arquivo = tmp_path / "token"
+    assert arquivo.read_text().strip() == p.token
+    assert oct(arquivo.stat().st_mode)[-3:] == "600"
+
+
+def test_token_persiste_entre_arranques(tmp_path, monkeypatch):
+    monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
+    amb = {"GARRA_REACHY_ALLOW_REMOTE": "1"}
+    a = resolver_politica(ambiente=amb, escolher_porta=False, no_robo=False)
+    b = resolver_politica(ambiente=amb, escolher_porta=False, no_robo=False)
+    assert a.token == b.token
+
+
+def test_dentro_do_robo_abre_na_rede_com_token(tmp_path, monkeypatch):
+    """No robô wireless o daemon da Pollen já está em 0.0.0.0 sem autenticação:
+    ficar no loopback não protegeria nada e deixaria o painel inalcançável."""
+    monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
+    p = resolver_politica(ambiente={}, escolher_porta=False, no_robo=True)
+    assert p.host == "0.0.0.0" and p.remoto and p.exige_token()
+
+
+def test_bind_explicito_vence_a_deteccao(tmp_path, monkeypatch):
+    monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
+    p = resolver_politica(ambiente={"GARRA_REACHY_BIND": "127.0.0.1"},
+                          escolher_porta=False, no_robo=True)
     assert p.host == "127.0.0.1" and p.remoto is False
-    assert p.aviso and "token" in p.aviso.lower()
+
+
+def test_mesma_origem_passa_na_rede():
+    """O painel aberto em http://reachy-mini.local:8042 não tem como estar na
+    allowlist montada no arranque; mesma origem não é CSRF."""
+    p = Politica(host="0.0.0.0", porta=8042, remoto=True, token="t")
+    assert origem_permitida("http://reachy-mini.local:8042", p, "reachy-mini.local:8042")
+    assert not origem_permitida("http://evil.example", p, "reachy-mini.local:8042")
 
 
 def test_remoto_com_token_abre():
     p = resolver_politica(
         ambiente={"GARRA_REACHY_ALLOW_REMOTE": "1", "GARRA_REACHY_TOKEN": "abc123"},
-        escolher_porta=False,
+        escolher_porta=False, no_robo=False,
     )
     assert p.host == "0.0.0.0" and p.remoto and p.exige_token()
 
 
 def test_origens_incluem_o_console_do_garra():
-    p = resolver_politica(ambiente={}, escolher_porta=False)
+    p = resolver_politica(ambiente={}, escolher_porta=False, no_robo=False)
     assert "http://localhost:3888" in p.origens
     assert "http://127.0.0.1:3888" in p.origens
 
@@ -62,7 +99,7 @@ def test_origens_incluem_o_console_do_garra():
 def test_origem_desconhecida_barrada_em_modo_remoto():
     p = resolver_politica(
         ambiente={"GARRA_REACHY_ALLOW_REMOTE": "1", "GARRA_REACHY_TOKEN": "t"},
-        escolher_porta=False,
+        escolher_porta=False, no_robo=False,
     )
     assert not origem_permitida("http://evil.example", p)
     assert origem_permitida(None, p)  # curl não manda Origin
@@ -101,7 +138,7 @@ def test_sem_alternativa_livre_devolve_a_preferida():
 
 
 def test_porta_explicita_e_respeitada():
-    p = resolver_politica(ambiente={"GARRA_REACHY_PORTA": "9999"})
+    p = resolver_politica(ambiente={"GARRA_REACHY_PORTA": "9999"}, no_robo=False)
     assert p.porta == 9999
 
 
@@ -202,7 +239,7 @@ def cliente(backend, tmp_path):
     app = FastAPI()
     ctx = ContextoWeb(
         controlador=ctrl, hub=hub, eventos=ctrl.eventos,
-        politica=resolver_politica(ambiente={}, escolher_porta=False),
+        politica=resolver_politica(ambiente={}, escolher_porta=False, no_robo=False),
     )
     montar(app, ctx)
     with TestClient(app) as c:
@@ -216,9 +253,55 @@ def cliente(backend, tmp_path):
 def test_status_traz_o_contrato_do_painel(cliente):
     d = cliente.get("/api/robot/status").json()
     for chave in ("mode", "controller_state", "connected", "moving", "camera",
-                  "tracking", "network", "chat", "latency_ms"):
+                  "tracking", "network", "chat", "latency_ms",
+                  "services", "limited", "missing"):
         assert chave in d, chave
     assert d["network"]["remote"] is False
+
+
+def test_status_descreve_cada_subsistema(cliente):
+    """O painel precisa distinguir 'você não configurou' de 'quebrou'."""
+    d = cliente.get("/api/robot/status").json()
+    nomes = {s["name"] for s in d["services"]}
+    assert {"robot", "movement", "camera", "voice", "brain"} == nomes
+    for s in d["services"]:
+        assert isinstance(s["available"], bool)
+        assert s["reason_code"]
+
+
+@pytest.fixture()
+def cliente_na_rede(controlador):
+    """Painel exposto na LAN, como fica instalado dentro do robô wireless."""
+    ctrl = controlador
+    app = FastAPI()
+    hub = FrameHub(ctrl.backend, fps_ativo=4.0)
+    pol = Politica(host="0.0.0.0", porta=8042, remoto=True, token="segredo",
+                   origens=("http://localhost:8042",))
+    ctx = ContextoWeb(controlador=ctrl, hub=hub, eventos=ctrl.eventos, politica=pol)
+    montar(app, ctx)
+    with TestClient(app) as c:
+        yield c
+    hub.encerrar()
+
+
+def test_na_rede_a_api_exige_token(cliente_na_rede):
+    assert cliente_na_rede.get("/api/robot/status").status_code == 401
+    ok = cliente_na_rede.get("/api/robot/status", headers={"Authorization": "Bearer segredo"})
+    assert ok.status_code == 200
+
+
+def test_parada_de_emergencia_nunca_pede_token(cliente_na_rede):
+    """Um botão de pânico que responde 401 é pior do que a API que ele
+    protegeria: quem alcança o robô fisicamente precisa conseguir pará-lo."""
+    r = cliente_na_rede.post("/api/robot/stop")
+    assert r.status_code == 200
+    assert r.json()["ok"]
+
+
+def test_configuracao_nao_fica_aberta_na_rede(cliente_na_rede):
+    """`/api/config` guarda a chave do gateway."""
+    assert cliente_na_rede.post("/api/config", json={"gateway_url": "http://x"}
+                                ).status_code == 401
 
 
 def test_capabilities_lista_acoes_e_expressoes(cliente):

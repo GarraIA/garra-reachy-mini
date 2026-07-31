@@ -41,6 +41,11 @@ from .seguranca import Limitador, Politica, origem_permitida, token_valido
 
 log = logging.getLogger("garra_reachy_mini.web.api")
 
+# Rotas que passam sem token mesmo com a API na rede. A lista é curta de
+# propósito: só a parada de emergência, porque um botão de pânico que responde
+# 401 é um risco de segurança física maior do que o acesso que ele barraria.
+SEM_TOKEN = frozenset({"/api/robot/stop"})
+
 LIMITE_MJPEG = "quadro-garraia-reachy"
 INTERVALO_POLL_EVENTOS_S = 0.05
 PING_WS_S = 20.0
@@ -90,24 +95,30 @@ def preparar(app: FastAPI, politica: Politica, limitador: Limitador | None = Non
         origem = request.headers.get("origin")
         pol: Politica = request.app.state.reachy_politica
 
-        if not caminho.startswith(("/api/robot", "/api/chat", "/ws/")):
+        # `/api/config` guarda a chave do gateway: escrever nele sem token na
+        # rede seria entregar a configuração do app a qualquer um da LAN.
+        if not caminho.startswith(("/api/robot", "/api/chat", "/api/config", "/ws/")):
             return await call_next(request)
 
-        if request.app.state.reachy is None:
+        if request.app.state.reachy is None and not caminho.startswith("/api/config"):
             return JSONResponse(
                 {"ok": False, "error": "o controlador do robô ainda está subindo"},
                 status_code=503,
             )
 
-        if pol.exige_token() and not token_valido(
+        # A parada de emergência nunca pede credencial. Um botão de pânico que
+        # falha por 401 é pior do que a API aberta que ele protegeria: quem
+        # alcança o robô fisicamente precisa conseguir pará-lo.
+        if pol.exige_token() and caminho not in SEM_TOKEN and not token_valido(
             request.headers.get("authorization"),
             request.query_params.get("token"),
             pol,
         ):
             return JSONResponse({"ok": False, "error": "token inválido"}, status_code=401)
 
+        anfitriao = request.headers.get("host")
         if request.method in METODOS_MUTANTES:
-            if not origem_permitida(origem, pol):
+            if not origem_permitida(origem, pol, anfitriao):
                 return JSONResponse(
                     {"ok": False, "error": f"origem não autorizada: {origem}"},
                     status_code=403,
@@ -120,7 +131,7 @@ def preparar(app: FastAPI, politica: Politica, limitador: Limitador | None = Non
                 )
 
         resposta = await call_next(request)
-        if origem and origem_permitida(origem, pol):
+        if origem and origem_permitida(origem, pol, anfitriao):
             resposta.headers["Access-Control-Allow-Origin"] = origem
             resposta.headers["Access-Control-Allow-Credentials"] = "true"
             resposta.headers["Vary"] = "Origin"
@@ -129,7 +140,8 @@ def preparar(app: FastAPI, politica: Politica, limitador: Limitador | None = Non
     @app.options("/api/{resto:path}", include_in_schema=False)
     async def preflight(resto: str, request: Request) -> Response:
         origem = request.headers.get("origin")
-        if not origem_permitida(origem, request.app.state.reachy_politica):
+        if not origem_permitida(origem, request.app.state.reachy_politica,
+                                request.headers.get("host")):
             raise _erro(403, "origem não autorizada")
         return Response(
             status_code=204,
