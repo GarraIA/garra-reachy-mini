@@ -16,7 +16,8 @@ simultâneos de brigarem pela cabeça.
 
 Portas que ele sobe:
   8042  painel `/reachy`, API REST/WS do robô, página de configurações
-        (loopback por padrão; rede só com GARRA_REACHY_ALLOW_REMOTE + token)
+        (na rede dentro do robô wireless, onde o daemon da Pollen já está
+        aberto sem autenticação; loopback em qualquer outro lugar)
 """
 
 import asyncio
@@ -218,6 +219,29 @@ class GarraReachyMini(ReachyMiniApp):
                  "The camera stream needs a few seconds after start-up.")
         return controlador
 
+    def _avaliar_cerebro(self, cfg: Config) -> Cerebro:
+        """Constrói o cérebro e publica o estado dele em `services`.
+
+        Chamado também no arranque, e não só quando o loop de voz sobe: sem
+        isso o painel mostrava `brain: starting` indefinidamente num robô sem
+        servidor de voz — que é justamente o caso de quem instala da loja.
+        O chat do painel não depende da voz, então o estado tem de ser real
+        desde o início.
+        """
+        cerebro = Cerebro(cfg, self.logger)
+        cerebro.iniciar()
+        codigo, descricao = cerebro.descrever()
+        self.servicos.marcar(
+            "brain", cerebro.disponivel,
+            codigo=codigo if cerebro.disponivel else "not_configured",
+            detalhe=descricao,
+            dica="" if cerebro.disponivel else
+                 "Set up the Garra gateway, or pick an AI provider on the "
+                 "settings page. Until then the robot obeys the panel and the "
+                 "local voice shortcuts, but cannot hold a conversation.",
+        )
+        return cerebro
+
     def _anunciar(self, cfg: Config) -> None:
         """Diz nos logs a URL que realmente abre de outra máquina.
 
@@ -284,6 +308,7 @@ class GarraReachyMini(ReachyMiniApp):
         self._rotas_configuracao()
         controlador = self._montar_robo(reachy_mini, cfg)
         self._montar_web(cfg)
+        self._avaliar_cerebro(cfg)
         self._anunciar(cfg)
         try:
             self._supervisionar(reachy_mini, stop_event, controlador)
@@ -347,17 +372,7 @@ class GarraReachyMini(ReachyMiniApp):
                   cfg: Config, controlador: ControladorRobo, voz: VozClient) -> None:
         """Conversa por voz. Volta quando o app encerra ou quando a voz cai."""
         log = self.logger
-        cerebro = Cerebro(cfg, log)
-        cerebro.iniciar()
-        codigo_cerebro, descricao_cerebro = cerebro.descrever()
-        self.servicos.marcar(
-            "brain", cerebro.disponivel,
-            codigo=codigo_cerebro if cerebro.disponivel else "not_configured",
-            detalhe=descricao_cerebro,
-            dica="" if cerebro.disponivel else
-                 "Set up the Garra gateway, or pick an AI provider on the "
-                 "settings page. Until then the robot listens but cannot reply.",
-        )
+        cerebro = self._avaliar_cerebro(cfg)
         if not cerebro.disponivel:
             log.warning("Nenhum cérebro configurado: o robô ouve e obedece aos "
                         "atalhos locais, mas não conversa.")
