@@ -86,17 +86,14 @@ controllable straight away.
 
 ### Opening the panel
 
-The app serves its panel on port **8042**. From the robot's own screen that is
-`http://localhost:8042/reachy`; from any other machine on your network:
+The app serves its panel on port **8042**. From any machine on your network:
 
 ```
-http://reachy-mini.local:8042/reachy?token=<token>
+http://reachy-mini.local:8042/reachy
 ```
 
-The app prints that full URL, token included, in its log as soon as it starts —
-look at the app's output in the dashboard. The token is generated on first run
-and stored at `~/.config/garra_reachy_mini/token` with mode `600`, so the URL
-keeps working across restarts and you can bookmark it.
+No token, no setup — see [Security](#security) for why, and for how to require
+one if you want.
 
 > The **Settings** link the dashboard shows for any app points at
 > `http://0.0.0.0:8042`, which in a browser on your laptop means *your laptop*,
@@ -159,7 +156,7 @@ Then point the app at it with `GARRA_VOZ_URL=http://<your-machine>:8123`.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GARRA_REACHY_BIND` | auto | `127.0.0.1` to keep the panel local-only |
-| `GARRA_REACHY_TOKEN` | auto-generated | API token |
+| `GARRA_REACHY_TOKEN` | — | Require this token on the API (off by default on the robot) |
 | `GARRA_REACHY_PORTA` | `8042`, else 8043–8046 | Panel port |
 | `GARRA_ROBO_API` | auto-detected | Robot daemon REST URL |
 | `GARRA_COMPORTAMENTO_AMBIENTE` | `true` | Ambient movement during conversation |
@@ -167,6 +164,33 @@ Then point the app at it with `GARRA_VOZ_URL=http://<your-machine>:8123`.
 | `GARRA_CAMERA_FPS` | `12` | Camera capture rate |
 
 The full list is in [`.env.example`](.env.example).
+
+## Security
+
+**On a wireless Reachy Mini this app is exactly as reachable as your robot
+already is.** The robot's own daemon listens on all interfaces on port 8000 with
+no authentication at all, so anyone on your network can already move the head
+and read the camera through it. Requiring a token on our panel would not change
+that, and it would make the panel unusable: the daemon has no endpoint that
+shows an app's log output, so there would be nowhere to read the token from.
+
+Two things follow, and both are deliberate:
+
+- **On the robot**, the panel and API are open on the LAN. Set
+  `GARRA_REACHY_TOKEN=<something>` to require a token anyway, or
+  `GARRA_REACHY_BIND=127.0.0.1` to keep the panel strictly local.
+- **Anywhere else** — a desktop driving the robot over the network, or a Lite —
+  the default is loopback only, because there the daemon is loopback too and
+  opening our API would create exposure that did not exist. Network access there
+  needs `GARRA_REACHY_ALLOW_REMOTE=1`, and a token is generated automatically.
+
+Always on, in every mode: `Origin` is validated on anything that changes state,
+requests are rate-limited per IP, the gateway key is write-only and masked on
+read, and `POST /api/robot/stop` never asks for a token — a panic button that
+answers `401` is a worse hazard than the access it would deny.
+
+If your network is not one you trust, put the robot on a segment you do. That
+advice applies to the robot as a whole, not just to this app.
 
 ## Safety
 
@@ -202,8 +226,8 @@ The full list is in [`.env.example`](.env.example).
   capture button are saved there too, and nowhere else.
 - **Credentials are never returned by the API.** `GET /api/config` masks the
   gateway key; the panel can set it but never read it back.
-- On a wireless robot the panel listens on the network behind a token. Set
-  `GARRA_REACHY_BIND=127.0.0.1` to keep it strictly local.
+- **On a wireless robot the panel is reachable by anyone on your network, with
+  no token** — the same posture the robot itself already has. See below.
 
 ## Architecture
 

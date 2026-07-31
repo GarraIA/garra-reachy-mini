@@ -4,18 +4,24 @@ O daemon do robô não tem autenticação nenhuma, e esta API manda no robô: da
 liga app, desliga motor. Deixar isso em `0.0.0.0` sem porteiro entrega o robô
 para qualquer coisa que alcance a máquina na rede.
 
-Postura adotada:
+A postura acompanha a da plataforma, em vez de contrariá-la:
 
-  • **padrão é loopback** (`127.0.0.1:8042`). Ninguém de fora entra, ponto;
-  • rede só com opt-in explícito (`GARRA_REACHY_ALLOW_REMOTE=1`) **e** token
-    próprio (`GARRA_REACHY_TOKEN`), diferente do token do gateway;
-  • pediu rede sem token → **cai para loopback** com aviso alto. Falhar fechado
-    é a única opção defensável quando a alternativa é expor o robô;
+  • **fora do robô** (desktop, Lite) o padrão é loopback (`127.0.0.1:8042`).
+    Ali o daemon também é loopback, então abrir a nossa API na rede criaria
+    exposição que não existia — por isso rede exige opt-in explícito
+    (`GARRA_REACHY_ALLOW_REMOTE=1`) e token, que se gera sozinho;
+  • **dentro do robô wireless** escutamos na rede sem exigir token. Não é
+    relaxamento: lá o daemon da Pollen já está em `0.0.0.0` **sem autenticação
+    nenhuma**, e quem alcança a LAN já move o robô e já vê a câmera por
+    `:8000`. Um token nosso não protegeria nada — e, medido, tornaria o painel
+    inutilizável: não existe endpoint no daemon que mostre o log do app
+    (`GET /logs` devolve a página de descontinuação), então o usuário não teria
+    de onde ler o token. `GARRA_REACHY_TOKEN` continua disponível para quem
+    quiser exigir um;
   • rotas que mudam algo exigem `Origin` conhecido (anti-CSRF) e passam por um
-    limitador por IP.
-
-`GET` de leitura fica livre no loopback: é o que faz o painel e o `curl` de
-diagnóstico funcionarem sem cerimônia.
+    limitador por IP, sempre;
+  • `POST /api/robot/stop` nunca pede token: um botão de pânico que responde
+    401 é pior do que o acesso que ele barraria.
 """
 
 from __future__ import annotations
@@ -183,20 +189,33 @@ def resolver_politica(
     quer_remoto = _verdadeiro(env.get("GARRA_REACHY_ALLOW_REMOTE"))
     token = (env.get("GARRA_REACHY_TOKEN") or "").strip() or None
     # Instalado da loja, o app roda dentro do robô e o painel precisa abrir do
-    # laptop de quem o instalou. Aí escutar na rede não é opção, é requisito —
-    # e o token automático é o que impede isso de virar uma API aberta.
+    # laptop de quem o instalou. Aí escutar na rede não é opção, é requisito.
+    no_robo = dentro_do_robo() if no_robo is None else no_robo
     if not bind and not quer_remoto:
-        quer_remoto = dentro_do_robo() if no_robo is None else no_robo
+        quer_remoto = no_robo
     if bind:
         quer_remoto = bind not in HOSTS_LOCAIS
-    if quer_remoto and not token:
+
+    # Token automático SÓ onde ele acrescenta proteção de verdade.
+    #
+    # Dentro do robô wireless não acrescenta: o daemon da Pollen já está em
+    # `0.0.0.0` sem autenticação nenhuma, então quem alcança a LAN já move o
+    # robô e já vê a câmera por `:8000`. Exigir token ali não protegeria nada —
+    # e, medido, deixaria o painel inalcançável: o daemon não tem endpoint que
+    # mostre o log do app, e `GET /logs` devolve só a página de descontinuação.
+    # O usuário não teria de onde ler o token que nós mesmos imprimimos.
+    #
+    # Fora do robô é o contrário: lá o daemon é loopback, então abrir a nossa
+    # API na rede CRIA exposição que não existia. Aí o token é obrigatório e se
+    # gera sozinho.
+    if quer_remoto and not token and not no_robo:
         token = token_persistente()
     if fixada:
         # Porta explícita é ordem: se estiver ocupada, é melhor falhar alto do
         # que servir num lugar que ninguém está olhando.
         porta = int(fixada)
     elif escolher_porta:
-        porta = porta_livre("0.0.0.0" if quer_remoto and token else "127.0.0.1", porta)
+        porta = porta_livre("0.0.0.0" if quer_remoto else "127.0.0.1", porta)
     origens = list(origens_locais(porta))
     extra = (env.get("GARRA_REACHY_ORIGENS") or "").strip()
     if extra:
@@ -206,7 +225,7 @@ def resolver_politica(
         return Politica(host=bind or "127.0.0.1", porta=porta, remoto=False,
                         token=token, origens=tuple(dict.fromkeys(origens)))
 
-    if not token:  # token_persistente() não conseguiu gravar nem gerar
+    if not token and not no_robo:  # token_persistente() não conseguiu gravar
         return Politica(
             host="127.0.0.1", porta=porta, remoto=False, token=None,
             origens=tuple(dict.fromkeys(origens)),

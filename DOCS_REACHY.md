@@ -98,11 +98,18 @@ responde `executed: false` — útil para mexer na interface e para diagnosticar
 
 ### Acessar de outro aparelho
 
-**Dentro do robô wireless a API já escuta na rede, atrás de um token gerado
-sozinho.** Não é relaxamento: nesse modo o daemon da Pollen também está em
-`0.0.0.0` e **sem autenticação nenhuma**, então quem alcança a LAN já move o robô
-por `POST :8000/api/move/goto`. Ficar no loopback não protegeria nada e deixaria
-o painel inalcançável justamente de onde ele precisa abrir.
+**Dentro do robô wireless a API escuta na rede, e sem exigir token.** Não é
+relaxamento: nesse modo o daemon da Pollen também está em `0.0.0.0` e **sem
+autenticação nenhuma**, então quem alcança a LAN já move o robô e já vê a câmera
+por `:8000`. Um token nosso não protegeria nada.
+
+E, medido no hardware, um token ali **quebra o app**: o daemon não tem endpoint
+que mostre o log de um app — `GET /logs` devolve a página de descontinuação do
+dashboard — então o usuário não teria de onde ler o token que nós mesmos
+imprimimos. Foi a razão de trocar o padrão depois do primeiro teste real.
+
+Quem quiser exigir token define `GARRA_REACHY_TOKEN`; quem quiser o painel só
+local define `GARRA_REACHY_BIND=127.0.0.1`.
 
 Fora do robô — desktop, Lite — o padrão continua sendo `127.0.0.1`. A detecção
 não se contenta com o `wireless_version` do daemon local: no desktop o
@@ -116,9 +123,9 @@ export GARRA_REACHY_BIND=0.0.0.0          # forçar rede em qualquer lugar
 export GARRA_REACHY_TOKEN="$(openssl rand -hex 24)"   # em vez do automático
 ```
 
-O token automático fica em `~/.config/garra_reachy_mini/token` com modo 600 e é
-estável entre arranques, para a URL do painel poder virar favorito. A URL
-completa, com token, sai no log do app no arranque.
+Fora do robô, onde o token é automático, ele fica em
+`~/.config/garra_reachy_mini/token` com modo 600 e é estável entre arranques,
+para a URL do painel poder virar favorito. A URL completa sai no log do app.
 
 ---
 
@@ -424,8 +431,8 @@ exposto ao modelo.
 
 ### Rede
 
-Rede dentro do robô wireless, loopback em qualquer outro lugar (ver §2). No modo
-remoto: token obrigatório em tudo — inclusive em `/api/config`, que guarda a
+Rede dentro do robô wireless (sem token, ver §2), loopback em qualquer outro
+lugar. Com token configurado: obrigatório em tudo — inclusive em `/api/config`, que guarda a
 chave do gateway — comparado em tempo constante; `Origin` validado nas rotas que
 mudam algo, aceitando também a mesma origem que serviu a página (o painel aberto
 em `http://reachy-mini.local:8042` não teria como estar numa allowlist montada no

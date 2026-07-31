@@ -59,12 +59,30 @@ def test_token_persiste_entre_arranques(tmp_path, monkeypatch):
     assert a.token == b.token
 
 
-def test_dentro_do_robo_abre_na_rede_com_token(tmp_path, monkeypatch):
-    """No robô wireless o daemon da Pollen já está em 0.0.0.0 sem autenticação:
-    ficar no loopback não protegeria nada e deixaria o painel inalcançável."""
+def test_dentro_do_robo_abre_na_rede_sem_exigir_token(tmp_path, monkeypatch):
+    """No robô wireless o daemon da Pollen já está em 0.0.0.0 sem autenticação
+    nenhuma, então um token nosso não protegeria nada — e não haveria de onde
+    lê-lo: o daemon não expõe o log do app. Medido no hardware."""
     monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
     p = resolver_politica(ambiente={}, escolher_porta=False, no_robo=True)
-    assert p.host == "0.0.0.0" and p.remoto and p.exige_token()
+    assert p.host == "0.0.0.0" and p.remoto
+    assert not p.exige_token()
+    assert not (tmp_path / "token").exists()
+
+
+def test_no_robo_o_token_continua_disponivel_por_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
+    p = resolver_politica(ambiente={"GARRA_REACHY_TOKEN": "meutoken"},
+                          escolher_porta=False, no_robo=True)
+    assert p.host == "0.0.0.0" and p.exige_token() and p.token == "meutoken"
+
+
+def test_fora_do_robo_a_rede_exige_token(tmp_path, monkeypatch):
+    """Fora do robô o daemon é loopback: abrir a nossa API CRIA exposição."""
+    monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
+    p = resolver_politica(ambiente={"GARRA_REACHY_ALLOW_REMOTE": "1"},
+                          escolher_porta=False, no_robo=False)
+    assert p.host == "0.0.0.0" and p.exige_token()
 
 
 def test_bind_explicito_vence_a_deteccao(tmp_path, monkeypatch):
