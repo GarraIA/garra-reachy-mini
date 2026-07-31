@@ -194,6 +194,7 @@ class Config:
     timeout_gateway_s: int
     timeout_ask_s: int
     voz_url: str
+    voz_token: str | None      # exigido pelo servidor de voz quando vem da rede
     janela_turnos: int             # memória client-side dos modos reserva
     garra_bin: str | None
     intervalo_notificacoes_s: float
@@ -226,6 +227,7 @@ class Config:
                                       "timeout_ask_s", None), 60, int),
             voz_url=str(_opcao(salvo, "GARRA_VOZ_URL", "voz_url",
                                "http://127.0.0.1:8123")).rstrip("/"),
+            voz_token=chave_real(_opcao(salvo, "GARRA_VOZ_TOKEN", "voz_token", None)),
             janela_turnos=_num(_opcao(salvo, "GARRA_HISTORICO_TURNOS",
                                       "janela_turnos", None), 8, int),
             garra_bin=_opcao(salvo, "GARRA_BIN", "garra_bin", None),

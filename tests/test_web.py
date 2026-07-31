@@ -281,7 +281,7 @@ def test_status_descreve_cada_subsistema(cliente):
     """O painel precisa distinguir 'você não configurou' de 'quebrou'."""
     d = cliente.get("/api/robot/status").json()
     nomes = {s["name"] for s in d["services"]}
-    assert {"robot", "movement", "camera", "voice", "brain"} == nomes
+    assert {"robot", "movement", "camera", "voice", "gateway", "brain"} == nomes
     for s in d["services"]:
         assert isinstance(s["available"], bool)
         assert s["reason_code"]
@@ -441,3 +441,65 @@ def test_chat_desligado_responde_503(cliente):
 
 def test_falar_sem_voz_responde_503(cliente):
     assert cliente.post("/api/chat/falar", json={"text": "oi"}).status_code == 503
+
+
+# ─── despertar do supervisor ─────────────────────────────────────────────────
+def test_config_acorda_o_supervisor_em_vez_de_esperar_o_backoff():
+    """Configuração salva pelo console não pode esperar até 60 s de backoff.
+
+    O `_esperar` acorda em dois sinais: o stop_event do daemon (que tem 20 s
+    antes do SIGKILL) e o `_acordar` que o POST /api/config levanta.
+    """
+    import threading
+    import time
+
+    from garra_reachy_mini.main import GarraReachyMini
+
+    app = GarraReachyMini.__new__(GarraReachyMini)   # sem tocar no robô
+    app._acordar = threading.Event()
+    parar = threading.Event()
+
+    t0 = time.monotonic()
+    threading.Timer(0.3, app._acordar.set).start()
+    app._esperar(parar, 60.0)
+    assert time.monotonic() - t0 < 1.5, "não acordou com a configuração nova"
+    assert not app._acordar.is_set(), "o sinal tem de ser consumido"
+
+    t0 = time.monotonic()
+    threading.Timer(0.3, parar.set).start()
+    app._esperar(parar, 60.0)
+    assert time.monotonic() - t0 < 1.5, "não acordou no stop_event"
+
+
+def test_esperar_respeita_o_prazo_quando_ninguem_acorda():
+    import threading
+    import time
+
+    from garra_reachy_mini.main import GarraReachyMini
+
+    app = GarraReachyMini.__new__(GarraReachyMini)
+    app._acordar = threading.Event()
+    t0 = time.monotonic()
+    app._esperar(threading.Event(), 0.6)
+    assert 0.5 <= time.monotonic() - t0 < 1.2
+
+
+def test_ponte_chat_repontada_sem_reiniciar():
+    """Trocar a URL do gateway tem de valer sem reiniciar o app.
+
+    O cliente httpx nasce com `base_url` fixa; sem `reconfigurar` o chat do
+    painel continuaria batendo no endereço antigo até alguém reiniciar.
+    """
+    from garra_reachy_mini.web.chat import PonteChat
+
+    ponte = PonteChat("http://127.0.0.1:3888", None, "reachy_voice")
+    ponte._sessao = "sessao-do-gateway-antigo"
+    ponte._cliente = object()  # type: ignore[assignment]
+
+    assert ponte.reconfigurar("http://127.0.0.1:3888", None, "reachy_voice") is False
+    assert ponte._sessao == "sessao-do-gateway-antigo", "sem mudança, não descarta"
+
+    assert ponte.reconfigurar("http://192.0.2.10:3888/", None, "reachy_voice") is True
+    assert ponte.base == "http://192.0.2.10:3888"
+    assert ponte._sessao is None, "sessão de um gateway não vale em outro"
+    assert ponte._cliente is None

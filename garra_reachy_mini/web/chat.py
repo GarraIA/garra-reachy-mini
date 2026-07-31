@@ -55,6 +55,31 @@ class PonteChat:
         self._lock = asyncio.Lock()
         self._cliente: httpx.AsyncClient | None = None
 
+    def reconfigurar(self, gateway_url: str, gateway_key: str | None,
+                     agent_id: str) -> bool:
+        """Aponta a ponte para outro gateway, sem reiniciar o app.
+
+        O cliente `httpx` nasce com `base_url` fixa, então trocar a URL na
+        configuração não bastava: o chat do painel continuaria batendo no
+        endereço velho até alguém reiniciar o app — o que contradiz a promessa
+        de reconectar sozinho quando o console grava a configuração nova.
+
+        Devolve `True` quando algo mudou. A sessão some junto: um `session_id`
+        de um gateway não vale em outro.
+
+        O cliente antigo é descartado sem `aclose()` porque isto roda numa
+        thread sem loop de evento, e travar o supervisor para fechar socket de
+        um gateway que já não existe seria pior. Acontece só quando alguém
+        troca a URL — o coletor fecha as conexões junto.
+        """
+        novo = (gateway_url.rstrip("/"), gateway_key or None, agent_id)
+        if novo == (self.base, self.key, self.agent_id):
+            return False
+        self.base, self.key, self.agent_id = novo
+        self._cliente = None
+        self._sessao = None
+        return True
+
     def _http(self) -> httpx.AsyncClient:
         if self._cliente is None:
             cabecalhos = {"Content-Type": "application/json"}

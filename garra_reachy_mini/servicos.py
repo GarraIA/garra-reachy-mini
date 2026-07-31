@@ -65,7 +65,7 @@ class Servicos:
     estado que não mudou entupiria o WebSocket do painel à toa.
     """
 
-    NOMES = ("robot", "movement", "camera", "voice", "brain")
+    NOMES = ("robot", "movement", "camera", "voice", "gateway", "brain")
 
     def __init__(self, barramento: "Barramento | None" = None) -> None:
         self._lock = threading.Lock()

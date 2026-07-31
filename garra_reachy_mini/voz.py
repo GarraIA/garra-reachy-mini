@@ -23,8 +23,12 @@ def frases(texto: str) -> list[str]:
 
 
 class VozClient:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, token: str | None = None) -> None:
         self.base = base_url.rstrip("/")
+        # O servidor de voz exige token de quem vem pela rede: escutar em
+        # 0.0.0.0 sem isso entregaria a GPU a qualquer aparelho da LAN. No
+        # loopback ele não pede, então token vazio continua funcionando.
+        self._cab = {"Authorization": f"Bearer {token}"} if token else {}
 
     def saude(self) -> dict:
         r = requests.get(f"{self.base}/saude", timeout=5)
@@ -50,11 +54,13 @@ class VozClient:
         r = requests.post(
             f"{self.base}/transcrever", params={"sr": sr},
             data=audio.astype(np.float32).tobytes(), timeout=60,
+            headers=self._cab,
         )
         r.raise_for_status()
         return r.json().get("texto", "").strip()
 
     def falar(self, texto: str, sr: int) -> np.ndarray:
-        r = requests.post(f"{self.base}/falar", json={"texto": texto, "sr": sr}, timeout=120)
+        r = requests.post(f"{self.base}/falar", json={"texto": texto, "sr": sr},
+                          timeout=120, headers=self._cab)
         r.raise_for_status()
         return np.frombuffer(r.content, dtype=np.float32)

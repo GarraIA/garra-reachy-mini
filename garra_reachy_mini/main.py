@@ -48,7 +48,7 @@ from .web import (ContextoWeb, FrameHub, PonteChat, montar, preparar,
 
 # A página é servida sem autenticação no loopback (é o daemon quem sobe o
 # uvicorn): nada de segredo sai pelo GET /api/config.
-SEGREDOS = ("gateway_key",)
+SEGREDOS = ("gateway_key", "voz_token")
 MASCARA = "***"
 
 # Quantas falhas seguidas de STT/TTS bastam para concluir que o servidor de voz
@@ -67,6 +67,7 @@ class OpcoesSalvas(BaseModel):
     gateway_url: str | None = None
     gateway_key: str | None = None
     voz_url: str | None = None
+    voz_token: str | None = None
     agent_id: str | None = None
     gateway_model: str | None = None
     provider: str | None = None
@@ -107,6 +108,10 @@ class GarraReachyMini(ReachyMiniApp):
         # usuário o que falta, em vez de parecer quebrado.
         self.servicos = Servicos()
         self._midia_ligada = False
+        # Configuração nova não pode esperar o backoff de falha (até 60 s): quem
+        # aperta "Configure or reconnect Reachy" no console quer ver o resultado
+        # agora. `POST /api/config` levanta isto e o supervisor reavalia na hora.
+        self._acordar = threading.Event()
         self._falhas_voz = 0
         self._avisou_sem_cerebro = 0.0
         # Uma fala por vez. O loop de voz e o botão "falar" do painel disputam o
@@ -151,8 +156,12 @@ class GarraReachyMini(ReachyMiniApp):
                 else:
                     atual[chave] = valor
             armazenamento.salvar_config(atual)
+            # URLs de voz e gateway valem imediatamente — o supervisor relê a
+            # configuração a cada rodada e acabou de ser acordado. As demais
+            # (limiar, comportamento) ainda são lidas só no arranque.
+            self._acordar.set()
             return {"ok": True, "salva": _salva_publica(atual),
-                    "aviso": "Aplicado no próximo início do app."}
+                    "aviso": "Voz e gateway aplicados agora; o resto no próximo início."}
 
     def _poll_notificacoes(self, cerebro: Cerebro, fila: FilaEventos,
                            intervalo_s: float, stop_event: threading.Event) -> None:
@@ -231,6 +240,19 @@ class GarraReachyMini(ReachyMiniApp):
         cerebro = Cerebro(cfg, self.logger)
         cerebro.iniciar()
         codigo, descricao = cerebro.descrever()
+        # Dois estados distintos, e a diferença importa para quem está
+        # diagnosticando: `gateway` é conseguir falar com o Garra; `brain` é ter
+        # com o que pensar. Dá para ter gateway sem cérebro (nenhum provider
+        # configurado) e cérebro sem gateway (chave de API local).
+        alcancou = codigo == "gateway"
+        self.servicos.marcar(
+            "gateway", alcancou,
+            codigo="ok" if alcancou else "unreachable",
+            detalhe=cfg.gateway_url,
+            dica="" if alcancou else
+                 "The Garra gateway did not answer. Open the Reachy page on the "
+                 "Garra console and use Configure or reconnect Reachy.",
+        )
         self.servicos.marcar(
             "brain", cerebro.disponivel,
             codigo=codigo if cerebro.disponivel else "not_configured",
@@ -321,6 +343,23 @@ class GarraReachyMini(ReachyMiniApp):
                 pass
             self.logger.info("Garra Reachy Mini encerrado.")
 
+    def _esperar(self, stop_event: threading.Event, segundos: float) -> None:
+        """Espera, mas acorda na hora se o app parar ou a configuração mudar.
+
+        Fatiado porque são dois sinais: o `stop_event` do daemon (que tem 20 s
+        para ser obedecido antes do SIGKILL) e o nosso `_acordar`. Esperar só no
+        primeiro faria uma configuração nova demorar até 60 s; esperar só no
+        segundo faria o Stop demorar o mesmo.
+        """
+        fim = time.monotonic() + segundos
+        while True:
+            resta = fim - time.monotonic()
+            if resta <= 0 or stop_event.wait(min(0.25, resta)):
+                return
+            if self._acordar.is_set():
+                self._acordar.clear()
+                return
+
     def _supervisionar(self, reachy_mini: ReachyMini, stop_event: threading.Event,
                        controlador: ControladorRobo) -> None:
         """Mantém o app útil enquanto os serviços opcionais vão e voltam.
@@ -339,7 +378,16 @@ class GarraReachyMini(ReachyMiniApp):
         espera, avisou = 3.0, False
         while not stop_event.is_set():
             cfg = Config.carregar()
-            voz = VozClient(cfg.voz_url)
+            # Reavaliar aqui, e não só ao entrar no loop de voz: sem servidor de
+            # voz o `_laco_voz` nunca roda, e o estado do gateway ficava
+            # congelado para sempre num robô recém-instalado — que é justamente
+            # quem mais precisa ver se o desktop já respondeu.
+            self._avaliar_cerebro(cfg)
+            if self.chat is not None and self.chat.reconfigurar(
+                    cfg.gateway_url, cfg.gateway_key, cfg.agent_id):
+                log.info("Chat do painel repontado para %s (agente %s).",
+                         cfg.gateway_url, cfg.agent_id)
+            voz = VozClient(cfg.voz_url, cfg.voz_token)
             if voz.pronto():
                 saude = {}
                 try:
@@ -365,7 +413,7 @@ class GarraReachyMini(ReachyMiniApp):
                     "Painel, câmera, movimentos e rastreamento continuam "
                     "funcionando; a voz entra sozinha quando a URL responder.",
                     cfg.voz_url)
-            stop_event.wait(espera)
+            self._esperar(stop_event, espera)
             espera = min(espera * 1.6, 60.0)
 
     def _laco_voz(self, reachy_mini: ReachyMini, stop_event: threading.Event,
@@ -678,6 +726,7 @@ def _rodar_simulado() -> None:
                     detalhe="actions are accepted but never executed")
     servicos.marcar("camera", False, codigo="simulated")
     servicos.marcar("voice", False, codigo="not_running")
+    servicos.marcar("gateway", False, codigo="not_running")
     servicos.marcar("brain", False, codigo="not_running")
     app = FastAPI(title="Garra Reachy Mini (simulated)")
     preparar(app, politica)
