@@ -1,0 +1,29 @@
+[Unit]
+Description=Garra Reachy — companion (administra a voz e a conexão com o robô)
+Documentation=https://github.com/GarraIA/garra-reachy-mini
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/Projetos/Reachy-Mini-Control/garra_reachy_mini
+Environment=PYTHONUNBUFFERED=1
+# Sem GPU e sem `ReachyMini`: este processo só fala HTTP e chama
+# `systemctl --user`. O dono do robô continua sendo o app instalado nele.
+ExecStart=%h/Documents/Projetos/Reachy-Mini-Control/reachy_mini_env/bin/python -m companion
+
+# Leve o bastante para ficar sempre de pé: é ele que serve os controles da voz
+# ao console em :3888, inclusive (e principalmente) quando a voz está parada.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+UMask=0077
+NoNewPrivileges=yes
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

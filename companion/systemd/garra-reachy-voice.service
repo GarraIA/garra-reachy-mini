@@ -1,0 +1,37 @@
+[Unit]
+Description=Garra Reachy — servidor de voz (Whisper STT + Chatterbox TTS na GPU)
+Documentation=https://github.com/GarraIA/garra-reachy-mini
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/Projetos/Reachy-Mini-Control
+# O wrapper resolve os doze diretórios de lib CUDA (glob não expande em
+# `Environment=`) e lê o token de um arquivo 0600, em vez de deixá-lo numa
+# linha que apareceria em `systemctl show`.
+ExecStart=%h/Documents/Projetos/Reachy-Mini-Control/garra_reachy_mini/companion/systemd/garra-voz.sh
+
+# Carregar Whisper + Chatterbox leva ~11 s com os pesos em cache e perto de um
+# minuto na primeira vez, quando ainda estão sendo baixados do HuggingFace.
+TimeoutStartSec=300
+# `Type=simple` considera "iniciado" assim que o processo existe, o que aqui é
+# mentira: a porta só abre depois dos modelos. Quem sabe a verdade é o
+# `/saude`, e é ele que o companion consulta para dizer loading_models/ready.
+
+Restart=always
+RestartSec=5
+# Cinco quedas em cinco minutos = problema real (GPU ocupada, venv quebrado).
+# Sem isto o systemd reiniciaria para sempre um serviço que nunca vai subir.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# O que este serviço criar (cache do HuggingFace) nasce só para o dono.
+UMask=0077
+NoNewPrivileges=yes
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

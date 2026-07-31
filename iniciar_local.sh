@@ -78,8 +78,27 @@ limpar() {
 }
 trap limpar EXIT INT TERM
 
-if ! curl -sf -m 4 "$VOZ_URL/saude" >/dev/null 2>&1; then
-  echo "Subindo servidor de voz (carrega Whisper e Chatterbox na GPU, ~1 min)..."
+# Com a unidade systemd instalada, ela é a ÚNICA dona do servidor de voz —
+# mesmo que esteja parada agora. Decidir por "está inativa, então subo a minha"
+# abre uma corrida: o systemd sobe a dele em seguida e as duas brigam pela 8123
+# e por ~7 GB de VRAM. Para desenvolver isolado: GARRA_VOICE_STANDALONE=1.
+UNIDADE_VOZ="garra-reachy-voice.service"
+if [ -z "${GARRA_VOICE_STANDALONE:-}" ] \
+   && systemctl --user list-unit-files "$UNIDADE_VOZ" >/dev/null 2>&1 \
+   && [ "$(systemctl --user is-enabled "$UNIDADE_VOZ" 2>/dev/null)" != "not-found" ]; then
+  if ! curl -sf -m 4 "$VOZ_URL/saude" >/dev/null 2>&1; then
+    echo "Subindo a voz pelo systemd ($UNIDADE_VOZ)..."
+    systemctl --user start "$UNIDADE_VOZ" || true
+    until curl -sf -m 4 "$VOZ_URL/saude" >/dev/null 2>&1; do
+      [ "$(systemctl --user is-active "$UNIDADE_VOZ")" = "active" ] \
+        || { echo "$(vermelho 'a unidade da voz não subiu:')"
+             systemctl --user status "$UNIDADE_VOZ" --no-pager -n 10; exit 1; }
+      sleep 2
+    done
+  fi
+  echo "$(verde 'Voz:') gerenciada pelo systemd — pare com o painel ou systemctl --user stop $UNIDADE_VOZ"
+elif ! curl -sf -m 4 "$VOZ_URL/saude" >/dev/null 2>&1; then
+  echo "Subindo servidor de voz avulso (carrega Whisper e Chatterbox na GPU, ~1 min)..."
   "$BASE_DIR/voz_env/bin/python" "$VOZ_PY" &
   VOZ_PID=$!
   until curl -sf -m 4 "$VOZ_URL/saude" >/dev/null 2>&1; do
