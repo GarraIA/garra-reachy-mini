@@ -88,6 +88,53 @@ def procurar(timeout: float = 5.0) -> list[dict]:
     return saida
 
 
+def conversa_ler(painel: str) -> dict:
+    """Lê o ritmo da conversa NO ROBÔ. Sem cópia aqui, de propósito.
+
+    Guardar uma segunda cópia no desktop criaria duas verdades e um laço de
+    sincronização; e o comportamento roda no robô, então o arquivo dele é a
+    fonte. Com o robô fora do ar o painel mostra indisponível — não uma fila de
+    mudanças pendentes que ninguém sabe quando (nem se) serão aplicadas.
+    """
+    r = requests.get(f"{painel}/api/robot/conversation", timeout=TIMEOUT_S)
+    r.raise_for_status()
+    return r.json()
+
+
+def conversa_gravar(painel: str, mudancas: dict) -> dict:
+    """Grava e **relê**: só o robô pode dizer o que ficou salvo.
+
+    Um 200 diz que o HTTP chegou, não que o valor sobreviveu à normalização do
+    robô. O 409 (revisão desatualizada) sobe intacto para o painel decidir.
+    """
+    r = requests.put(f"{painel}/api/robot/conversation", json=mudancas,
+                     timeout=TIMEOUT_S)
+    if r.status_code == 409:
+        raise ConflitoConversa(r.json())
+    r.raise_for_status()
+    return conversa_ler(painel)
+
+
+def conversa_estado(painel: str) -> dict:
+    """Ritmo em vigor mais as últimas medições de turno, do barramento do robô."""
+    dados = conversa_ler(painel)
+    try:
+        r = requests.get(f"{painel}/api/robot/events",
+                         params={"limite": 60, "tipos": "voice.turn.completed"},
+                         timeout=TIMEOUT_S)
+        eventos = r.json().get("events", []) if r.ok else []
+    except (requests.RequestException, ValueError):
+        eventos = []
+    dados["turns"] = eventos[-10:]
+    return dados
+
+
+class ConflitoConversa(RuntimeError):
+    def __init__(self, atual: dict) -> None:
+        super().__init__("revisão desatualizada")
+        self.atual = atual
+
+
 def _config_atual(painel: str) -> dict:
     r = requests.get(f"{painel}/api/config", timeout=TIMEOUT_S)
     r.raise_for_status()

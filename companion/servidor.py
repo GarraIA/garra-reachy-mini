@@ -138,6 +138,66 @@ async def reachy_configure(corpo: dict):
                             status_code=502)
 
 
+# ── ritmo da conversa ────────────────────────────────────────────────────────
+# Só transporte. A configuração vive no `config.json` do robô e em lugar nenhum
+# mais; estas rotas repassam a chamada e devolvem o que o robô confirmou.
+def _painel_de(corpo_ou_query: str | None):
+    painel = (corpo_ou_query or "").strip()
+    if not painel.startswith("http://"):
+        return None
+    return painel.rstrip("/")
+
+
+@app.get("/api/reachy/conversation/settings")
+async def conversa_ler(panel: str | None = None):
+    painel = _painel_de(panel)
+    if painel is None:
+        return JSONResponse({"ok": False, "erro": "informe `panel`"}, status_code=400)
+    try:
+        return {"ok": True, **await asyncio.to_thread(reachy.conversa_ler, painel)}
+    except Exception as e:
+        # Robô fora do ar: o painel mostra indisponível e desabilita os
+        # controles. Nada de fila de mudanças pendentes.
+        return JSONResponse({"ok": False, "reachable": False,
+                             "erro": f"{type(e).__name__}: {e}"[:200]},
+                            status_code=502)
+
+
+@app.put("/api/reachy/conversation/settings")
+async def conversa_gravar(corpo: dict):
+    painel = _painel_de(corpo.get("panel"))
+    if painel is None:
+        return JSONResponse({"ok": False, "erro": "informe `panel`"}, status_code=400)
+    mudancas = {k: v for k, v in corpo.items() if k != "panel"}
+    mudancas.setdefault("updated_by", "garra-dashboard")
+    try:
+        return {"ok": True,
+                **await asyncio.to_thread(reachy.conversa_gravar, painel, mudancas)}
+    except reachy.ConflitoConversa as e:
+        # 409 intacto: quem escreveu por último no outro painel não é
+        # sobrescrito em silêncio.
+        return JSONResponse({"ok": False, "conflict": True, **e.atual},
+                            status_code=409)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reachable": False,
+                             "erro": f"{type(e).__name__}: {e}"[:200]},
+                            status_code=502)
+
+
+@app.get("/api/reachy/conversation/status")
+async def conversa_estado(panel: str | None = None):
+    painel = _painel_de(panel)
+    if painel is None:
+        return JSONResponse({"ok": False, "erro": "informe `panel`"}, status_code=400)
+    try:
+        return {"ok": True, "reachable": True,
+                **await asyncio.to_thread(reachy.conversa_estado, painel)}
+    except Exception as e:
+        return JSONResponse({"ok": False, "reachable": False,
+                             "erro": f"{type(e).__name__}: {e}"[:200]},
+                            status_code=502)
+
+
 def _chave_do_gateway() -> str | None:
     """Chave real do gateway, lida do config.yml do Garra nesta máquina."""
     import pathlib
