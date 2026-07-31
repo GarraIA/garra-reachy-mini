@@ -10,6 +10,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from . import armazenamento
@@ -37,14 +38,26 @@ SAUDACAO = "Olá! Aqui é o GarraIA falando pelo Reachy Mini. Pode falar comigo.
 
 # Persona dos modos reserva (garra ask / OpenRouter direto), que são LLM puro:
 # deixa claro que não há ferramentas, para o modelo não prometer ações.
-PERSONA_BASICA = (
-    "Você é o GarraIA, assistente pessoal do Michel, falando em voz alta pelo "
-    "robô Reachy Mini em MODO BÁSICO: seu modo completo está fora do ar e você "
-    "está sem acesso a ferramentas, agenda, e-mail, internet ou outros agentes. "
-    "Não prometa executar tarefas; se pedirem algo assim, diga que fará quando "
-    "o modo completo voltar. Responda SEMPRE em português do Brasil, em tom "
-    "natural, no máximo 3 frases curtas, sem markdown, listas, emojis ou símbolos."
-)
+def _persona_basica(usuario: str | None = None) -> str:
+    """Persona dos modos reserva (garra ask / OpenRouter direto), LLM puro.
+
+    Deixa claro que não há ferramentas, para o modelo não prometer ações. O
+    nome do dono entra por `GARRA_USUARIO`: fixá-lo no código faria o app
+    instalado da loja chamar todo mundo pelo nome do autor.
+    """
+    dono = (usuario or os.environ.get("GARRA_USUARIO") or "").strip()
+    de_quem = f"assistente pessoal de {dono}, " if dono else "um assistente pessoal, "
+    return (
+        f"Você é o GarraIA, {de_quem}falando em voz alta pelo "
+        "robô Reachy Mini em MODO BÁSICO: seu modo completo está fora do ar e você "
+        "está sem acesso a ferramentas, agenda, e-mail, internet ou outros agentes. "
+        "Não prometa executar tarefas; se pedirem algo assim, diga que fará quando "
+        "o modo completo voltar. Responda SEMPRE em português do Brasil, em tom "
+        "natural, no máximo 3 frases curtas, sem markdown, listas, emojis ou símbolos."
+    )
+
+
+PERSONA_BASICA = _persona_basica()
 
 # Reforço anexado a cada turno dos modos reserva. No gateway não é preciso:
 # o agente reachy_voice já tem essas regras no system prompt.
@@ -150,6 +163,25 @@ def _chave_gateway_do_garra() -> str | None:
     return None
 
 
+@lru_cache(maxsize=1)
+def daemon_padrao() -> str:
+    """URL do daemon do robô: local quando houver um, mDNS quando não.
+
+    Instalado da loja, o app roda DENTRO do robô e o daemon está em
+    `127.0.0.1:8000`; no desktop, o robô está na rede. O SDK resolve isso com o
+    mesmo probe TCP de 500 ms (`reachy_mini/apps/app.py:80-98`), e repeti-lo
+    aqui evita que a instalação padrão dependa de mDNS funcionando dentro do
+    próprio Raspberry Pi.
+    """
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", 8000), timeout=0.5):
+            return "http://127.0.0.1:8000"
+    except OSError:
+        return "http://reachy-mini.local:8000"
+
+
 @dataclass
 class Config:
     gateway_url: str
@@ -202,7 +234,7 @@ class Config:
                                           4.0, float),
             limiar=_num(_opcao(salvo, "GARRA_LIMIAR", "limiar", None), None, float),
             robo_api=str(_opcao(salvo, "GARRA_ROBO_API", "robo_api",
-                                "http://reachy-mini.local:8000")).rstrip("/"),
+                                daemon_padrao())).rstrip("/"),
             comportamento_ambiente=_bool(
                 _opcao(salvo, "GARRA_COMPORTAMENTO_AMBIENTE", "comportamento_ambiente", None), True),
             atalhos_locais=_bool(

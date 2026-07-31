@@ -211,18 +211,45 @@ class ControladorRobo:
 
         self._expressoes: dict[str, str | None] = {}
         self._moves: dict[str, list[str]] = {}
+        self._catalogo_pronto = False
         self._ultima_latencia_ms: float | None = None
 
         self._worker = threading.Thread(
             target=self._laco, name="robo-executor", daemon=True
         )
+        self._thr_catalogo: threading.Thread | None = None
 
     # ── ciclo de vida ───────────────────────────────────────────────────────
     def iniciar(self) -> None:
-        self._recarregar_catalogo()
         self.backend.preparar()
         self._worker.start()
+        # O catálogo de moves mora no HuggingFace e chega pelo daemon: são duas
+        # chamadas de até 25 s cada. Em primeiro plano isso vira meia dança de
+        # espera no botão Start quando a URL do daemon está errada — e no robô
+        # ela nunca está errada, então o custo cai todo em cima de quem já tem
+        # problema. Carregar em thread deixa painel, câmera e movimento
+        # primitivo disponíveis na hora; expressões e danças entram quando
+        # chegarem, e `status()["catalog_ready"]` conta a verdade nesse meio-tempo.
+        self._thr_catalogo = threading.Thread(
+            target=self._laco_catalogo, name="robo-catalogo", daemon=True
+        )
+        self._thr_catalogo.start()
         self._publicar_status()
+
+    def _laco_catalogo(self) -> None:
+        espera = 2.0
+        while not self._parar.is_set():
+            try:
+                self._recarregar_catalogo()
+            except Exception:  # pragma: no cover - rede
+                log.debug("falha ao carregar o catálogo de moves", exc_info=True)
+            if any(self._moves.values()):
+                self._catalogo_pronto = True
+                self._publicar_status()
+                return
+            if self._parar.wait(espera):
+                return
+            espera = min(espera * 2.0, 60.0)
 
     def encerrar(self, timeout: float = 3.0) -> None:
         self._parar.set()
@@ -311,6 +338,7 @@ class ControladorRobo:
             "tracking": trk,
             "wobbling": wob,
             "face_detected": bool(info.get("rosto_detectado")),
+            "catalog_ready": self._catalogo_pronto,
             "latency_ms": round(latencia, 1),
             "robot": info,
             "recent_errors": erros,

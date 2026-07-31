@@ -34,6 +34,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
 from ..robo.barramento import Barramento
+from ..servicos import Servicos
 from .camera import FrameHub
 from .chat import ErroChat, PonteChat
 from .seguranca import Limitador, Politica, origem_permitida, token_valido
@@ -54,6 +55,9 @@ class ContextoWeb:
     eventos: Barramento
     politica: Politica
     chat: PonteChat | None = None
+    # Quais subsistemas estão de pé. Sem isto o painel não tem como distinguir
+    # "sem voz porque você não configurou" de "sem voz porque quebrou".
+    servicos: Servicos = field(default_factory=Servicos)
     limitador: Limitador = field(default_factory=Limitador)
     # Registrado pelo loop de voz: é o único que pode tocar áudio no robô.
     falar: Callable[[str], Awaitable[None]] | None = None
@@ -162,6 +166,7 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         dados = await asyncio.to_thread(ctrl.status)
         dados["camera"] = ctx.hub.status()
         dados["uptime_s"] = round(time.monotonic() - ctx.iniciado_em, 1)
+        dados.update(ctx.servicos.json())
         dados["voice"] = {"tts_disponivel": ctx.falar is not None}
         dados["chat"] = {
             "gateway": ctx.chat.base if ctx.chat else None,

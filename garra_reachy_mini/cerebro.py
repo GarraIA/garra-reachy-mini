@@ -457,10 +457,12 @@ class Cerebro:
             self.log.warning("Nenhum modo reserva disponível (sem binário garra "
                              "e sem OPENROUTER_API_KEY).")
         self.modo = "gateway"
+        self._gateway_ok = False
         self._avisou_basico = False
 
     def iniciar(self) -> None:
-        if self.gateway.conectar():
+        self._gateway_ok = self.gateway.conectar()
+        if self._gateway_ok:
             self.modo = "gateway"
             self.log.info("Cérebro: gateway do Garra em %s (agente %s)",
                           self.cfg.gateway_url, self.cfg.agent_id)
@@ -469,10 +471,31 @@ class Cerebro:
             self.log.warning("Gateway do Garra indisponível em %s; começando no "
                              "modo reserva.", self.cfg.gateway_url)
 
+    @property
+    def disponivel(self) -> bool:
+        """Há algum cérebro capaz de responder?
+
+        Instalado da loja, sem gateway do Garra e sem chave de API, a resposta é
+        não — e o app precisa dizer isso uma vez, não repetir "não consegui
+        falar com nenhum cérebro" a cada frase que alguém disser ao robô.
+        """
+        return self._gateway_ok or self.reserva is not None
+
+    def descrever(self) -> tuple[str, str]:
+        """(código, descrição legível) do cérebro em uso. Sem segredo nenhum."""
+        if self._gateway_ok:
+            return "gateway", f"Garra gateway ({self.cfg.gateway_url})"
+        if isinstance(self.reserva, AskBrain):
+            return "garra_bin", "garra ask (local binary)"
+        if isinstance(self.reserva, OpenRouterBrain):
+            return "openrouter", f"OpenRouter ({self.cfg.model})"
+        return "none", "no brain configured"
+
     def perguntar(self, texto: str) -> RespostaCerebro:
         prefixo = ""
         if self.modo != "gateway" and self.gateway.conectar():
             self.modo = "gateway"
+            self._gateway_ok = True
             self._avisou_basico = False
             prefixo = AVISO_MODO_COMPLETO
         if self.modo == "gateway":
@@ -484,6 +507,7 @@ class Cerebro:
             except GatewayIndisponivel:
                 self.log.warning("Gateway caiu no meio do turno; usando modo reserva.")
                 self.modo = "reserva"
+                self._gateway_ok = False
         if self.reserva is None:
             return RespostaCerebro(False, AVISO_SEM_CEREBRO, "nenhum", "erro",
                                    erro="gateway_off")
