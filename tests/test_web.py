@@ -503,3 +503,23 @@ def test_ponte_chat_repontada_sem_reiniciar():
     assert ponte.base == "http://192.0.2.10:3888"
     assert ponte._sessao is None, "sessão de um gateway não vale em outro"
     assert ponte._cliente is None
+
+
+def test_sinal_de_configuracao_e_consumido_uma_vez_so():
+    """Quem trata o `_acordar` tem de consumi-lo.
+
+    O supervisor reentra no laço de voz logo depois de ele voltar; um sinal
+    ainda levantado faria o laço sair de novo na hora, girando entre as duas
+    funções sem nunca ouvir o microfone.
+    """
+    import pathlib
+    import re
+
+    fonte = pathlib.Path(__file__).parent.parent / "garra_reachy_mini" / "main.py"
+    texto = fonte.read_text(encoding="utf-8")
+    # Todo `if self._acordar.is_set():` precisa de um `.clear()` logo abaixo.
+    for m in re.finditer(r"if self\._acordar\.is_set\(\):", texto):
+        trecho = texto[m.end():m.end() + 700]
+        assert "self._acordar.clear()" in trecho, (
+            "sinal de configuração tratado sem ser consumido em "
+            f"main.py, offset {m.start()}")

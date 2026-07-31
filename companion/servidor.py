@@ -17,7 +17,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import reachy, seguranca, unidade, voz
+from . import ponte, reachy, seguranca, unidade, voz
 
 HOST = "127.0.0.1"
 PORTA = 8125
@@ -138,12 +138,41 @@ async def reachy_configure(corpo: dict):
                             status_code=502)
 
 
+def _chave_do_gateway() -> str | None:
+    """Chave real do gateway, lida do config.yml do Garra nesta máquina."""
+    import pathlib
+
+    try:
+        import yaml
+
+        arq = pathlib.Path("~/.config/garraia/config.yml").expanduser()
+        dados = yaml.safe_load(arq.read_text(encoding="utf-8")) or {}
+        chave = (dados.get("gateway") or {}).get("api_key")
+        return str(chave) if chave else None
+    except Exception:
+        return None
+
+
 def main() -> int:
+    import threading
+
     import uvicorn
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
-    voz.token()  # cria o token 0600 na primeira execução
-    log.info("companion em http://%s:%d — voz em %s", HOST, PORTA, voz.url_lan())
+    token = voz.token()  # cria o token 0600 na primeira execução
+
+    # Dois servidores no mesmo processo, de propósito:
+    #   127.0.0.1:8125  administração (liga/desliga serviço) — nunca sai daqui;
+    #   0.0.0.0:8126    ponte do robô — quatro rotas, com token e agente fixo.
+    # Ver companion/ponte.py para por que a alternativa (abrir a :3888) não é
+    # aceitável.
+    lan = ponte.montar(token, _chave_do_gateway())
+    cfg = uvicorn.Config(lan, host="0.0.0.0", port=ponte.PORTA, log_level="warning")
+    threading.Thread(target=uvicorn.Server(cfg).run, daemon=True,
+                     name="ponte-robo").start()
+
+    log.info("companion em http://%s:%d · ponte do robô em http://%s:%d · voz em %s",
+             HOST, PORTA, voz.ip_lan(), ponte.PORTA, voz.url_lan())
     uvicorn.run(app, host=HOST, port=PORTA, log_level="warning")
     return 0

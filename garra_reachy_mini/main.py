@@ -57,6 +57,10 @@ FALHAS_VOZ_ATE_DESISTIR = 3
 # Sem cérebro configurado, avisa no máximo uma vez a cada tanto: repetir a cada
 # frase vira ladainha, e ficar mudo parece defeito.
 SEM_CEREBRO_INTERVALO_S = 45.0
+# De quanto em quanto o loop de voz reconfere gateway e cérebro. Sem isto, o
+# estado deles congela no instante em que a voz sobe — e a voz costuma subir
+# ANTES de o desktop estar configurado, que é exatamente quando importa.
+RECONFERIR_CEREBRO_S = 20.0
 
 
 def _salva_publica(salva: dict) -> dict:
@@ -630,6 +634,7 @@ class GarraReachyMini(ReachyMiniApp):
             buffer: list[np.ndarray] = []
             em_fala = False
             ultimo_som = 0.0
+            ultima_conferida = time.time()
 
             while not stop_event.is_set():
                 mono = ler_mono()
@@ -669,6 +674,26 @@ class GarraReachyMini(ReachyMiniApp):
                         audio = np.concatenate(buffer)
                         buffer.clear()
                         processar(audio, esperas)
+
+                if self._acordar.is_set():
+                    # Configuração nova. Voltar ao supervisor é o caminho mais
+                    # curto para reavaliar TUDO (voz, gateway, cérebro) e
+                    # reentrar já com o cliente de chat repontado.
+                    #
+                    # Consumir o sinal ANTES de voltar: o supervisor reentra
+                    # aqui em seguida, e um sinal ainda levantado faria este
+                    # `return` disparar de novo na hora — laço apertado entre as
+                    # duas funções, sem nunca ouvir o microfone.
+                    self._acordar.clear()
+                    log.info("Configuração mudou; reavaliando os serviços.")
+                    return
+                if time.time() - ultima_conferida > RECONFERIR_CEREBRO_S and not em_fala:
+                    ultima_conferida = time.time()
+                    cfg = Config.carregar()
+                    novo_cerebro = self._avaliar_cerebro(cfg)
+                    if novo_cerebro.disponivel and not cerebro.disponivel:
+                        log.info("Cérebro voltou (%s).", novo_cerebro.descrever()[1])
+                        cerebro = novo_cerebro
 
                 if self._falhas_voz >= FALHAS_VOZ_ATE_DESISTIR:
                     # A voz caiu no meio da conversa. Voltar ao supervisor faz o

@@ -124,8 +124,7 @@ def _esperar_alcancar(painel: str, esperados: tuple[str, ...],
     return False, servicos
 
 
-def configurar(painel: str, *, porta_gateway: int = 3888,
-               agente: str = "reachy_voice") -> dict:
+def configurar(painel: str, *, agente: str = "reachy_voice") -> dict:
     """Grava as URLs de LAN no robô, confere pelos olhos dele e desfaz se falhar."""
     ip = voz.ip_lan()
     if ip.startswith("127."):
@@ -133,18 +132,29 @@ def configurar(painel: str, *, porta_gateway: int = 3888,
             "não achei o IP de LAN deste desktop (só loopback). O robô não tem "
             "como alcançar 127.0.0.1 — verifique a rede.")
 
+    from . import ponte
+
+    # O robô fala com a PONTE, não com o gateway. O gateway responde 201 sem
+    # autenticação e o agente padrão dele tem `bash` — abri-lo na rede seria
+    # entregar um shell. A ponte expõe quatro rotas, exige token e fixa o
+    # agente. Ver companion/ponte.py.
     novo = {
-        "gateway_url": f"http://{ip}:{porta_gateway}",
+        "gateway_url": f"http://{ip}:{ponte.PORTA}",
         "voz_url": f"http://{ip}:{voz.PORTA_VOZ}",
         "agent_id": agente,
         "voz_token": voz.token(),
+        "gateway_key": voz.token(),
     }
     anterior_bruto = _config_atual(painel)
     efetiva = anterior_bruto.get("efetiva", {})
     salva = anterior_bruto.get("salva", {})
     # Só devolvemos ao estado ANTERIOR o que estava salvo; o que vinha de padrão
     # volta a vir de padrão (string vazia limpa a chave no app).
-    anterior = {c: salva.get(c, "") for c in ("gateway_url", "voz_url", "agent_id")}
+    # Inclui os tokens: um rollback que deixasse credencial para trás apontando
+    # para um desktop inalcançável seria pior do que não ter gravado nada.
+    anterior = {c: salva.get(c, "")
+                for c in ("gateway_url", "voz_url", "agent_id",
+                          "voz_token", "gateway_key")}
 
     relatorio = {
         "target": painel,
@@ -173,5 +183,5 @@ def configurar(painel: str, *, porta_gateway: int = 3888,
         relatorio["error"] = (
             "o robô não alcançou o desktop com as URLs novas; configuração "
             "anterior restaurada. Confira se a voz está no ar e se o firewall "
-            f"deixa o robô chegar em {ip}:{voz.PORTA_VOZ} e {ip}:{porta_gateway}.")
+            f"deixa o robô chegar em {ip}:{voz.PORTA_VOZ} e {ip}:{ponte.PORTA}.")
     return relatorio
