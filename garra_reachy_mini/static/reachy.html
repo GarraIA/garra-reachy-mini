@@ -139,6 +139,38 @@
     </div>
   </section>
 
+  <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
+  <section class="card glass-panel" id="conversa-bloco">
+    <h2><span data-i18n="conversa.titulo"></span> <span class="conta" id="conversa-info"></span></h2>
+    <div class="linha" role="group" data-i18n-aria-label="conversa.titulo">
+      <button id="btn-modo-fast" data-modo="fast" data-i18n="conversa.rapido"
+              data-i18n-title="conversa.rapido_dica"></button>
+      <button id="btn-modo-informative" data-modo="informative" data-i18n="conversa.informativo"
+              data-i18n-title="conversa.informativo_dica"></button>
+    </div>
+    <div class="controle-slider">
+      <label for="conversa-atraso"><span data-i18n="conversa.atraso"></span>
+        <b id="v-conversa-atraso">—</b></label>
+      <input type="range" id="conversa-atraso" min="0" max="10000" step="250">
+    </div>
+    <div class="controle-slider">
+      <label for="conversa-progresso-ms"><span data-i18n="conversa.progresso_atraso"></span>
+        <b id="v-conversa-progresso-ms">—</b></label>
+      <input type="range" id="conversa-progresso-ms" min="3000" max="60000" step="1000">
+    </div>
+    <div class="linha" style="margin-top:4px">
+      <label class="linha" style="gap:6px;font-size:.82rem">
+        <input type="checkbox" id="conversa-progresso">
+        <span data-i18n="conversa.progresso"></span>
+      </label>
+    </div>
+    <div class="linha" style="margin-top:10px">
+      <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
+      <span class="pill" id="p-conversa">—</span>
+    </div>
+    <div class="status-lista" id="conversa-metricas" style="margin-top:12px"></div>
+  </section>
+
   <!-- ── apps ────────────────────────────────────────────────────────────── -->
   <section class="card glass-panel">
     <h2><span data-i18n="apps.titulo"></span> <span class="conta" id="conta-apps"></span></h2>

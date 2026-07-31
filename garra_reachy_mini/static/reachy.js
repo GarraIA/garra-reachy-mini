@@ -401,6 +401,91 @@ async function carregarCapacidades() {
   });
 }
 
+// ─── ritmo da conversa ───────────────────────────────────────────────────────
+// Este painel escreve DIRETO no `config.json` do robô — é a mesma rota que o
+// console em :3888 usa pelo companion. Uma cópia local aqui criaria duas
+// verdades; por isso tudo que se guarda em memória é a `revision` lida, que
+// serve só para detectar escrita concorrente.
+const conversaEstado = { revision: null, conf: null };
+
+function pintarConversa(d) {
+  const c = d.conversation || {};
+  conversaEstado.revision = c.revision ?? null;
+  conversaEstado.conf = c;
+  for (const b of document.querySelectorAll('[data-modo]')) {
+    b.classList.toggle('ativo', b.dataset.modo === c.mode);
+  }
+  const perfil = (c.profiles || {})[c.mode] || {};
+  const ack = perfil.acknowledgement_delay_ms ?? 0;
+  $('conversa-atraso').value = ack;
+  $('v-conversa-atraso').textContent = `${(ack / 1000).toFixed(1).replace('.', ',')} s`;
+  const prog = c.progress_update_delay_ms ?? 10000;
+  $('conversa-progresso-ms').value = prog;
+  $('v-conversa-progresso-ms').textContent = `${(prog / 1000).toFixed(0)} s`;
+  $('conversa-progresso').checked = c.spoken_progress_updates !== false;
+  $('conversa-info').textContent = t(`conversa.${c.mode || 'fast'}_curto`);
+  $('conversa-progresso-ms').disabled = c.spoken_progress_updates === false;
+}
+
+function pintarMetricasConversa(turnos) {
+  const caixa = $('conversa-metricas');
+  if (!caixa) return;
+  if (!turnos || !turnos.length) {
+    caixa.innerHTML = `<div class="status-item">${esc(t('conversa.sem_medidas'))}</div>`;
+    return;
+  }
+  const u = turnos[turnos.length - 1];
+  // Quantos dos últimos turnos precisaram de aviso falado. É o número que diz
+  // se o modo rápido está de facto calando o "deixa eu pensar".
+  const comAviso = turnos.filter(
+    (x) => x.ack && (x.ack.decision === 'completed' || x.ack.decision === 'flushed')).length;
+  const linha = (rotulo, valor) =>
+    `<div class="status-item"><span>${esc(rotulo)}</span><b>${esc(valor)}</b></div>`;
+  caixa.innerHTML = [
+    linha(t('conversa.m_ultima'), `${(u.brain_ms / 1000).toFixed(1).replace('.', ',')} s`),
+    linha(t('conversa.m_total'), `${(u.total_ms / 1000).toFixed(1).replace('.', ',')} s`),
+    linha(t('conversa.m_aviso'), t(`conversa.aviso_${u.ack ? u.ack.decision : 'none'}`)),
+    linha(t('conversa.m_taxa'), `${comAviso}/${turnos.length}`),
+    linha(t('conversa.m_cerebro'), u.brain || '—'),
+  ].join('');
+}
+
+async function carregarConversa() {
+  try {
+    pintarConversa(await api('/api/robot/conversation'));
+    const ev = await api(
+      '/api/robot/events?limite=60&tipos=voice.turn.completed');
+    pintarMetricasConversa((ev.events || []).slice(-10));
+    pill($('p-conversa'), true, t('conversa.salvo'));
+  } catch (e) {
+    pill($('p-conversa'), false, e.message);
+  }
+}
+
+async function salvarConversa(mudancas) {
+  const alvo = $('btn-conversa-salvar');
+  alvo.disabled = true;
+  try {
+    const corpo = { updated_by: 'painel-robo', ...mudancas };
+    // A `revision` lida acompanha a escrita: se o :3888 gravou no meio, o robô
+    // devolve 409 e recarregamos em vez de sobrescrever a mudança do outro.
+    if (conversaEstado.revision !== null) corpo.revision = conversaEstado.revision;
+    pintarConversa(await api('/api/robot/conversation', {
+      method: 'PUT', body: JSON.stringify(corpo),
+    }));
+    pill($('p-conversa'), true, t('conversa.salvo'));
+  } catch (e) {
+    if (e.status === 409) {
+      if (e.dados) pintarConversa(e.dados);
+      pill($('p-conversa'), false, t('conversa.conflito'));
+    } else {
+      pill($('p-conversa'), false, e.message);
+    }
+  } finally {
+    alvo.disabled = false;
+  }
+}
+
 // ─── apps ────────────────────────────────────────────────────────────────────
 const APPS_OFICIAIS = /^(reachy_mini_|pollen)/;
 
@@ -505,6 +590,24 @@ function ligar() {
     carregarApps();
   });
 
+  for (const b of document.querySelectorAll('[data-modo]')) {
+    b.addEventListener('click', () => salvarConversa({ mode: b.dataset.modo }));
+  }
+  // O slider só grava ao soltar (`change`), não a cada pixel arrastado —
+  // `input` dispararia dezenas de PUT e cada um invalidaria a revisão anterior.
+  $('conversa-atraso').addEventListener('input', (e) =>
+    $('v-conversa-atraso').textContent =
+      `${(+e.target.value / 1000).toFixed(1).replace('.', ',')} s`);
+  $('conversa-progresso-ms').addEventListener('input', (e) =>
+    $('v-conversa-progresso-ms').textContent = `${(+e.target.value / 1000).toFixed(0)} s`);
+  $('btn-conversa-salvar').addEventListener('click', () => salvarConversa({
+    acknowledgement_delay_ms: +$('conversa-atraso').value,
+    progress_update_delay_ms: +$('conversa-progresso-ms').value,
+    spoken_progress_updates: $('conversa-progresso').checked,
+  }));
+  $('conversa-progresso').addEventListener('change', (e) =>
+    $('conversa-progresso-ms').disabled = !e.target.checked);
+
   const fmt = (v, u) => `${v.toFixed(u ? 1 : 2).replace('.', ',')}${u || ''}`;
   $('intensidade').addEventListener('input', (e) =>
     $('v-intensidade').textContent = fmt(+e.target.value));
@@ -526,6 +629,7 @@ function ligar() {
   await atualizarStatus();
   await carregarCapacidades();
   carregarApps();
+  carregarConversa();
   conectarEventos();
   // Rede de segurança: com o WebSocket de pé o estado chega por evento, mas se
   // ele cair o painel não pode congelar numa foto antiga.
