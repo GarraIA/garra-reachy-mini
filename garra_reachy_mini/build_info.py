@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 from importlib import metadata
+from pathlib import Path
 from typing import Any
 
 # `__package__` é o nome do pacote importado — `garra_reachy_mini` na produção,
@@ -38,6 +39,28 @@ CAPACIDADES: dict[str, bool] = {
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre
 # adição; isto cobre mudança de contrato, que adicionar chave nenhuma resolve.
 API_VERSION = 2
+
+
+# Os arquivos sem os quais não há painel. Só `reachy.html` é fatal — o resto o
+# navegador busca depois —, mas todos entram pelo mesmo `package-data`, então a
+# falta de um denuncia a falta de todos.
+ATIVOS_PAINEL = ("reachy.html", "reachy.css", "reachy.js")
+
+
+def ativos_do_painel() -> dict[str, Any]:
+    """O painel foi empacotado junto com o código?
+
+    Um wheel mal empacotado instala os `.py` e deixa o `static/` para trás sem
+    erro nenhum: o app sobe, a API responde, e só o painel some. Perguntar isso
+    em runtime é a diferença entre um `{"detail":"Not Found"}` — idêntico ao de
+    uma URL digitada errada — e uma causa.
+
+    Devolve só os nomes que faltam, nunca o caminho: o diagnóstico não abre o
+    sistema de arquivos do robô para quem o consulta.
+    """
+    pasta = Path(__file__).resolve().parent / "static"
+    faltando = [nome for nome in ATIVOS_PAINEL if not (pasta / nome).is_file()]
+    return {"ok": not faltando, "missing": faltando}
 
 
 def versao() -> str | None:

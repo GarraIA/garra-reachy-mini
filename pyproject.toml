@@ -60,6 +60,13 @@ where = ["."]
 include = ["garra_reachy_mini*"]
 
 [tool.setuptools.package-data]
-# Explícito em vez de `**/*`: o glob recursivo empacotava os `__pycache__/*.pyc`
-# junto com o wheel.
-garra_reachy_mini = ["static/*.html", "static/*.css", "static/*.js"]
+# A chave é `"*"` — "todo pacote deste projeto" — e não o nome do pacote.
+#
+# Aqui o nome casava e o painel era empacotado; num fork que renomeasse o
+# diretório, não. Foi exatamente o que aconteceu no build de staging: a chave
+# ficou apontando para o nome antigo, nenhum estático entrou no wheel, e o
+# painel embutido virou `{"detail":"Not Found"}`.
+#
+# Os padrões continuam explícitos em vez de `**/*`: o glob recursivo empacotava
+# os `__pycache__/*.pyc` junto.
+"*" = ["static/*.html", "static/*.css", "static/*.js"]
