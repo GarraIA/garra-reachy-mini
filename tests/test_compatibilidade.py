@@ -33,7 +33,7 @@ def test_o_canal_sai_do_nome_da_distribuicao(monkeypatch):
     monkeypatch.setattr(build_info, "DISTRIBUICAO", "staging_garra_reachy_mini")
     assert build_info.canal() == "staging"
     monkeypatch.setattr(build_info, "DISTRIBUICAO", "garra_reachy_mini")
-    assert build_info.canal() == "stable"
+    assert build_info.canal() == "production"
 
 
 def test_a_identidade_tem_o_contrato_inteiro():
@@ -190,3 +190,114 @@ def test_o_painel_nao_grava_quando_nao_ha_suporte():
     corpo = corpo[:corpo.index("\n}")]
     # A trava tem de vir ANTES de qualquer fetch.
     assert corpo.index("conversaSituacao !== CONVERSA_OK") < corpo.index("fetch(")
+
+
+# ── diagnóstico de runtime ─────────────────────────────────────────────────
+def test_o_diagnostico_confere_cada_dependencia():
+    d = build_info.diagnostico()
+    assert d["status"] in ("ok", "degraded")
+    for nome, _dist, _r in build_info.DEPENDENCIAS:
+        assert d["dependencies"][nome]["status"] in (
+            "ok", "missing", "incompatible", "unknown")
+
+
+def test_o_diagnostico_nao_abre_o_robo():
+    """A pergunta é "este app tem o que precisa?", não "o que há na máquina"."""
+    import json
+    texto = json.dumps(build_info.diagnostico())
+    for proibido in ("/home/", "/venvs/", "PATH", "TOKEN", "token",
+                     "gateway_key", "config.json"):
+        assert proibido not in texto, f"vazou {proibido!r}"
+    # E nada de listar os pacotes do robô: só as declaradas.
+    assert set(build_info.diagnostico()["dependencies"]) == {
+        m for m, _d, _r in build_info.DEPENDENCIAS}
+
+
+def test_dependencia_ausente_vira_missing_sem_mensagem(monkeypatch):
+    def falha(_nome):
+        raise ImportError("no module named coisa em /home/michel/segredo")
+    monkeypatch.setattr(build_info, "__import__", falha, raising=False)
+    d = build_info._conferir("modulo_que_nao_existe_mesmo", "coisa", "")
+    assert d["status"] == "missing"
+    assert "/home/" not in str(d)
+
+
+def test_a_producao_declara_as_dependencias_de_verdade():
+    """O inverso da trava do staging: aqui `dependencies` NUNCA pode ser [].
+
+    E as declaradas têm de ser as mesmas que o diagnóstico confere — uma lista
+    divergir da outra faria o runtime vigiar a dependência errada.
+    """
+    import pathlib
+    import tomllib
+    dados = tomllib.loads(
+        (pathlib.Path(__file__).parent.parent / "pyproject.toml").read_text())
+    deps = dados["project"]["dependencies"]
+    assert deps, "produção sem dependências declaradas"
+    declaradas = {d.split(">=")[0].split("<")[0].split("==")[0].strip() for d in deps}
+    assert declaradas == {dist for _m, dist, _r in build_info.DEPENDENCIAS}
+
+
+def test_o_endpoint_de_diagnostico_existe(backend, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from garra_reachy_mini.robo.acoes import ControladorRobo
+    from garra_reachy_mini.web.api import ContextoWeb, montar
+    from garra_reachy_mini.web.camera import FrameHub
+    from garra_reachy_mini.web.seguranca import resolver_politica
+
+    ctrl = ControladorRobo(backend, semente=5, dir_capturas=tmp_path)
+    ctrl.iniciar()
+    hub = FrameHub(backend, fps_ativo=4.0)
+    app = FastAPI()
+    montar(app, ContextoWeb(
+        controlador=ctrl, hub=hub, eventos=ctrl.eventos,
+        politica=resolver_politica(ambiente={}, escolher_porta=False, no_robo=False)))
+    with TestClient(app) as c:
+        d = c.get("/api/robot/diagnostics/runtime").json()
+    hub.encerrar(); ctrl.encerrar(timeout=2)
+    assert d["app_id"] == "garra_reachy_mini"
+    assert d["channel"] == "production"
+    assert "python" in d and "dependencies" in d
+
+
+# ── o carimbo de commit do build ───────────────────────────────────────────
+def test_commit_vem_do_carimbo_de_build(monkeypatch, tmp_path):
+    """O SHA devolvido pelo robô é o do artefato — gravado no build, não uma
+    variável que ninguém exporta em runtime."""
+    monkeypatch.delenv("GARRA_REACHY_COMMIT", raising=False)
+    import sys
+    import types
+    falso = types.ModuleType("garra_reachy_mini._commit")
+    falso.COMMIT = "abc123def456"
+    monkeypatch.setitem(sys.modules, "garra_reachy_mini._commit", falso)
+    assert build_info.commit() == "abc123def456"
+
+
+def test_sem_carimbo_o_commit_e_none_e_nao_um_chute(monkeypatch):
+    import sys
+    monkeypatch.delenv("GARRA_REACHY_COMMIT", raising=False)
+    monkeypatch.setitem(sys.modules, "garra_reachy_mini._commit", None)
+    assert build_info.commit() is None
+
+
+def test_a_variavel_de_ambiente_ainda_sobrepoe(monkeypatch):
+    """Builds manuais podem carimbar por env; ela vence o módulo quando existe."""
+    monkeypatch.setenv("GARRA_REACHY_COMMIT", "deadbeef")
+    assert build_info.commit() == "deadbeef"
+
+
+def test_o_carimbo_e_gerado_e_enviado_pelo_publicar():
+    import pathlib
+    fonte = (pathlib.Path(__file__).parent.parent / "publicar.sh").read_text()
+    assert '_commit.py' in fonte
+    assert 'COMMIT = ' in fonte
+    # E entra no upload mesmo sem ser rastreado.
+    assert '"garra_reachy_mini/_commit.py"' in fonte
+
+
+def test_o_carimbo_nunca_e_commitado():
+    import pathlib
+    assert "garra_reachy_mini/_commit.py" in (
+        pathlib.Path(__file__).parent.parent / ".gitignore").read_text()

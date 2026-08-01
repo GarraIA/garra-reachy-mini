@@ -369,6 +369,16 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
     # :3888 escreve aqui pelo companion, e o painel do robô escreve aqui direto.
     # Um segundo armazenamento no desktop criaria duas verdades e um laço de
     # sincronização — e o comportamento roda aqui, então aqui é o lugar.
+    # ── diagnóstico de runtime ─────────────────────────────────────────────
+    # O venv dos apps é COMPARTILHADO: outro app pode trocar uma dependência
+    # sem este ficar sabendo, e não há shell no robô para um `pip freeze`.
+    # Passa pelo mesmo porteiro do resto de `/api/robot` — token exigido quando
+    # a API está na rede. Responde "este app tem o que precisa?" e nada além:
+    # sem lista de pacotes do robô, sem caminhos, sem variáveis de ambiente.
+    @r.get("/diagnostics/runtime")
+    async def diagnostico_runtime() -> dict[str, Any]:
+        return await asyncio.to_thread(build_info.diagnostico)
+
     @r.get("/conversation")
     async def conversa_ler() -> dict[str, Any]:
         return await asyncio.to_thread(_ler_conversa)

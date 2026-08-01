@@ -52,3 +52,7 @@ node_modules/
 Thumbs.db
 *~
 *.swp
+
+# Carimbo de build gerado pelo publicar.sh — nunca commitado:
+# o SHA de um commit não pode viver dentro do próprio commit.
+garra_reachy_mini/_commit.py

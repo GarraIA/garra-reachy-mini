@@ -52,6 +52,13 @@ CONTA="$("$BASE_DIR/reachy_mini_env/bin/hf" auth whoami 2>/dev/null | sed -n 's/
 
 SHA="$(git -C "$APP_DIR" rev-parse HEAD)"
 VERSAO="$(grep -m1 '^version' "$APP_DIR/pyproject.toml" | cut -d'"' -f2)"
+
+# O SHA vai DENTRO do artefato, gravado agora — `/api/robot/status` devolve o
+# commit que gerou o pacote instalado, sem depender de variável de ambiente
+# que ninguém exporta no robô. Gerado no build, ignorado pelo git, enviado
+# junto com os rastreados.
+printf '# Gerado pelo publicar.sh no build. NÃO editar nem commitar.\nCOMMIT = "%s"\n' \
+  "$SHA" > "$APP_DIR/garra_reachy_mini/_commit.py"
 case "$ETAPA" in privado) VIS="private";; publico) VIS="public";; *) VIS="unchanged";; esac
 
 cat <<FIM
@@ -104,7 +111,9 @@ api.upload_folder(
     repo_id=repo_id,
     repo_type="space",
     commit_message=f"Garra Reachy Mini {versao} ({sha[:12]})",
-    allow_patterns=rastreados,
+    # Os rastreados + o carimbo de commit gerado no build (único não-rastreado
+    # que atravessa; qualquer outro continua barrado).
+    allow_patterns=[*rastreados, "garra_reachy_mini/_commit.py"],
     delete_patterns=["*"],   # remoções no git também somem do Space
 )
 
