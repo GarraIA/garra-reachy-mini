@@ -18,7 +18,12 @@ import subprocess
 import time
 
 UNIDADE_VOZ = "garra-reachy-voice.service"
-UNIDADES = frozenset({UNIDADE_VOZ, "garra-reachy-companion.service"})
+# `garraia.service` entra porque a identidade do agente vive no `config.yml` do
+# gateway, e mudá-la exige recarregá-lo — não há caminho de reload a quente. As
+# rotas de voz continuam passando a unidade explicitamente, então nenhuma delas
+# alcança o gateway por acidente.
+UNIDADE_GATEWAY = "garraia.service"
+UNIDADES = frozenset({UNIDADE_VOZ, "garra-reachy-companion.service", UNIDADE_GATEWAY})
 VERBOS = frozenset({"start", "stop", "restart", "enable", "disable"})
 CONSULTAS = frozenset({"is-active", "is-enabled", "show"})
 

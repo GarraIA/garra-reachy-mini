@@ -17,7 +17,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import ponte, reachy, seguranca, unidade, voz
+from . import agente, agente_teste, ponte, reachy, seguranca, unidade, voz
 
 HOST = "127.0.0.1"
 PORTA = 8125
@@ -227,6 +227,65 @@ async def conversa_estado(panel: str | None = None):
                 **await asyncio.to_thread(reachy.conversa_estado, painel)}
     except Exception as e:
         return _falha(e, painel)
+
+
+# ── identidade do agente ─────────────────────────────────────────────────────
+# Nome e personalidade vivem no `config.yml` do gateway, e só lá. Estas rotas
+# são o único escritor: o painel do robô chega por aqui pela ponte, em vez de
+# guardar uma cópia que sobreviveria a um restore e sobrescreveria o gateway
+# com um valor velho. O `system_prompt` (núcleo protegido) não é exposto.
+@app.get("/api/reachy/agent-identity")
+async def agente_ler():
+    try:
+        return {"ok": True, **await asyncio.to_thread(agente.ler)}
+    except agente.ErroAgente as e:
+        return JSONResponse({"ok": False, "error": {"code": "gateway_config_error",
+                                                    "detail": str(e)}},
+                            status_code=503)
+
+
+@app.put("/api/reachy/agent-identity")
+async def agente_gravar(corpo: dict):
+    try:
+        return {"ok": True, **await asyncio.to_thread(
+            agente.gravar, corpo, str(corpo.get("updated_by") or "garra-dashboard"))}
+    except agente.ConflitoAgente as e:
+        # 409 com o estado atual: quem editou pelo outro painel não é
+        # sobrescrito em silêncio.
+        return JSONResponse({"ok": False, "conflict": True, **e.atual}, status_code=409)
+    except agente.ErroAgente as e:
+        return JSONResponse({"ok": False, "error": {"code": "invalid_identity",
+                                                    "detail": str(e)}},
+                            status_code=400)
+
+
+@app.post("/api/reachy/agent-identity/reset")
+async def agente_restaurar(corpo: dict | None = None):
+    corpo = corpo or {}
+    try:
+        return {"ok": True, **await asyncio.to_thread(
+            agente.restaurar, corpo.get("revision"),
+            str(corpo.get("updated_by") or "garra-dashboard"))}
+    except agente.ConflitoAgente as e:
+        return JSONResponse({"ok": False, "conflict": True, **e.atual}, status_code=409)
+    except agente.ErroAgente as e:
+        return JSONResponse({"ok": False, "error": {"code": "invalid_identity",
+                                                    "detail": str(e)}},
+                            status_code=400)
+
+
+@app.post("/api/reachy/agent-identity/test")
+async def agente_testar(corpo: dict | None = None):
+    """Sessão temporária, só texto. Não move o robô e não toca a sessão de voz."""
+    corpo = corpo or {}
+    perguntas = corpo.get("questions")
+    try:
+        return {"ok": True, **await asyncio.to_thread(
+            agente_teste.executar, _chave_do_gateway(), perguntas)}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": {"code": "test_failed",
+                                                    "detail": type(e).__name__}},
+                            status_code=502)
 
 
 def _chave_do_gateway() -> str | None:

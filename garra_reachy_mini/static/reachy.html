@@ -139,6 +139,25 @@
     </div>
   </section>
 
+  <!-- ── identidade do assistente (interface REMOTA do Garra) ─────────────── -->
+  <section class="card glass-panel" id="identidade-bloco" hidden>
+    <h2><span data-i18n="ident.titulo"></span> <span class="conta" id="identidade-info"></span></h2>
+    <div class="campo">
+      <label for="identidade-nome" data-i18n="ident.nome"></label>
+      <input type="text" id="identidade-nome" maxlength="32" placeholder="Garra">
+    </div>
+    <div class="campo">
+      <label for="identidade-persona" data-i18n="ident.persona"></label>
+      <textarea id="identidade-persona" rows="5" maxlength="4000"></textarea>
+    </div>
+    <div class="dica" data-i18n="ident.aviso"></div>
+    <div class="linha">
+      <button id="btn-identidade-salvar" class="primario" data-i18n="ident.salvar"></button>
+      <button id="btn-identidade-reset" data-i18n="ident.restaurar"></button>
+      <span class="pill" id="p-identidade">—</span>
+    </div>
+  </section>
+
   <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
   <section class="card glass-panel" id="conversa-bloco">
     <h2><span data-i18n="conversa.titulo"></span> <span class="conta" id="conversa-info"></span></h2>

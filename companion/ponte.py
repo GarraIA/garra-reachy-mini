@@ -24,12 +24,15 @@ O gateway continua intocado: nem recompilado, nem reiniciado, nem exposto.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import re
 import time
 
 import httpx
+
+from . import agente
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -121,8 +124,67 @@ def montar(token: str, chave_gateway: str | None) -> FastAPI:
         return Response(content=b"pong", status_code=200,
                         media_type="text/plain", headers=cabecalhos)
 
+    # ── identidade do agente, tratada AQUI dentro ────────────────────────────
+    # Não é proxy: o catch-all abaixo repassa ao gateway, e o dono do
+    # `config.yml` é este processo. O painel do robô não alcança a API
+    # administrativa em `127.0.0.1:8125` (loopback por desenho, e a origem dele
+    # não é loopback), então a ponte é o único caminho — com o mesmo token.
+    #
+    # Registradas antes do catch-all porque o FastAPI casa na ordem.
+    @app.get("/api/agent-identity")
+    async def identidade_ler(request: Request):
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            return {"ok": True, **await asyncio.to_thread(agente.ler)}
+        except agente.ErroAgente as e:
+            return JSONResponse({"ok": False, "error": {"code": "gateway_config_error",
+                                                        "detail": str(e)}},
+                                status_code=503)
+
+    @app.put("/api/agent-identity")
+    async def identidade_gravar(request: Request):
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            corpo = await request.json()
+        except ValueError:
+            return JSONResponse({"erro": "corpo inválido"}, status_code=400)
+        if not isinstance(corpo, dict):
+            return JSONResponse({"erro": "corpo inválido"}, status_code=400)
+        try:
+            return {"ok": True, **await asyncio.to_thread(
+                agente.gravar, corpo, str(corpo.get("updated_by") or "painel-robo"))}
+        except agente.ConflitoAgente as e:
+            return JSONResponse({"ok": False, "conflict": True, **e.atual},
+                                status_code=409)
+        except agente.ErroAgente as e:
+            return JSONResponse({"ok": False, "error": {"code": "invalid_identity",
+                                                        "detail": str(e)}},
+                                status_code=400)
+
+    @app.post("/api/agent-identity/reset")
+    async def identidade_restaurar(request: Request):
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            corpo = await request.json()
+        except ValueError:
+            corpo = {}
+        corpo = corpo if isinstance(corpo, dict) else {}
+        try:
+            return {"ok": True, **await asyncio.to_thread(
+                agente.restaurar, corpo.get("revision"), "painel-robo")}
+        except agente.ConflitoAgente as e:
+            return JSONResponse({"ok": False, "conflict": True, **e.atual},
+                                status_code=409)
+        except agente.ErroAgente as e:
+            return JSONResponse({"ok": False, "error": {"code": "invalid_identity",
+                                                        "detail": str(e)}},
+                                status_code=400)
+
     @app.api_route("/{caminho:path}",
-                   methods=["GET", "POST", "DELETE", "OPTIONS"])
+                   methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     async def encaminhar(caminho: str, request: Request) -> Response:
         global _cliente
         alvo = "/" + caminho

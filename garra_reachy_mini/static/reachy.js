@@ -401,6 +401,49 @@ async function carregarCapacidades() {
   });
 }
 
+// ─── identidade do assistente ────────────────────────────────────────────────
+// Interface REMOTA: a fonte de verdade é a configuração do Garra, não este
+// robô. Sem Garra no ar o card some — nada de cache, nada de alteração
+// pendente, porque uma pendência aqui viraria uma segunda verdade.
+let identidadeRev = null;
+
+function pintarIdentidade(d) {
+  identidadeRev = d.revision ?? null;
+  $('identidade-nome').value = d.assistant_name || '';
+  $('identidade-persona').value = d.persona_prompt || '';
+  $('identidade-info').textContent = `${d.assistant_name || '—'} · rev ${d.revision ?? 0}`;
+  $('identidade-bloco').hidden = false;
+}
+
+async function carregarIdentidade() {
+  try {
+    pintarIdentidade(await api('/api/robot/agent-identity'));
+  } catch (e) {
+    $('identidade-bloco').hidden = true;
+    pill($('p-identidade'), false, t('ident.offline'));
+  }
+}
+
+async function salvarIdentidade(caminho, corpo, metodo) {
+  const alvo = $('btn-identidade-salvar');
+  alvo.disabled = true;
+  try {
+    const c = { ...corpo, updated_by: 'painel-robo' };
+    if (identidadeRev !== null) c.revision = identidadeRev;
+    pintarIdentidade(await api(caminho, { method: metodo, body: JSON.stringify(c) }));
+    pill($('p-identidade'), true, t('ident.salvo'));
+  } catch (e) {
+    if (e.status === 409) {
+      if (e.dados) pintarIdentidade(e.dados);
+      pill($('p-identidade'), false, t('ident.conflito'));
+    } else {
+      pill($('p-identidade'), false, e.message);
+    }
+  } finally {
+    alvo.disabled = false;
+  }
+}
+
 // ─── ritmo da conversa ───────────────────────────────────────────────────────
 // Este painel escreve DIRETO no `config.json` do robô — é a mesma rota que o
 // console em :3888 usa pelo companion. Uma cópia local aqui criaria duas
@@ -646,6 +689,15 @@ function ligar() {
     $('conversa-progresso-ms').disabled = !e.target.checked);
   // Reflete na hora; grava só no botão, numa escrita e numa revisão só.
   $('conversa-mestre').addEventListener('change', sincronizarMestre);
+
+  $('btn-identidade-salvar').addEventListener('click', () =>
+    salvarIdentidade('/api/robot/agent-identity', {
+      assistant_name: $('identidade-nome').value,
+      persona_prompt: $('identidade-persona').value,
+    }, 'PUT'));
+  $('btn-identidade-reset').addEventListener('click', () =>
+    salvarIdentidade('/api/robot/agent-identity/reset', {}, 'POST'));
+  carregarIdentidade();
 
   const fmt = (v, u) => `${v.toFixed(u ? 1 : 2).replace('.', ',')}${u || ''}`;
   $('intensidade').addEventListener('input', (e) =>

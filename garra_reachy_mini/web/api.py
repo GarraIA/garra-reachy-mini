@@ -384,6 +384,55 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         except ValueError as e:
             raise _erro(400, str(e)) from e
 
+    # ── identidade do assistente (interface REMOTA) ──────────────────────────
+    # Ao contrário do ritmo da conversa, isto NÃO mora aqui. O agente vive na
+    # configuração do Garra, e é lá que fica: uma cópia no robô sobreviveria a
+    # um restore do `config.yml` e o sobrescreveria com um valor velho. Estas
+    # rotas só repassam para a ponte, que é quem escreve — e sem Garra no ar
+    # não há leitura, nem cache, nem alteração pendente.
+    def _identidade(metodo: str, sufixo: str = "", corpo: dict | None = None):
+        import requests
+
+        cfg = armazenamento.carregar_config()
+        base = str(cfg.get("gateway_url") or "").rstrip("/")
+        chave = cfg.get("gateway_key")
+        if not base:
+            raise _erro(503, "o Garra não está configurado neste robô")
+        cabecalhos = {"Authorization": f"Bearer {chave}"} if chave else {}
+        try:
+            resp = requests.request(
+                metodo, f"{base}/api/agent-identity{sufixo}",
+                json=corpo, headers=cabecalhos, timeout=120)
+        except requests.RequestException as e:
+            raise _erro(503, f"o Garra não respondeu ({type(e).__name__})") from e
+        dados = resp.json() if resp.content else {}
+        if resp.status_code == 409:
+            raise _Conflito(dados)
+        if not resp.ok:
+            detalhe = ((dados.get("error") or {}).get("detail")
+                       if isinstance(dados, dict) else None)
+            raise _erro(resp.status_code if resp.status_code < 500 else 502,
+                        detalhe or "o Garra recusou a alteração")
+        return dados
+
+    @r.get("/agent-identity")
+    async def identidade_ler() -> dict[str, Any]:
+        return await asyncio.to_thread(_identidade, "GET")
+
+    @r.put("/agent-identity")
+    async def identidade_gravar(corpo: dict[str, Any] = Body(...)) -> Any:
+        try:
+            return await asyncio.to_thread(_identidade, "PUT", "", corpo)
+        except _Conflito as e:
+            return JSONResponse(e.atual, status_code=409)
+
+    @r.post("/agent-identity/reset")
+    async def identidade_restaurar(corpo: dict[str, Any] | None = Body(None)) -> Any:
+        try:
+            return await asyncio.to_thread(_identidade, "POST", "/reset", corpo or {})
+        except _Conflito as e:
+            return JSONResponse(e.atual, status_code=409)
+
     @r.post("/conversation/session")
     async def conversa_sessao_nova() -> dict[str, Any]:
         """Recomeça a conversa: sessão limpa no gateway, sem histórico herdado.
