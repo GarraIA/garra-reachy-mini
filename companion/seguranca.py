@@ -2,7 +2,7 @@
 
 Este processo liga e desliga serviço do usuário e escreve configuração no robô.
 Ele escuta só em `127.0.0.1`, mas isso sozinho **não** basta: um site qualquer
-aberto no navegador do Michel pode fazer requisição para `127.0.0.1:8125`, e um
+aberto no navegador do operador pode fazer requisição para `127.0.0.1:8125`, e um
 domínio hostil pode apontar seu DNS para 127.0.0.1 (*DNS rebinding*) para que o
 navegador trate a nossa API como se fosse dele.
 

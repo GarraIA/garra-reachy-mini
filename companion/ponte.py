@@ -9,7 +9,7 @@ Medi antes de fazer, e não dá:
   * o agente padrão do gateway tem **`bash`** entre as 27 ferramentas de runtime.
 
 Somando os dois, `--host 0.0.0.0` entregaria execução de comando na máquina do
-Michel a qualquer aparelho da rede. Um bug de configuração vira um shell remoto.
+dono a qualquer aparelho da rede. Um bug de configuração vira um shell remoto.
 
 Então esta ponte expõe na LAN só o mínimo, e com três travas:
 
