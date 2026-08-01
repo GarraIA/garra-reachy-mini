@@ -111,10 +111,19 @@ api.upload_folder(
     repo_id=repo_id,
     repo_type="space",
     commit_message=f"Garra Reachy Mini {versao} ({sha[:12]})",
-    # Os rastreados + o carimbo de commit gerado no build (único não-rastreado
-    # que atravessa; qualquer outro continua barrado).
-    allow_patterns=[*rastreados, "garra_reachy_mini/_commit.py"],
+    allow_patterns=rastreados,
     delete_patterns=["*"],   # remoções no git também somem do Space
+)
+# O carimbo vai por upload_file, à parte: `upload_folder` honra o .gitignore
+# do diretório, e o carimbo é gitignorado DE PROPÓSITO (o SHA de um commit
+# não pode viver dentro do próprio commit). Medido: com allow_patterns ele
+# era silenciosamente pulado e o robô respondia `commit: null`.
+api.upload_file(
+    path_or_fileobj=f"{app_dir}/garra_reachy_mini/_commit.py",
+    path_in_repo="garra_reachy_mini/_commit.py",
+    repo_id=repo_id,
+    repo_type="space",
+    commit_message=f"build stamp {sha[:12]}",
 )
 
 if etapa == "publico":
