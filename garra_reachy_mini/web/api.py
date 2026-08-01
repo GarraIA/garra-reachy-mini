@@ -31,7 +31,8 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               StreamingResponse)
 
 from .. import armazenamento, build_info, conversa
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
@@ -545,11 +546,56 @@ def _montar_ws(app: FastAPI, ctx: ContextoWeb) -> None:
 
 
 # ─── painel estático ─────────────────────────────────────────────────────────
+def _liberar_raiz(app: FastAPI) -> None:
+    """Tira o `GET /` que a classe base registrou, para pôr o nosso no lugar."""
+    app.router.routes = [
+        rota for rota in app.router.routes
+        if not (getattr(rota, "path", None) == "/" and "GET" in getattr(rota, "methods", set()))
+    ]
+
+
+def _montar_painel_ausente(app: FastAPI) -> None:
+    """Sem os estáticos no build, `/` e `/reachy` dizem por quê.
+
+    Antes daqui `_montar_painel` só retornava, e o FastAPI respondia
+    `{"detail":"Not Found"}` — exatamente o que ele responde para uma URL
+    digitada errada. Custou uma rodada inteira no hardware descobrir que a
+    causa era o `package-data` do `pyproject.toml` apontando para o nome antigo
+    do pacote, e que `/` e `/reachy` estavam ambas ausentes (redirecionar uma
+    para a outra não teria mudado nada).
+
+    503, e não 404: o app está de pé e a API funciona; o que falta é este build.
+    """
+    faltando = build_info.ativos_do_painel()["missing"] or list(build_info.ATIVOS_PAINEL)
+    lista = ", ".join(faltando)
+    corpo = (
+        "<!doctype html><meta charset=utf-8>"
+        "<title>Painel não empacotado</title>"
+        "<style>body{font:16px/1.6 system-ui;margin:3rem auto;max-width:34rem;"
+        "padding:0 1rem}code{background:#eee;padding:.1em .3em;border-radius:3px}</style>"
+        "<h1>Este build não traz o painel</h1>"
+        f"<p>O app <code>{build_info.DISTRIBUICAO}</code> está no ar e a API responde, "
+        "mas os arquivos da interface não vieram no pacote instalado.</p>"
+        f"<p><b>Faltando em <code>static/</code>:</b> {lista}</p>"
+        "<p>É defeito de empacotamento, não de configuração: confira "
+        "<code>[tool.setuptools.package-data]</code> no <code>pyproject.toml</code> "
+        "e reinstale. A API continua utilizável em <code>/api/robot/status</code>.</p>"
+    )
+
+    async def ausente() -> HTMLResponse:
+        return HTMLResponse(corpo, status_code=503)
+
+    _liberar_raiz(app)
+    for rota in ("/", "/reachy"):
+        app.add_api_route(rota, ausente, methods=["GET"], include_in_schema=False)
+
+
 def _montar_painel(app: FastAPI, ctx: ContextoWeb) -> None:
     if ctx.dir_estatico is None:
         return
     painel = ctx.dir_estatico / "reachy.html"
     if not painel.exists():
+        _montar_painel_ausente(app)
         return
 
     # No app real quem monta `/static` é o `ReachyMiniApp`; no modo simulado (e
@@ -562,10 +608,7 @@ def _montar_painel(app: FastAPI, ctx: ContextoWeb) -> None:
     # A classe base já registrou `GET /` servindo `index.html` (a página de
     # configurações). O painel é a cara nova do app, então `/` passa a ser ele e
     # a antiga continua acessível em `/configuracoes`.
-    app.router.routes = [
-        rota for rota in app.router.routes
-        if not (getattr(rota, "path", None) == "/" and "GET" in getattr(rota, "methods", set()))
-    ]
+    _liberar_raiz(app)
 
     @app.get("/", include_in_schema=False)
     async def raiz() -> FileResponse:
