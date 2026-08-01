@@ -342,12 +342,15 @@ def test_o_gateway_compoe_nucleo_nome_persona():
     if not estado.exists():
         return
     fonte = estado.read_text(encoding="utf-8")
-    assert "compose_agent_prompt(" in fonte
-    # Janela fixa: cortar no primeiro `)` pararia dentro de `as_deref()`.
-    trecho = fonte[fonte.index("compose_agent_prompt("):][:400]
-    # A ordem importa: núcleo primeiro, personalidade por último.
+    # Duas composições vivem em state.rs desde a Etapa 2: a do agente default
+    # (operator_prompt) e a do nomeado (persona_prompt). O guard mira a do
+    # NOMEADO — ancorada em `named_config` — porque é a que o reachy_voice usa.
+    ancora = fonte.index("named_config.system_prompt.as_deref()")
+    trecho = fonte[ancora:][:400]
+    assert "compose_agent_prompt" in fonte[:ancora]  # a chamada envolve o trecho
     assert trecho.index("system_prompt") < trecho.index("assistant_name")
-    assert trecho.index("assistant_name") < trecho.index("persona_prompt")
+    assert trecho.index("assistant_name") < trecho.index("operator_name")
+    assert trecho.index("operator_name") < trecho.index("persona_prompt")
 
 
 # ── operador configurado ≠ interlocutor atual ────────────────────────────────
