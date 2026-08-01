@@ -28,6 +28,7 @@ Origem medida das frases, para o registro:
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 import pytest
@@ -49,7 +50,7 @@ def pol(conf=None, arranque=None) -> conversa.Politica:
     return conversa.Politica.de(conf or {}, arranque)
 
 
-# ── 1. a frase que o Michel ouviu está mesmo onde eu digo que está ───────────
+# ── 1. a frase que o operador ouviu está mesmo onde eu digo que está ─────────
 def test_deixa_eu_ver_isso_e_uma_frase_de_espera_local():
     """Caso 2 (`local_acknowledgement`), não preâmbulo de ferramenta."""
     assert "Deixa eu ver isso." in FRASES_ESPERA
@@ -372,8 +373,14 @@ def test_o_modo_continua_funcionando_com_a_fala_desligada(api):
 
 # ── os dois painéis desenham e gravam os mesmos interruptores ────────────────
 PAINEL_LOCAL = pathlib.Path(__file__).resolve().parents[1] / "garra_reachy_mini" / "static"
-WEBCHAT = pathlib.Path(
-    "/home/michel/Documents/Projetos/GarraIA/crates/garraia-gateway/src/webchat.html")
+# O console do Garra, quando este checkout convive com ele. O caminho é
+# relativo ao HOME (com override por GARRA_CONSOLE_REPO) porque estes testes
+# são guardas de integração da máquina de desenvolvimento: em qualquer outra
+# máquina o arquivo não existe e o teste vira no-op — sem gravar o nome de
+# usuário de ninguém no repositório público.
+WEBCHAT = (pathlib.Path(os.environ.get("GARRA_CONSOLE_REPO",
+        str(pathlib.Path.home() / "Documents/Projetos/GarraIA")))
+    / "crates/garraia-gateway/src/webchat.html")
 
 CAMPOS = ("automatic_speech_enabled", "spoken_acknowledgements_enabled",
           "spoken_progress_updates", "announce_tool_usage")

@@ -168,10 +168,17 @@ def test_erro_do_robo_nao_vaza_o_corpo():
 
 
 # ── garantias de fonte do painel ───────────────────────────────────────────
+import os
 import pathlib
 
-WEBCHAT = pathlib.Path(
-    "/home/michel/Documents/Projetos/GarraIA/crates/garraia-gateway/src/webchat.html")
+# O console do Garra, quando este checkout convive com ele. O caminho é
+# relativo ao HOME (com override por GARRA_CONSOLE_REPO) porque estes testes
+# são guardas de integração da máquina de desenvolvimento: em qualquer outra
+# máquina o arquivo não existe e o teste vira no-op — sem gravar o nome de
+# usuário de ninguém no repositório público.
+WEBCHAT = (pathlib.Path(os.environ.get("GARRA_CONSOLE_REPO",
+        str(pathlib.Path.home() / "Documents/Projetos/GarraIA")))
+    / "crates/garraia-gateway/src/webchat.html")
 
 
 def test_o_painel_decide_pelo_codigo_estavel():
@@ -215,7 +222,7 @@ def test_o_diagnostico_nao_abre_o_robo():
 
 def test_dependencia_ausente_vira_missing_sem_mensagem(monkeypatch):
     def falha(_nome):
-        raise ImportError("no module named coisa em /home/michel/segredo")
+        raise ImportError("no module named coisa em /home/usuario/segredo")
     monkeypatch.setattr(build_info, "__import__", falha, raising=False)
     d = build_info._conferir("modulo_que_nao_existe_mesmo", "coisa", "")
     assert d["status"] == "missing"

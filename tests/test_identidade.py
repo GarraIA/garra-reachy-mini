@@ -323,9 +323,11 @@ def test_o_aviso_de_seguranca_acompanha_a_leitura(conf):
 def test_o_rust_declara_os_dois_campos():
     """Sem isto, o YAML pareceria certo e o gateway ignoraria em silêncio —
     `NamedAgentConfig` não tem `deny_unknown_fields`."""
+    import os
     import pathlib
-    modelo = pathlib.Path("/home/michel/Documents/Projetos/GarraIA/crates/"
-                          "garraia-config/src/model.rs")
+    raiz = pathlib.Path(os.environ.get(
+        "GARRA_CONSOLE_REPO", str(pathlib.Path.home() / "Documents/Projetos/GarraIA")))
+    modelo = raiz / "crates/garraia-config/src/model.rs"
     if not modelo.exists():
         return
     fonte = modelo.read_text(encoding="utf-8")
@@ -336,9 +338,11 @@ def test_o_rust_declara_os_dois_campos():
 
 
 def test_o_gateway_compoe_nucleo_nome_persona():
+    import os
     import pathlib
-    estado = pathlib.Path("/home/michel/Documents/Projetos/GarraIA/crates/"
-                          "garraia-gateway/src/state.rs")
+    raiz = pathlib.Path(os.environ.get(
+        "GARRA_CONSOLE_REPO", str(pathlib.Path.home() / "Documents/Projetos/GarraIA")))
+    estado = raiz / "crates/garraia-gateway/src/state.rs"
     if not estado.exists():
         return
     fonte = estado.read_text(encoding="utf-8")
@@ -355,14 +359,14 @@ def test_o_gateway_compoe_nucleo_nome_persona():
 
 # ── operador configurado ≠ interlocutor atual ────────────────────────────────
 def test_operador_e_lido_e_gravado(conf):
-    agente.gravar({"operator_name": "Michel", "revision": 0})
-    assert agente.ler()["operator_name"] == "Michel"
-    assert carregar(conf)["agents"]["reachy_voice"]["operator_name"] == "Michel"
+    agente.gravar({"operator_name": "Ana", "revision": 0})
+    assert agente.ler()["operator_name"] == "Ana"
+    assert carregar(conf)["agents"]["reachy_voice"]["operator_name"] == "Ana"
 
 
 def test_operador_vazio_e_legitimo_e_remove_a_chave(conf):
     """Um build público não pode nascer com o nome do dono anterior dentro."""
-    agente.gravar({"operator_name": "Michel", "revision": 0})
+    agente.gravar({"operator_name": "Ana", "revision": 0})
     agente.gravar({"operator_name": "  ", "revision": 1})
     assert "operator_name" not in carregar(conf)["agents"]["reachy_voice"]
     assert agente.ler()["operator_name"] == ""
@@ -374,11 +378,11 @@ def test_o_padrao_de_fabrica_do_operador_e_vazio():
 
 def test_restaurar_padroes_nao_esquece_o_operador(conf):
     """Restaurar é sobre a voz do assistente, não sobre quem é o dono."""
-    agente.gravar({"operator_name": "Michel", "assistant_name": "Atlas",
+    agente.gravar({"operator_name": "Ana", "assistant_name": "Atlas",
                    "revision": 0})
     d = agente.restaurar(revisao=1)
     assert d["assistant_name"] == "Garra"
-    assert d["operator_name"] == "Michel"
+    assert d["operator_name"] == "Ana"
 
 
 def test_operador_com_unicode(conf):
@@ -417,16 +421,19 @@ def test_o_nucleo_deste_robo_nao_tem_nome_nem_id(conf):
         return
     a = yaml.safe_load(real.read_text(encoding="utf-8"))["agents"]["reachy_voice"]
     nucleo = a.get("system_prompt") or ""
-    assert "Michel" not in nucleo, "o nome do dono voltou para o núcleo"
+    # A invariante certa não tem nome de ninguém: SE um operador está
+    # configurado, o nome dele não pode aparecer diluído no núcleo — o campo
+    # próprio existe exatamente para isso.
+    operador = (a.get("operator_name") or "").strip()
+    if operador:
+        assert operador not in nucleo, "o nome do operador voltou para o núcleo"
     assert not re.search(r"\b\d{9,}\b", nucleo), "um identificador longo entrou no núcleo"
-    # E o operador está no campo próprio, não diluído no prompt.
-    assert a.get("operator_name") == "Michel"
 
 
 def test_nenhum_identificador_de_autenticacao_no_bloco_de_identidade(conf):
     """Chat id, token e telefone pertencem à autorização, não às instruções."""
     import re
-    agente.gravar({"operator_name": "Michel", "revision": 0})
+    agente.gravar({"operator_name": "Ana", "revision": 0})
     bloco = carregar(conf)["agents"]["reachy_voice"]
     for chave in ("assistant_name", "operator_name", "persona_prompt"):
         valor = str(bloco.get(chave) or "")
@@ -438,8 +445,9 @@ import pathlib  # noqa: E402 - usado só pelos testes acima
 
 
 def test_o_rust_declara_operator_name():
-    modelo = pathlib.Path("/home/michel/Documents/Projetos/GarraIA/crates/"
-                          "garraia-config/src/model.rs")
+    raiz = pathlib.Path(os.environ.get(
+        "GARRA_CONSOLE_REPO", str(pathlib.Path.home() / "Documents/Projetos/GarraIA")))
+    modelo = raiz / "crates/garraia-config/src/model.rs"
     if not modelo.exists():
         return
     bloco = modelo.read_text(encoding="utf-8")
@@ -448,8 +456,9 @@ def test_o_rust_declara_operator_name():
 
 
 def test_o_gateway_compoe_as_tres_identidades():
-    estado = pathlib.Path("/home/michel/Documents/Projetos/GarraIA/crates/"
-                          "garraia-gateway/src/api.rs")
+    raiz = pathlib.Path(os.environ.get(
+        "GARRA_CONSOLE_REPO", str(pathlib.Path.home() / "Documents/Projetos/GarraIA")))
+    estado = raiz / "crates/garraia-gateway/src/api.rs"
     if not estado.exists():
         return
     fonte = estado.read_text(encoding="utf-8")
