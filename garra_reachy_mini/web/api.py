@@ -416,9 +416,15 @@ class _Conflito(RuntimeError):
 def _ler_conversa() -> dict[str, Any]:
     salvo = armazenamento.carregar_config()
     conf = conversa.normalizar(salvo.get("conversation"))
+    arranque = conversa.normalizar_arranque(salvo.get("startup"))
     return {
         "conversation": conf,
-        "effective": conversa.Politica.de(conf).__dict__,
+        # `startup` é irmão de `conversation`, não filho: a saudação não
+        # pertence a turno nenhum. Mas viaja na mesma leitura e na mesma
+        # revisão, senão os dois painéis precisariam de dois ciclos de
+        # concorrência otimista para uma tela só.
+        "startup": arranque,
+        "effective": conversa.Politica.de(conf, arranque).__dict__,
         "updated_at": salvo.get("conversation_updated_at"),
         "updated_by": salvo.get("conversation_updated_by"),
     }
@@ -433,9 +439,16 @@ def _gravar_conversa(corpo: dict[str, Any]) -> dict[str, Any]:
         raise _Conflito(_ler_conversa())
 
     mudancas = {k: v for k, v in corpo.items()
-                if k not in ("revision", "updated_by")}
+                if k not in ("revision", "updated_by", "startup")}
     novo = conversa.perfil_atualizado(atual, mudancas)
     novo["revision"] = atual["revision"] + 1
+
+    # O bloco `startup` chega aninhado e é gravado junto, sob a MESMA revisão:
+    # desligar tudo numa tela é uma escrita só, e ou vale inteira ou dá 409.
+    if isinstance(corpo.get("startup"), dict):
+        salvo["startup"] = conversa.normalizar_arranque(
+            {**conversa.normalizar_arranque(salvo.get("startup")),
+             **corpo["startup"]})
 
     salvo["conversation"] = novo
     salvo["conversation_updated_at"] = datetime.now(timezone.utc).isoformat(

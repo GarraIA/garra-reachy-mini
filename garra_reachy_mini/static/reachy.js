@@ -423,8 +423,31 @@ function pintarConversa(d) {
   $('conversa-progresso-ms').value = prog;
   $('v-conversa-progresso-ms').textContent = `${(prog / 1000).toFixed(0)} s`;
   $('conversa-progresso').checked = c.spoken_progress_updates !== false;
-  $('conversa-info').textContent = t(`conversa.${c.mode || 'fast'}_curto`);
+  $('conversa-mestre').checked = c.automatic_speech_enabled !== false;
+  $('conversa-ack-on').checked = c.spoken_acknowledgements_enabled !== false;
+  $('conversa-tool-on').checked = c.announce_tool_usage === true;
+  $('conversa-saudacao').checked = (d.startup || {}).spoken_greeting_enabled !== false;
+  $('conversa-info').textContent = c.automatic_speech_enabled === false
+    ? t('conversa.mudo_curto')
+    : t(`conversa.${c.mode || 'fast'}_curto`);
   $('conversa-progresso-ms').disabled = c.spoken_progress_updates === false;
+  sincronizarMestre();
+}
+
+// Mestre desligado: subordinados desabilitados, VALORES PRESERVADOS. Religar
+// devolve o ajuste de cada um em vez de zerar tudo. Aqui é só aparência — quem
+// cala o robô é a política do lado dele.
+function sincronizarMestre() {
+  const ligado = $('conversa-mestre').checked;
+  for (const linha of document.querySelectorAll('[data-conversa-sub]')) {
+    linha.style.opacity = ligado ? '' : '0.55';
+    for (const el of linha.querySelectorAll('input')) el.disabled = !ligado;
+  }
+  for (const id of ['conversa-atraso', 'conversa-progresso-ms']) {
+    // Os tempos também: com o mestre desligado eles não decidem mais nada.
+    $(id).disabled = !ligado || (id === 'conversa-progresso-ms'
+                                 && !$('conversa-progresso').checked);
+  }
 }
 
 function pintarMetricasConversa(turnos) {
@@ -610,10 +633,19 @@ function ligar() {
   $('btn-conversa-salvar').addEventListener('click', () => salvarConversa({
     acknowledgement_delay_ms: +$('conversa-atraso').value,
     progress_update_delay_ms: +$('conversa-progresso-ms').value,
+    // Os subordinados vão com o valor guardado mesmo desabilitados: o
+    // `disabled` do navegador é aparência, e apagá-los aqui perderia o ajuste
+    // do usuário assim que ele desligasse o mestre.
     spoken_progress_updates: $('conversa-progresso').checked,
+    automatic_speech_enabled: $('conversa-mestre').checked,
+    spoken_acknowledgements_enabled: $('conversa-ack-on').checked,
+    announce_tool_usage: $('conversa-tool-on').checked,
+    startup: { spoken_greeting_enabled: $('conversa-saudacao').checked },
   }));
   $('conversa-progresso').addEventListener('change', (e) =>
     $('conversa-progresso-ms').disabled = !e.target.checked);
+  // Reflete na hora; grava só no botão, numa escrita e numa revisão só.
+  $('conversa-mestre').addEventListener('change', sincronizarMestre);
 
   const fmt = (v, u) => `${v.toFixed(u ? 1 : 2).replace('.', ',')}${u || ''}`;
   $('intensidade').addEventListener('input', (e) =>

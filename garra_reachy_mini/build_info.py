@@ -35,6 +35,10 @@ CAPACIDADES: dict[str, bool] = {
     "voice_turn_events": True,       # voice.turn.{started,acknowledgement,completed,cancelled}
     "audio_barge_in": True,          # CoordenadorAudio + clear_player()
     "brain_session_reset": True,     # POST /api/robot/conversation/session
+    # Controle mestre da fala automática + os três refinamentos + a saudação.
+    # É por esta chave que o painel sabe se pode desenhar os interruptores; num
+    # app anterior eles não existiriam e desligá-los não faria nada.
+    "automatic_speech_toggles": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

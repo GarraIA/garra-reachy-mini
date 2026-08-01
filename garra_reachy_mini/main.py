@@ -633,7 +633,8 @@ class GarraReachyMini(ReachyMiniApp):
             # evento agendado que só acontece se a espera passar do limite — e
             # que é cancelado se a resposta chegar antes. Antes daqui a frase
             # saía sempre, inclusive quando o modelo respondia em meio segundo.
-            politica = conversa.Politica.de(Config.carregar().conversa)
+            conf_agora = Config.carregar()
+            politica = conversa.Politica.de(conf_agora.conversa, conf_agora.arranque)
             turno = conversa.Turno(
                 id=f"trn_{int(time.time() * 1000)}", correlacao=correlacao,
                 inicio=time.monotonic(), politica=politica)
@@ -680,7 +681,20 @@ class GarraReachyMini(ReachyMiniApp):
                                            "erro", erro="excecao")
 
             resposta = None
+            if not politica.pode_avisar and not politica.pode_progredir:
+                # Fala automática desligada: nem prazo, nem fila, nem síntese.
+                # Esperar pelos prazos aqui só atrasaria a resposta final para
+                # não dizer nada no fim — o processamento segue imediatamente.
+                turno.ack_estado = conversa.DESABILITADO
+                controlador.eventos.publicar(
+                    "voice.turn.acknowledgement",
+                    correlation_id=correlacao, turn_id=turno.id,
+                    decision=conversa.DESABILITADO,
+                    reason=politica.motivo_silencio(), audio_enqueued=False)
+                resposta = esperar_cerebro(None)
             for prazo, tipo in ((prazo_ack, "ack"), (prazo_prog, "progresso")):
+                if resposta is not None:
+                    break
                 resposta = esperar_cerebro(prazo)
                 if resposta is not None:
                     break
@@ -689,9 +703,9 @@ class GarraReachyMini(ReachyMiniApp):
                 # O aviso só sai se o prazo venceu de verdade — é esta linha
                 # que separa "o modelo demorou" de "toda pergunta ganha frase".
                 falas = esperas if tipo == "ack" else progressos
-                pode = tipo == "ack" or (
-                    politica.progresso_falado
-                    and turno.progressos < politica.max_progresso)
+                pode = (politica.pode_avisar if tipo == "ack" else
+                        politica.pode_progredir
+                        and turno.progressos < politica.max_progresso)
                 if falas and pode:
                     onda = self._aleatorio.choice(falas)
                     if coordenador.tocar_ack(turno, onda):
@@ -700,7 +714,14 @@ class GarraReachyMini(ReachyMiniApp):
                         controlador.eventos.publicar(
                             "voice.turn.acknowledgement",
                             correlation_id=correlacao, turn_id=turno.id, kind=tipo,
+                            decision=conversa.TOCANDO, audio_enqueued=True,
                             at_ms=int((time.monotonic() - turno.inicio) * 1000))
+                elif not pode:
+                    controlador.eventos.publicar(
+                        "voice.turn.acknowledgement",
+                        correlation_id=correlacao, turn_id=turno.id, kind=tipo,
+                        decision=conversa.DESABILITADO,
+                        reason=politica.motivo_silencio(), audio_enqueued=False)
             if resposta is None:
                 resposta = esperar_cerebro(None)
 
@@ -751,29 +772,39 @@ class GarraReachyMini(ReachyMiniApp):
             cerebro.confirmar_falado(resposta.marca)
 
         try:
-            # Pré-sintetiza frases de espera: o robô reage em ~1s
+            # Pré-sintetiza frases de espera: o robô reage em ~1s.
+            #
+            # Só o que a política permite tocar. Não é otimização: sintetizar
+            # uma frase que nunca vai sair custou 11,4 s medidos entre o loop
+            # de voz subir e o robô ficar pronto, e deixava seis áudios de
+            # filler carregados num app configurado para não falar filler.
+            atual = Config.carregar()
+            politica_inicial = conversa.Politica.de(atual.conversa, atual.arranque)
             esperas: list[np.ndarray] = []
-            for f in FRASES_ESPERA:
-                if stop_event.is_set():
-                    return
-                try:
-                    onda = voz.falar(f, sr_out)
-                    if onda.size:
-                        esperas.append(onda)
-                except Exception:
-                    pass
             progressos: list[np.ndarray] = []
-            for f in FRASES_PROGRESSO:
-                if stop_event.is_set():
-                    return
-                try:
-                    onda = voz.falar(f, sr_out)
-                    if onda.size:
-                        progressos.append(onda)
-                except Exception:
-                    pass
-            log.info("%d frases de espera e %d de progresso prontas.",
-                     len(esperas), len(progressos))
+            if politica_inicial.pode_avisar:
+                for f in FRASES_ESPERA:
+                    if stop_event.is_set():
+                        return
+                    try:
+                        onda = voz.falar(f, sr_out)
+                        if onda.size:
+                            esperas.append(onda)
+                    except Exception:
+                        pass
+            if politica_inicial.pode_progredir:
+                for f in FRASES_PROGRESSO:
+                    if stop_event.is_set():
+                        return
+                    try:
+                        onda = voz.falar(f, sr_out)
+                        if onda.size:
+                            progressos.append(onda)
+                    except Exception:
+                        pass
+            log.info("%d frases de espera e %d de progresso prontas "
+                     "(fala automática %s).", len(esperas), len(progressos),
+                     "ligada" if politica_inicial.fala_automatica else "DESLIGADA")
 
             # Calibra o ruído ambiente por ~1,2s (ou usa limiar fixo)
             if cfg.limiar is None:
@@ -790,7 +821,18 @@ class GarraReachyMini(ReachyMiniApp):
                 limiar = cfg.limiar
             log.info("Limiar de voz: %.4f. Pode falar com o robô!", limiar)
 
-            falar(SAUDACAO)
+            # A saudação sai sem pergunta nenhuma, uma vez, quando o loop sobe:
+            # é fala automática como qualquer outra, e obedece ao mesmo mestre.
+            if politica_inicial.pode_saudar:
+                falar(SAUDACAO)
+            else:
+                controlador.eventos.publicar(
+                    "voice.startup.greeting", decision=conversa.DESABILITADO,
+                    reason=("automatic_speech_disabled"
+                            if not politica_inicial.fala_automatica
+                            else "spoken_greeting_disabled"),
+                    audio_enqueued=False)
+                log.info("Saudação de arranque desligada; nenhum áudio tocado.")
 
             buffer: list[np.ndarray] = []
             # O que veio antes do limiar. Sem ele o começo da primeira palavra

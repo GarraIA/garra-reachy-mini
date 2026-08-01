@@ -142,6 +142,25 @@
   <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
   <section class="card glass-panel" id="conversa-bloco">
     <h2><span data-i18n="conversa.titulo"></span> <span class="conta" id="conversa-info"></span></h2>
+    <!-- Controle mestre, antes do modo: o modo decide QUANDO uma fala
+         automática pode sair, este decide SE ela existe. -->
+    <label class="caixa" id="linha-conversa-mestre">
+      <input type="checkbox" id="conversa-mestre">
+      <span data-i18n="conversa.mestre"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.mestre_dica"></div>
+    <label class="caixa" data-conversa-sub="1">
+      <input type="checkbox" id="conversa-ack-on">
+      <span data-i18n="conversa.ack_on"></span>
+    </label>
+    <label class="caixa" data-conversa-sub="1">
+      <input type="checkbox" id="conversa-tool-on">
+      <span data-i18n="conversa.tool_on"></span>
+    </label>
+    <label class="caixa" data-conversa-sub="1">
+      <input type="checkbox" id="conversa-saudacao">
+      <span data-i18n="conversa.saudacao"></span>
+    </label>
     <div class="linha" role="group" data-i18n-aria-label="conversa.titulo">
       <button id="btn-modo-fast" data-modo="fast" data-i18n="conversa.rapido"
               data-i18n-title="conversa.rapido_dica"></button>

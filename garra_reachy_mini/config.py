@@ -224,6 +224,9 @@ class Config:
     # pertencem a perfis por modo, para trocar de modo não apagar um ajuste
     # feito à mão. Ver conversa.py.
     conversa: dict
+    # Fala do arranque. Separada de `conversa` porque não pertence a turno
+    # nenhum: sai uma vez, sem pergunta, quando o loop de voz sobe.
+    arranque: dict
 
     @classmethod
     def carregar(cls) -> "Config":
@@ -266,4 +269,5 @@ class Config:
                 _opcao(salvo, "GARRA_WOBBLING", "wobbling_na_fala", None), True),
             camera_fps=_num(_opcao(salvo, "GARRA_CAMERA_FPS", "camera_fps", None), 12.0, float),
             conversa=_conversa.normalizar(salvo.get("conversation")),
+            arranque=_conversa.normalizar_arranque(salvo.get("startup")),
         )

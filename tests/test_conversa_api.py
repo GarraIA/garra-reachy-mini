@@ -171,9 +171,20 @@ def test_a_resposta_tardia_confere_o_turno_antes_de_falar():
 
 
 def test_politica_e_relida_a_cada_turno():
-    """Mudar o modo no painel tem de valer na pergunta seguinte, sem reiniciar."""
+    """Mudar o modo no painel tem de valer na pergunta seguinte, sem reiniciar.
+
+    Casa com a intenção, não com uma linha: o que não pode existir é a política
+    ficar presa numa variável de fora do turno.
+    """
     processar = FONTE[FONTE.index("def processar("):]
-    assert "conversa.Politica.de(Config.carregar().conversa)" in processar
+    processar = processar[:processar.index("\n        try:")]
+    assert "Config.carregar()" in processar
+    assert "conversa.Politica.de(" in processar
+    # E os dois blocos entram juntos: só `conversa` deixaria a saudação e o
+    # controle mestre lendo um estado velho.
+    trecho = processar[processar.index("conversa.Politica.de("):]
+    assert trecho[:trecho.index(")")].count(".conversa") == 1
+    assert ".arranque" in trecho[:trecho.index(")")]
 
 
 def test_erro_do_cerebro_nao_derruba_o_laco():

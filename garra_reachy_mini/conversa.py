@@ -38,7 +38,23 @@ MODOS = ("fast", "informative")
 # tempo que o usuário ajustou à mão: cada modo guarda o seu.
 PADRAO: dict[str, Any] = {
     "mode": "fast",
+    # ── controle mestre ──────────────────────────────────────────────────────
+    # Desligado, o robô só fala a resposta final e o que o usuário pediu
+    # explicitamente. Nenhum atraso o contorna: 4 s, 30 s ou 5 min de espera
+    # continuam em silêncio. Os controles abaixo são refinamentos DENTRO do
+    # que este permite — nunca o contrário.
+    #
+    # `mode` (rápido/informativo) decide *quando* o aviso pode começar. Nunca
+    # decidiu *se* ele existe, e era isso que faltava: em qualquer modo havia um
+    # atraso que fazia a frase sair. Este par de chaves é o "se".
+    "automatic_speech_enabled": True,
+    "spoken_acknowledgements_enabled": True,
     "spoken_progress_updates": True,
+    # Nenhum caminho de código anuncia ferramenta hoje — nada fala antes de uma
+    # tool. A chave existe para que, se um preâmbulo aparecer, ele nasça
+    # desligado e passe por aqui, em vez de virar mais uma fala automática sem
+    # interruptor. Ver `voice.turn.tool_preamble`.
+    "announce_tool_usage": False,
     "progress_update_delay_ms": 10000,
     "max_progress_messages": 1,
     "acknowledgement_cut_threshold_ms": 1200,
@@ -50,6 +66,13 @@ PADRAO: dict[str, Any] = {
     },
     "revision": 0,
 }
+
+# Fala do arranque. Fica fora de `conversation` porque não pertence a turno
+# nenhum: sai uma vez, sem pergunta, quando o loop de voz sobe.
+PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": True}
+
+BOOLEANOS = ("automatic_speech_enabled", "spoken_acknowledgements_enabled",
+             "spoken_progress_updates", "announce_tool_usage")
 
 LIMITES = {
     "progress_update_delay_ms": (1000, 120000),
@@ -64,6 +87,11 @@ TETO_DESCONHECIDO_MS = 2000
 # Estados do aviso falado, na ordem em que acontecem.
 AGENDADO, TOCANDO, CONCLUIDO, CANCELADO, CORTADO = (
     "scheduled", "playing", "completed", "cancelled", "flushed")
+# Fora da ordem: o aviso nunca foi agendado, porque está desligado. Distinto de
+# `cancelled` (chegou a ser agendado e a resposta venceu) e de `none` (não havia
+# frase para tocar). Quem lê as métricas precisa separar "não deu tempo" de
+# "o usuário desligou".
+DESABILITADO = "disabled"
 
 
 def normalizar(bruto: dict | None) -> dict:
@@ -79,8 +107,9 @@ def normalizar(bruto: dict | None) -> dict:
     modo = str(bruto.get("mode") or "").strip().lower()
     if modo in MODOS:
         c["mode"] = modo
-    if "spoken_progress_updates" in bruto:
-        c["spoken_progress_updates"] = bool(bruto["spoken_progress_updates"])
+    for chave in BOOLEANOS:
+        if chave in bruto:
+            c[chave] = bool(bruto[chave])
     for campo in ("progress_update_delay_ms", "max_progress_messages",
                   "acknowledgement_cut_threshold_ms"):
         if campo in bruto:
@@ -95,6 +124,14 @@ def normalizar(bruto: dict | None) -> dict:
                     c["profiles"][nome]["acknowledgement_delay_ms"],
                     *LIMITES["acknowledgement_delay_ms"])
     c["revision"] = _inteiro(bruto.get("revision"), 0, 0, 2**31)
+    return c
+
+
+def normalizar_arranque(bruto: dict | None) -> dict:
+    """O bloco `startup`, com a mesma tolerância do `conversation`."""
+    c = dict(PADRAO_ARRANQUE)
+    if isinstance(bruto, dict) and "spoken_greeting_enabled" in bruto:
+        c["spoken_greeting_enabled"] = bool(bruto["spoken_greeting_enabled"])
     return c
 
 
@@ -115,10 +152,15 @@ class Politica:
     max_progresso: int
     corte_ms: int
     progresso_falado: bool
+    fala_automatica: bool = True
+    ack_habilitado: bool = True
+    anunciar_ferramenta: bool = False
+    saudacao_habilitada: bool = True
 
     @classmethod
-    def de(cls, conf: dict) -> "Politica":
+    def de(cls, conf: dict, arranque: dict | None = None) -> "Politica":
         c = normalizar(conf)
+        a = normalizar_arranque(arranque)
         perfil = c["profiles"][c["mode"]]
         return cls(
             modo=c["mode"],
@@ -127,7 +169,49 @@ class Politica:
             max_progresso=c["max_progress_messages"],
             corte_ms=c["acknowledgement_cut_threshold_ms"],
             progresso_falado=c["spoken_progress_updates"],
+            fala_automatica=c["automatic_speech_enabled"],
+            ack_habilitado=c["spoken_acknowledgements_enabled"],
+            anunciar_ferramenta=c["announce_tool_usage"],
+            saudacao_habilitada=a["spoken_greeting_enabled"],
         )
+
+    # ── o que pode sair pelo alto-falante sem o usuário pedir ────────────────
+    # Quatro perguntas, um lugar só. O mestre entra em cada uma por `and`, e é
+    # por isso que nenhum atraso, modo ou refinamento consegue contorná-lo: não
+    # existe caminho que produza fala automática sem passar por aqui.
+    @property
+    def pode_avisar(self) -> bool:
+        """Frase de espera enquanto o modelo pensa."""
+        return self.fala_automatica and self.ack_habilitado
+
+    @property
+    def pode_progredir(self) -> bool:
+        """"Ainda estou nisso", em tarefa longa."""
+        return self.fala_automatica and self.progresso_falado
+
+    @property
+    def pode_anunciar_ferramenta(self) -> bool:
+        """"Deixa eu ver isso" antes de câmera ou tool."""
+        return self.fala_automatica and self.anunciar_ferramenta
+
+    @property
+    def pode_saudar(self) -> bool:
+        """Saudação ao subir o loop de voz, sem pergunta nenhuma."""
+        return self.fala_automatica and self.saudacao_habilitada
+
+    @property
+    def alguma_fala_automatica(self) -> bool:
+        """Vale sintetizar alguma frase automática neste arranque?
+
+        Sem isto o app gasta seis chamadas de TTS (≈11 s medidos no robô) para
+        encher um cache de frases que nunca vai tocar.
+        """
+        return self.pode_avisar or self.pode_progredir
+
+    def motivo_silencio(self) -> str:
+        """Por que não vai falar. Vai no evento, para o painel não adivinhar."""
+        return ("automatic_speech_disabled" if not self.fala_automatica
+                else "spoken_acknowledgements_disabled")
 
     def prazo_ack(self, inicio: float) -> float:
         """Instante absoluto do aviso. Absoluto, e não relativo ao anterior."""
@@ -227,6 +311,10 @@ class CoordenadorAudio:
         tocar), `completed` (deixou terminar) ou `flushed` (cortado).
         """
         with self._lock:
+            if turno.ack_estado == DESABILITADO:
+                # Nada foi sintetizado, nada entrou na fila, nada a cortar.
+                turno.ack_decisao = DESABILITADO
+                return DESABILITADO
             if turno.ack_estado == AGENDADO:
                 turno.ack_estado = turno.ack_decisao = CANCELADO
                 return CANCELADO
@@ -317,8 +405,9 @@ def perfil_atualizado(conf: dict, mudancas: dict) -> dict:
         if modo not in MODOS:
             raise ValueError(f"modo desconhecido: {mudancas['mode']!r}")
         c["mode"] = modo
-    if "spoken_progress_updates" in mudancas:
-        c["spoken_progress_updates"] = bool(mudancas["spoken_progress_updates"])
+    for chave in BOOLEANOS:
+        if chave in mudancas:
+            c[chave] = bool(mudancas[chave])
     for campo in ("progress_update_delay_ms", "max_progress_messages",
                   "acknowledgement_cut_threshold_ms"):
         if campo in mudancas:
@@ -333,6 +422,7 @@ def perfil_atualizado(conf: dict, mudancas: dict) -> dict:
 
 
 __all__ = [
+    "DESABILITADO", "PADRAO_ARRANQUE", "normalizar_arranque",
     "AGENDADO", "CANCELADO", "CONCLUIDO", "CORTADO", "TOCANDO",
     "CoordenadorAudio", "MODOS", "PADRAO", "Politica", "Turno",
     "TETO_DESCONHECIDO_MS", "decidir_corte", "normalizar",
