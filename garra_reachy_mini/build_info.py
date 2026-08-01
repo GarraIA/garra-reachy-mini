@@ -34,6 +34,7 @@ CAPACIDADES: dict[str, bool] = {
     "conversation_settings": True,   # GET/PUT /api/robot/conversation
     "voice_turn_events": True,       # voice.turn.{started,acknowledgement,completed,cancelled}
     "audio_barge_in": True,          # CoordenadorAudio + clear_player()
+    "brain_session_reset": True,     # POST /api/robot/conversation/session
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

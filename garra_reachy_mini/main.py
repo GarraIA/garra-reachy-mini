@@ -328,6 +328,7 @@ class GarraReachyMini(ReachyMiniApp):
                 servicos=self.servicos,
                 falar=self._falar_async,
                 calar=self._calar_agora,
+                nova_sessao=self._nova_sessao_async,
                 dir_estatico=Path(__file__).resolve().parent / "static",
             ),
         )
@@ -347,9 +348,16 @@ class GarraReachyMini(ReachyMiniApp):
         if self._calar is not None:
             self._calar(motivo)
 
+    async def _nova_sessao_async(self) -> str | None:
+        """Recomeça a conversa. O cérebro só existe dentro do loop de voz."""
+        if self._trocar_sessao is None:
+            raise RuntimeError("o cérebro ainda não está pronto")
+        return await asyncio.to_thread(self._trocar_sessao)
+
     # Substituídos dentro de run() pelas funções reais, que têm acesso ao TTS.
     _falar_texto = None
     _calar = None
+    _trocar_sessao = None
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
         cfg = Config.carregar()
@@ -497,6 +505,9 @@ class GarraReachyMini(ReachyMiniApp):
                 coordenador.cancelar(alvo, motivo)
 
         self._calar = calar
+        # O cérebro é local a esta função; o painel alcança a troca de sessão
+        # por aqui, e só enquanto o loop de voz está de pé.
+        self._trocar_sessao = cerebro.nova_sessao
 
         def ler_mono() -> np.ndarray:
             pedaco = reachy_mini.media.get_audio_sample()
@@ -871,6 +882,7 @@ class GarraReachyMini(ReachyMiniApp):
         finally:
             self._falar_texto = None
             self._calar = None
+            self._trocar_sessao = None
             executor.shutdown(wait=False, cancel_futures=True)
             self.servicos.marcar(
                 "voice", False, codigo="stopped",

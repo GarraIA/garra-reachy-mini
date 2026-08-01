@@ -72,6 +72,9 @@ class ContextoWeb:
     # Corta o áudio em curso. Separado de `falar` porque a parada de emergência
     # precisa silenciar o robô sem esperar a frase atual terminar.
     calar: Callable[[str], None] | None = None
+    # Abre uma sessão limpa no gateway. Registrado pelo loop de voz, porque é
+    # ele que tem o cérebro; sem isto, a retomada de sessão não tem escape.
+    nova_sessao: Callable[[], Awaitable[str | None]] | None = None
     dir_estatico: Path | None = None
     iniciado_em: float = field(default_factory=time.monotonic)
 
@@ -380,6 +383,26 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
             return JSONResponse(e.atual, status_code=409)
         except ValueError as e:
             raise _erro(400, str(e)) from e
+
+    @r.post("/conversation/session")
+    async def conversa_sessao_nova() -> dict[str, Any]:
+        """Recomeça a conversa: sessão limpa no gateway, sem histórico herdado.
+
+        Existe porque a retomada entre arranques não tinha escape. Para o uso
+        normal, retomar é o certo — ninguém quer que o robô esqueça tudo quando
+        o app reinicia. Para medir, é o contrário: um turno anterior em que o
+        modelo olhou pela câmera enviesa o turno seguinte, e o `DELETE` do
+        gateway é logout, não remoção, então o histórico velho não sai do
+        caminho sozinho.
+        """
+        if ctx.nova_sessao is None:
+            raise _erro(503, "o cérebro ainda não está pronto")
+        sessao = await ctx.nova_sessao()
+        if sessao is None:
+            raise _erro(502, "o gateway não criou a sessão")
+        # `""` é sucesso sem id: as reservas (`garra ask`, OpenRouter) não têm
+        # sessão no servidor, só o histórico local, que foi limpo.
+        return {"ok": True, "session_id": sessao or None}
 
     return r
 

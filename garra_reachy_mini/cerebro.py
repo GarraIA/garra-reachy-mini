@@ -195,6 +195,33 @@ class GatewayBrain:
         self.log.info("Sessão nova no gateway: %s", self.session_id)
         return bool(self.session_id)
 
+    def nova_sessao(self) -> str | None:
+        """Abandona a sessão atual e abre uma limpa. Devolve o id novo.
+
+        A retomada de sessão entre arranques é o comportamento certo para uso
+        normal — conversar com o robô não devia recomeçar do zero toda vez que
+        o app reinicia. Mas ela não tem escape, e um teste precisa de escape:
+        um turno anterior em que o modelo olhou pela câmera fica no histórico e
+        contamina a medição seguinte.
+
+        Não apaga nada do lado do gateway. O histórico antigo continua lá para
+        quem quiser lê-lo; o que muda é para onde este app passa a escrever.
+        (`DELETE /api/sessions/{id}` do gateway é logout, não remoção: ele
+        revoga tokens e desconecta, e o histórico permanece.)
+        """
+        with self._trava:
+            anterior = self.session_id
+            self.session_id = None
+            self.cursor = self.cursor_falado = 0
+            self._ultima_resposta = None
+            if not self._criar_sessao():
+                # Não deixa o app sem sessão: sem gateway, a antiga ainda serve.
+                self.session_id = anterior
+                self._salvar_estado()
+                return None
+            self.log.info("Sessão trocada: %s → %s", anterior, self.session_id)
+            return self.session_id
+
     def _salvar_estado(self) -> None:
         armazenamento.salvar_estado({"session_id": self.session_id,
                                      "cursor_falado": self.cursor_falado})
@@ -556,3 +583,17 @@ class Cerebro:
         """O loop principal chama isto DEPOIS de falar (ver GatewayBrain)."""
         if marca is not None:
             self.gateway.confirmar_falado(marca)
+
+    def nova_sessao(self) -> str | None:
+        """Recomeça a conversa. Só o gateway tem sessão para trocar.
+
+        Nas reservas (`garra ask`, OpenRouter) o histórico é a lista local
+        `self.historia`, e limpá-la é o equivalente honesto: nenhum turno
+        anterior atravessa para o próximo. Aí devolve `""` — recomeçou, mas não
+        há id de sessão para citar. `None` fica reservado para *falhou*, que é
+        outra coisa e merece outra resposta HTTP.
+        """
+        self.historia.clear()
+        if self.modo != "gateway":
+            return ""
+        return self.gateway.nova_sessao()
