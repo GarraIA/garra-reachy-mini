@@ -128,14 +128,49 @@ settings page wins over the defaults; environment variables win over both.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENROUTER_API_KEY` | — | Enables conversation through OpenRouter |
-| `GARRA_MODEL` | `anthropic/claude-haiku-4.5` | Model to use |
+| `OPENROUTER_API_KEY` | — | Enables conversation through OpenRouter (fallback brain) |
+| `GARRA_MODEL` | `anthropic/claude-haiku-4.5` | Model for the OpenRouter fallback only |
 | `GARRA_GATEWAY_URL` | `http://127.0.0.1:3888` | Garra gateway, if you run one |
 | `GARRA_GATEWAY_KEY` | — | Bearer token for the gateway |
-| `GARRA_USUARIO` | — | Your name, so the assistant can address you |
+| `GARRA_USUARIO` | — | Your name, used only by the fallback brains |
 
 With none of these set, the robot still listens and obeys the local shortcuts
 ("stop", "dance"), but says once that conversation is not configured.
+
+**Which model answers?** When the robot talks through a Garra gateway, the
+model is configured **on the gateway**, not in this app — per agent, in the
+gateway's own config. If the gateway routes through a meta-router (such as
+OpenRouter's `openrouter/auto`), the specific model varies per request and the
+gateway does not currently expose which one was chosen, so this app never
+claims to know it.
+
+### Conversation pace and automatic speech
+
+Since 1.1.0 a fresh install is **silent while processing**: the robot thinks
+visually (antennas, panel state) and speaks only the final answer, however
+long the answer takes. Four switches on the panel — master, waiting phrases,
+progress updates, tool announcements — plus a startup-greeting switch bring
+the old behaviour back per taste. Two pace profiles (`fast`, `informative`)
+control *when* a phrase may start once enabled; the switches control *if*.
+Settings persist in the robot's own config with optimistic revisions, so two
+panels never silently overwrite each other.
+
+### Assistant identity (requires a Garra gateway)
+
+The assistant's display name and personality live in the **gateway's**
+configuration — the robot panel and the Garra console both edit the same
+values through an authenticated bridge, and the robot never stores a second
+copy. Three identities are kept deliberately separate:
+
+- **Assistant name** — what it answers when asked who it is (default `Garra`);
+- **Configured operator** — who the system was set up *for* (empty by default);
+- **Current speaker** — always `unknown` until reliable identity context
+  exists. The robot will say who it was configured for, but will not assume
+  the person in front of it is that person, and will not address them by the
+  operator's name. Someone stating a name is not identification.
+
+The protected core of the agent's prompt (tool rules, safety, privacy) is not
+editable from any panel. Identity changes apply to new conversations.
 
 ### Voice (optional)
 
@@ -225,6 +260,12 @@ advice applies to the robot as a whole, not just to this app.
   capture button are saved there too, and nowhere else.
 - **Credentials are never returned by the API.** `GET /api/config` masks the
   gateway key; the panel can set it but never read it back.
+- **Identity fields reach the model.** The assistant name, operator name and
+  personality you configure are part of the agent's context and are sent to
+  the AI provider with each conversation — that is what they are for. Do not
+  put anything in them you would not send to the provider.
+- **No face recognition.** The camera can *detect* a face for tracking, on the
+  robot; nothing identifies who it is, and no biometric data is stored.
 - **On a wireless robot the panel is reachable by anyone on your network, with
   no token** — the same posture the robot itself already has. See below.
 
@@ -274,6 +315,14 @@ so nothing can quietly pretend a movement happened.
 | Robot deaf or mute | Another app is holding the media. Stop it from the dashboard. |
 | Port is 8043 instead of 8042 | Something already holds 8042 — on a desktop, usually Pollen's `reachy-mini-control`. |
 | App does not stop | It gets `SIGINT` and 20 seconds before `SIGKILL`. If it is stuck, the daemon kills the process tree. |
+| Robot no longer says "let me think" | That is the 1.1.0 default: silent while processing. Re-enable the phrases in the panel's conversation card. |
+| Identity card says it needs Garra | Assistant name and personality live in the gateway's config; without a reachable gateway they cannot be read or written — nothing is cached or queued. |
+| Beginning of sentences was cut | Fixed in 1.1.0 with an audio pre-roll. If it still happens, check microphone levels — a very high noise floor shrinks what the pre-roll can recover. |
+
+**Upgrading from 1.0.x:** your stored settings are preserved. The holding
+phrases ("deixa eu pensar") were unconditional code in 1.0.x, not a setting, so
+after the upgrade the robot simply stops saying them; turn them back on in the
+panel if you miss them.
 
 ## Licence
 

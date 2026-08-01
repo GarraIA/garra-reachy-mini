@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.1.0 — 2026-08-01
+
+Everything here was validated on real hardware in an isolated staging build
+before being promoted.
+
+### Added
+
+- **Fast conversation.** The model is consulted immediately; the holding
+  phrase became a scheduled, cancellable event with absolute deadlines. A
+  question answered in under 4 s gets no phrase at all. Two profiles (`fast`,
+  `informative`), a single audio owner with `clear_player()` barge-in,
+  per-turn invalidation so a late answer from a superseded turn never speaks,
+  and `voice.turn.*` events with metrics.
+- **Automatic-speech switches.** A master switch plus waiting-phrases,
+  progress-updates, tool-announcement and startup-greeting switches — on both
+  panels, persisted with optimistic revisions (`409` on conflict). Off is the
+  new default for fresh installs; the acknowledgement decision is reported as
+  `disabled`, distinct from `cancelled`.
+- **Assistant identity.** Editable assistant name and personality, plus a
+  configured-operator field, all stored in the Garra gateway (single source of
+  truth; the robot panel edits through an authenticated bridge). The current
+  speaker is always `unknown` until reliable identity exists — the robot knows
+  who it was configured for without assuming that is who is talking. The
+  protected core prompt (tools, safety, privacy) is not panel-editable.
+- **Runtime diagnostics.** `GET /api/robot/diagnostics/runtime` (authenticated)
+  reports dependency health in the shared venv and whether the panel assets
+  made it into the installed build.
+- **Identifiable build.** `/api/robot/status` now reports `version`,
+  `channel: production` and the exact `commit` stamped at publish time.
+- **Clean-session escape.** `POST /api/robot/conversation/session` starts the
+  brain on a fresh gateway session — identity changes apply to new
+  conversations.
+
+### Fixed
+
+- **Speech onset was being cut.** The voice detector only opened its buffer on
+  the first block above the energy threshold, discarding the attack of the
+  first word — "Qual é a capital da França?" reached the transcriber as "Ó a
+  capital da França." A 0.5 s pre-roll ring now feeds the buffer.
+- **Panel assets missing from renamed builds.** `package-data` was keyed on a
+  hard-coded package name; the wheel shipped without `static/` and the
+  embedded panel showed a bare `Not Found`. The key is now a wildcard, the app
+  answers `503` with the cause when assets are missing, and the wheel content
+  is guarded by tests.
+- **Camera status stuck on "waiting for the first frame".** It was marked once
+  at start-up with a 5 s window; it is now re-evaluated in the periodic loop,
+  in both directions.
+- **Gateway probe unauthenticated.** The readiness probe now sends the Bearer
+  token, so it works against any compliant gateway instead of relying on an
+  unauthenticated `/ping`.
+- **Old-app compatibility.** The desktop console distinguishes "robot offline"
+  from "installed app too old" via capabilities and stable error codes, and
+  never tries to write against a route that does not exist.
+
+### Security
+
+- Gateway credentials are redacted from the configure response; the bridge
+  health endpoint reflects the real gateway, not itself.
+
+
 ## 1.0.0 — 2026-07-31
 
 First public release, and the first that a stranger can install and use.
