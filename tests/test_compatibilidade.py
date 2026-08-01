@@ -304,7 +304,17 @@ def test_o_carimbo_e_gerado_e_enviado_pelo_publicar():
     assert '"garra_reachy_mini/_commit.py"' in fonte
 
 
-def test_o_carimbo_nunca_e_commitado():
+def test_o_carimbo_nao_sobrevive_ao_publicar():
+    """O carimbo vive só durante o build: um trap o apaga ao sair.
+
+    Ele NÃO pode estar no .gitignore — o Hub aplica o .gitignore do repo no
+    servidor e descartava o upload em silêncio (o commit chegava vazio e o
+    robô respondia `commit: null`). E não pode ficar na árvore, que precisa
+    estar limpa no próximo publish. O trap resolve os dois.
+    """
     import pathlib
-    assert "garra_reachy_mini/_commit.py" in (
-        pathlib.Path(__file__).parent.parent / ".gitignore").read_text()
+    raiz = pathlib.Path(__file__).parent.parent
+    fonte = (raiz / "publicar.sh").read_text()
+    assert "trap 'rm -f \"$APP_DIR/garra_reachy_mini/_commit.py\"' EXIT" in fonte
+    assert "garra_reachy_mini/_commit.py" not in (raiz / ".gitignore").read_text()
+    assert "upload_file" in fonte   # o envio é explícito, imune a ignore

@@ -59,6 +59,11 @@ VERSAO="$(grep -m1 '^version' "$APP_DIR/pyproject.toml" | cut -d'"' -f2)"
 # junto com os rastreados.
 printf '# Gerado pelo publicar.sh no build. NÃO editar nem commitar.\nCOMMIT = "%s"\n' \
   "$SHA" > "$APP_DIR/garra_reachy_mini/_commit.py"
+# Apagado ao sair, com sucesso ou não: o carimbo não pode ficar na árvore
+# (sujaria o check de árvore limpa do próximo run) e não pode ir ao .gitignore
+# (o Hub aplica o .gitignore DO REPO no servidor e descartaria o upload —
+# medido: o commit "build stamp" chegava vazio e o robô respondia null).
+trap 'rm -f "$APP_DIR/garra_reachy_mini/_commit.py"' EXIT
 case "$ETAPA" in privado) VIS="private";; publico) VIS="public";; *) VIS="unchanged";; esac
 
 cat <<FIM
