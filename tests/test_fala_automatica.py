@@ -91,33 +91,49 @@ def test_mestre_desligado_vence_os_subordinados_ligados():
                 or p.pode_anunciar_ferramenta or p.pode_saudar)
 
 
-def test_mestre_ligado_devolve_o_padrao_de_hoje():
+def test_o_padrao_de_fabrica_e_silencioso():
+    """Instalação nova só fala a resposta final — veredicto do hardware."""
     p = pol({"mode": "fast"})
+    assert not (p.pode_avisar or p.pode_progredir or p.pode_saudar
+                or p.pode_anunciar_ferramenta)
+    assert not p.alguma_fala_automatica
+
+
+LIGADO = {"automatic_speech_enabled": True,
+          "spoken_acknowledgements_enabled": True,
+          "spoken_progress_updates": True}
+
+
+def test_quem_prefere_os_avisos_religa_no_painel():
+    p = pol(LIGADO, {"spoken_greeting_enabled": True})
     assert p.pode_avisar and p.pode_progredir and p.pode_saudar
-    # Anúncio de ferramenta nasce desligado: não há código que o faça.
+    # Anúncio de ferramenta continua nascendo desligado: não há código que o faça.
     assert not p.pode_anunciar_ferramenta
 
 
 # ── 11/12/13. os refinamentos, um a um ───────────────────────────────────────
 def test_so_o_acknowledgement_desligado():
-    p = pol({"spoken_acknowledgements_enabled": False})
+    p = pol({**LIGADO, "spoken_acknowledgements_enabled": False},
+            {"spoken_greeting_enabled": True})
     assert not p.pode_avisar
     assert p.pode_progredir and p.pode_saudar
 
 
 def test_so_o_progresso_desligado():
-    p = pol({"spoken_progress_updates": False})
+    p = pol({**LIGADO, "spoken_progress_updates": False})
     assert p.pode_avisar and not p.pode_progredir
 
 
 def test_so_o_anuncio_de_ferramenta_ligado():
-    p = pol({"announce_tool_usage": True})
-    assert p.pode_anunciar_ferramenta
+    # Precisa do mestre: nenhum refinamento fala por cima dele.
+    assert not pol({"announce_tool_usage": True}).pode_anunciar_ferramenta
+    assert pol({"automatic_speech_enabled": True,
+                "announce_tool_usage": True}).pode_anunciar_ferramenta
 
 
 # ── 1. saudação ──────────────────────────────────────────────────────────────
 def test_saudacao_desligada_sozinha_nao_cala_o_resto():
-    p = pol({}, SEM_SAUDACAO)
+    p = pol(LIGADO, SEM_SAUDACAO)
     assert not p.pode_saudar
     assert p.pode_avisar
 
@@ -125,7 +141,7 @@ def test_saudacao_desligada_sozinha_nao_cala_o_resto():
 def test_saudacao_e_um_bloco_separado_de_conversation():
     """Não pertence a turno nenhum, então não mora dentro de `conversation`."""
     assert "spoken_greeting_enabled" not in conversa.PADRAO
-    assert conversa.PADRAO_ARRANQUE == {"spoken_greeting_enabled": True}
+    assert conversa.PADRAO_ARRANQUE == {"spoken_greeting_enabled": False}
 
 
 # ── 2/3/4. duração nenhuma contorna o mestre ─────────────────────────────────
@@ -175,8 +191,8 @@ def test_resolver_ack_devolve_disabled_sem_tentar_cortar():
 
 def test_o_motivo_distingue_mestre_de_refinamento():
     assert pol(TUDO_DESLIGADO).motivo_silencio() == "automatic_speech_disabled"
-    assert (pol({"spoken_acknowledgements_enabled": False}).motivo_silencio()
-            == "spoken_acknowledgements_disabled")
+    assert (pol({**LIGADO, "spoken_acknowledgements_enabled": False})
+            .motivo_silencio() == "spoken_acknowledgements_disabled")
 
 
 # ── 14/15. nada enfileirado, resposta final intacta ──────────────────────────
@@ -239,9 +255,12 @@ def test_os_interruptores_sobrevivem_a_normalizacao():
 def test_config_antigo_sem_as_chaves_nao_quebra():
     """Um `config.json` de antes desta versão continua abrindo."""
     c = conversa.normalizar({"mode": "informative", "revision": 3})
-    assert c["automatic_speech_enabled"] is True   # comportamento de hoje
+    # Config antigo sem as chaves recebe o padrão NOVO (silencioso): o app
+    # público anterior não gravava preferência nenhuma — as frases eram
+    # incondicionais no código — então não há escolha do usuário a preservar.
+    assert c["automatic_speech_enabled"] is False
     assert c["announce_tool_usage"] is False
-    assert conversa.normalizar_arranque(None)["spoken_greeting_enabled"] is True
+    assert conversa.normalizar_arranque(None)["spoken_greeting_enabled"] is False
 
 
 def test_perfil_atualizado_grava_os_interruptores():

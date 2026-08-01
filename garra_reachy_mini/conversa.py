@@ -47,9 +47,15 @@ PADRAO: dict[str, Any] = {
     # `mode` (rápido/informativo) decide *quando* o aviso pode começar. Nunca
     # decidiu *se* ele existe, e era isso que faltava: em qualquer modo havia um
     # atraso que fazia a frase sair. Este par de chaves é o "se".
-    "automatic_speech_enabled": True,
-    "spoken_acknowledgements_enabled": True,
-    "spoken_progress_updates": True,
+    # Instalação NOVA nasce em silêncio: só a resposta final. Foi o veredicto
+    # do hardware — a frase de espera saía para perguntas respondidas em menos
+    # de três segundos — e quem preferir os avisos religa no painel. Config
+    # existente não é tocada: `normalizar()` só aplica estes valores às chaves
+    # AUSENTES do arquivo, e o app público anterior não gravava chave nenhuma
+    # (as frases eram incondicionais no código, não uma preferência salva).
+    "automatic_speech_enabled": False,
+    "spoken_acknowledgements_enabled": False,
+    "spoken_progress_updates": False,
     # Nenhum caminho de código anuncia ferramenta hoje — nada fala antes de uma
     # tool. A chave existe para que, se um preâmbulo aparecer, ele nasça
     # desligado e passe por aqui, em vez de virar mais uma fala automática sem
@@ -69,7 +75,8 @@ PADRAO: dict[str, Any] = {
 
 # Fala do arranque. Fica fora de `conversation` porque não pertence a turno
 # nenhum: sai uma vez, sem pergunta, quando o loop de voz sobe.
-PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": True}
+# Também silenciosa por padrão, pelo mesmo veredicto do hardware.
+PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": False}
 
 BOOLEANOS = ("automatic_speech_enabled", "spoken_acknowledgements_enabled",
              "spoken_progress_updates", "announce_tool_usage")
