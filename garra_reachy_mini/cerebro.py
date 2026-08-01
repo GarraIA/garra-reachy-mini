@@ -479,7 +479,14 @@ def sondar(cfg: Config, timeout: float = 2.0) -> tuple[bool, str, str]:
     """
     ok = False
     try:
-        ok = requests.get(f"{cfg.gateway_url.rstrip('/')}/ping", timeout=timeout).ok
+        # COM a credencial. Sem ela a ponte responde 401 e o app conclui que o
+        # gateway sumiu — foi o que deixou o robô em modo limitado com tudo
+        # funcionando por trás. A ponte também responde /ping sem token, mas
+        # depender disso amarraria a sonda a um detalhe do outro lado.
+        cabecalhos = ({"Authorization": f"Bearer {cfg.gateway_key}"}
+                      if cfg.gateway_key else {})
+        ok = requests.get(f"{cfg.gateway_url.rstrip('/')}/ping",
+                          headers=cabecalhos, timeout=timeout).ok
     except requests.RequestException:
         pass
     if ok:
