@@ -45,12 +45,18 @@ MAX_NOME = 32
 MAX_PERSONA = 4000
 
 PADRAO_NOME = "Garra"
+# O operador nasce VAZIO de propósito. Um build público não pode chegar com o
+# nome do dono anterior dentro dele, e "assistente do Fulano" num robô que
+# acabou de sair da caixa é pior do que não ter dono nenhum.
+PADRAO_OPERADOR = ""
 PADRAO_PERSONA = ("Be friendly, concise and natural.\n"
                   "Speak in the language used by the user.\n"
                   "Return only the useful final response.")
 
 AVISO = ("Personality instructions cannot override robot safety, privacy or "
          "tool authorization rules.")
+AVISO_PRIVACIDADE = ("Identity information included in the agent context may be "
+                     "sent to the configured AI provider.")
 
 # Quantos backups do `config.yml` guardar. O bastante para desfazer uma sessão
 # de tentativa e erro sem encher o diretório de configuração.
@@ -107,6 +113,22 @@ def validar_nome(bruto: Any) -> str:
     return limpo
 
 
+def validar_operador(bruto: Any) -> str:
+    """Nome do operador. Vale o mesmo do assistente — e vazio é permitido.
+
+    Vazio não é erro: é "ninguém configurado ainda", que é como um build
+    público tem de nascer. `validar_nome` recusa vazio porque o assistente
+    sempre tem um nome; o operador pode não ter.
+    """
+    if not isinstance(bruto, str):
+        raise ErroAgente("operator_name precisa ser texto")
+    limpo = _sem_controle(bruto, manter_quebras=False).replace("«", "").replace("»", "")
+    limpo = limpo.strip()
+    if len(limpo) > MAX_NOME:
+        raise ErroAgente(f"o nome do operador passa de {MAX_NOME} caracteres")
+    return limpo
+
+
 def validar_persona(bruto: Any) -> str:
     """Prompt de personalidade. Quebras de linha preservadas; limite aplicado."""
     if not isinstance(bruto, str):
@@ -150,6 +172,9 @@ def ler() -> dict[str, Any]:
     return {
         "agent_id": AGENTE,
         "assistant_name": a.get("assistant_name") or PADRAO_NOME,
+        # Para QUEM o sistema foi configurado — nunca quem está falando agora.
+        # Vazio é resposta legítima, e o gateway não inventa dono quando falta.
+        "operator_name": a.get("operator_name") or "",
         "persona_prompt": a.get("persona_prompt") or "",
         "model": a.get("model") or (dados.get("llm", {}).get("main", {}) or {}).get("model"),
         "revision": int(a.get("identity_revision") or 0),
@@ -157,9 +182,18 @@ def ler() -> dict[str, Any]:
         "updated_by": a.get("identity_updated_by"),
         # O núcleo existe e é protegido — o painel diz isso sem mostrá-lo.
         "core_prompt_present": bool((a.get("system_prompt") or "").strip()),
-        "defaults": {"assistant_name": PADRAO_NOME, "persona_prompt": PADRAO_PERSONA},
-        "limits": {"assistant_name": MAX_NOME, "persona_prompt": MAX_PERSONA},
+        "defaults": {"assistant_name": PADRAO_NOME, "operator_name": PADRAO_OPERADOR,
+                     "persona_prompt": PADRAO_PERSONA},
+        "limits": {"assistant_name": MAX_NOME, "operator_name": MAX_NOME,
+                   "persona_prompt": MAX_PERSONA},
         "warning": AVISO,
+        "privacy_warning": AVISO_PRIVACIDADE,
+        # O interlocutor: por enquanto sempre desconhecido. A forma já é a
+        # definitiva, para que login, painel ou reconhecimento facial entrem
+        # aqui sem mudar o contrato de quem consome.
+        "speaker_identity": {"status": "unknown", "person_id": None,
+                             "display_name": None, "source": None,
+                             "confidence": None},
     }
 
 
@@ -234,9 +268,11 @@ def gravar(mudancas: dict, autor: str = "garra-dashboard") -> dict[str, Any]:
 
     novo_nome = (validar_nome(mudancas["assistant_name"])
                  if "assistant_name" in mudancas else None)
+    novo_operador = (validar_operador(mudancas["operator_name"])
+                     if "operator_name" in mudancas else None)
     nova_persona = (validar_persona(mudancas["persona_prompt"])
                     if "persona_prompt" in mudancas else None)
-    if novo_nome is None and nova_persona is None:
+    if novo_nome is None and novo_operador is None and nova_persona is None:
         raise ErroAgente("nada a alterar")
 
     modo = caminho.stat().st_mode & 0o777
@@ -244,6 +280,14 @@ def gravar(mudancas: dict, autor: str = "garra-dashboard") -> dict[str, Any]:
 
     if novo_nome is not None:
         a["assistant_name"] = novo_nome
+    if novo_operador is not None:
+        # Igual à personalidade: vazio REMOVE a chave. `operator_name: ""` no
+        # arquivo confundiria quem lesse à mão, e o gateway trata ausente e
+        # vazio do mesmo jeito — não inventa dono.
+        if novo_operador:
+            a["operator_name"] = novo_operador
+        else:
+            a.pop("operator_name", None)
     if nova_persona is not None:
         # Vazio limpa o campo em vez de gravar string vazia: o gateway trata
         # ausente e vazio igual, e um `persona_prompt: ""` no arquivo confunde
@@ -287,6 +331,9 @@ def gravar(mudancas: dict, autor: str = "garra-dashboard") -> dict[str, Any]:
 
 def restaurar(revisao: int | None = None, autor: str = "garra-dashboard") -> dict[str, Any]:
     """Volta aos padrões de fábrica. Passa pelo mesmo caminho transacional."""
+    # `operator_name` NÃO entra: restaurar padrões é sobre a voz do assistente,
+    # não sobre esquecer para quem o robô foi configurado. Quem quiser limpar o
+    # operador manda o campo vazio de propósito.
     return gravar({"assistant_name": PADRAO_NOME,
                    "persona_prompt": PADRAO_PERSONA,
                    **({"revision": revisao} if revisao is not None else {})}, autor)

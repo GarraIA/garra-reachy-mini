@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
     from .robo.barramento import Barramento
@@ -121,3 +121,27 @@ class Servicos:
     def json(self) -> dict:
         with self._lock:
             return self._json_sem_lock()
+
+
+def marcar_camera(servicos: "Servicos", hub: Any, idade_maxima_s: float = 5.0) -> bool:
+    """Reavalia a câmera pelo que o hub está entregando AGORA.
+
+    Existe porque a marcação original acontecia uma vez só, no arranque, com
+    uma janela de 5 s — e o hub costuma levar mais que isso para o primeiro
+    quadro. Perdida a corrida, o serviço ficava em `no_frame` para sempre.
+    Medido num robô saudável: `camera.available` verdadeiro, `seq` avançando
+    3104 → 3116, `stale` falso, e o registro ainda dizendo "waiting for the
+    first frame", o que deixava o robô inteiro como `limited`.
+
+    Chamada tanto no arranque quanto no laço periódico, então também cobre o
+    caminho inverso: uma câmera que funcionava e caiu volta a aparecer como
+    indisponível sem esperar reinício.
+    """
+    quadro = hub.instantaneo(idade_maxima_s=idade_maxima_s) if hub is not None else None
+    ok = quadro is not None
+    servicos.marcar(
+        "camera", ok,
+        codigo="ok" if ok else "no_frame",
+        detalhe="streaming" if ok else "waiting for the first frame",
+        dica="" if ok else "The camera stream needs a few seconds after start-up.")
+    return ok

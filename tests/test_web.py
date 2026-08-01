@@ -561,4 +561,4 @@ def test_supervisor_usa_a_sonda_barata_e_nao_o_cerebro_inteiro():
     # E o laço de voz só reconstrói quando o cérebro REALMENTE volta.
     laco = texto[texto.index("def _laco_voz"):]
     periodico = laco[laco.index("RECONFERIR_CEREBRO_S"):]
-    assert "_sondar_cerebro" in periodico[:400]
+    assert "_sondar_cerebro" in periodico[:700]

@@ -45,6 +45,7 @@ from .robo.acoes import ControladorRobo
 from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
+from . import servicos as servicos_mod
 from .servicos import Servicos
 from .voz import PreRoll, VozClient, frases, limpar_para_voz
 from .web import (ContextoWeb, FrameHub, PonteChat, montar, preparar,
@@ -231,13 +232,10 @@ class GarraReachyMini(ReachyMiniApp):
             detalhe=cfg.robo_api,
             dica="" if estado.get("connected") else
                  "The robot daemon did not answer. Check GARRA_ROBO_API.")
-        quadro = hub.instantaneo(idade_maxima_s=5.0)
-        self.servicos.marcar(
-            "camera", quadro is not None,
-            codigo="ok" if quadro else "no_frame",
-            detalhe="waiting for the first frame" if quadro is None else "streaming",
-            dica="" if quadro else
-                 "The camera stream needs a few seconds after start-up.")
+        # Uma vez aqui e de novo no laço periódico: o hub costuma levar mais
+        # que a janela para entregar o primeiro quadro, e perder essa corrida
+        # deixava a câmera em `no_frame` para sempre.
+        servicos_mod.marcar_camera(self.servicos, hub)
         return controlador
 
     def _marcar_cerebro(self, cfg: Config, codigo: str, descricao: str,
@@ -902,6 +900,10 @@ class GarraReachyMini(ReachyMiniApp):
                     return
                 if time.time() - ultima_conferida > RECONFERIR_CEREBRO_S and not em_fala:
                     ultima_conferida = time.time()
+                    # A câmera junto: o status dela mentia depois de perder a
+                    # corrida do arranque, e mentira de status é o defeito que
+                    # mais custa a achar.
+                    servicos_mod.marcar_camera(self.servicos, self.hub)
                     cfg = Config.carregar()
                     if self._sondar_cerebro(cfg) and not cerebro.disponivel:
                         log.info("Cérebro voltou; reconstruindo.")

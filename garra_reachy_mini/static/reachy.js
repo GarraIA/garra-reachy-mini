@@ -410,6 +410,7 @@ let identidadeRev = null;
 function pintarIdentidade(d) {
   identidadeRev = d.revision ?? null;
   $('identidade-nome').value = d.assistant_name || '';
+  $('identidade-operador').value = d.operator_name || '';
   $('identidade-persona').value = d.persona_prompt || '';
   $('identidade-info').textContent = `${d.assistant_name || '—'} · rev ${d.revision ?? 0}`;
   $('identidade-bloco').hidden = false;
@@ -693,6 +694,7 @@ function ligar() {
   $('btn-identidade-salvar').addEventListener('click', () =>
     salvarIdentidade('/api/robot/agent-identity', {
       assistant_name: $('identidade-nome').value,
+      operator_name: $('identidade-operador').value,
       persona_prompt: $('identidade-persona').value,
     }, 'PUT'));
   $('btn-identidade-reset').addEventListener('click', () =>
