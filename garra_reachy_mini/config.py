@@ -27,6 +27,11 @@ PLACEHOLDERS = {"coloque_sua_chave_aqui", "cole_sua_chave_aqui", "changeme",
 FIM_DE_FALA_S = 0.8      # silêncio que encerra a fala do usuário
 FALA_MINIMA_S = 0.4      # ignora ruídos mais curtos que isso
 FALA_MAXIMA_S = 25.0     # trava de segurança
+# Áudio anterior ao limiar que entra junto com a fala. Sem isto o ataque da
+# primeira palavra é cortado — ver `voz.PreRoll`. Meio segundo cobre o tempo de
+# subida de uma consoante surda com folga, e é curto demais para arrastar a
+# frase anterior para dentro desta.
+PRE_ROLL_S = 0.5
 
 FRASES_ESPERA = [
     "Hmm, deixa eu pensar.",

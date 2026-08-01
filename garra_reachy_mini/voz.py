@@ -3,9 +3,60 @@
 import re
 import threading
 import time
+from collections import deque
 
 import numpy as np
 import requests
+
+
+class PreRoll:
+    """Guarda os últimos instantes de áudio que ficaram *abaixo* do limiar.
+
+    O detector de fala abre o buffer no primeiro bloco cuja energia passa do
+    limiar — e o ataque de uma palavra fica abaixo dele. Consoantes surdas
+    entram devagar: quando o RMS sobe, o começo da palavra já passou e foi
+    descartado (pior: o código ainda fazia `buffer.clear()` nessa transição).
+
+    Não é teórico. "Qual é a capital da França?" chegou ao STT como "Ó a capital
+    da França." — o `Qual` inteiro ficou no bloco jogado fora. O modelo, que tem
+    instrução para olhar quando mandam olhar, leu o "ó" restante como "olha",
+    chamou a câmera e descreveu o piso de madeira. Na vez em que funcionou, o
+    usuário tinha dito "Fala, Garra" antes: a palavra de acordar serviu de
+    pre-roll acidental e o buffer já estava aberto quando o "Qual" saiu.
+
+    Um anel curto resolve. Os blocos que não passaram do limiar continuam
+    guardados e entram na frente do buffer quando a fala começa de verdade.
+    """
+
+    def __init__(self, amostras: int) -> None:
+        self._max = max(0, int(amostras))
+        self._blocos: deque = deque()
+        self._total = 0
+
+    def guardar(self, bloco: np.ndarray) -> None:
+        """Registra um bloco de silêncio, descartando o que saiu da janela."""
+        if self._max == 0 or bloco.size == 0:
+            return
+        self._blocos.append(bloco)
+        self._total += int(bloco.size)
+        # Nunca esvazia: um bloco maior que a janela inteira ainda é melhor
+        # pre-roll que nenhum.
+        while self._total > self._max and len(self._blocos) > 1:
+            self._total -= int(self._blocos.popleft().size)
+
+    def drenar(self) -> list[np.ndarray]:
+        """Entrega o que estava guardado e esvazia. Chamado quando a fala abre."""
+        blocos = list(self._blocos)
+        self.limpar()
+        return blocos
+
+    def limpar(self) -> None:
+        self._blocos.clear()
+        self._total = 0
+
+    @property
+    def amostras(self) -> int:
+        return self._total
 
 
 def limpar_para_voz(texto: str) -> str:

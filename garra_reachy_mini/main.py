@@ -37,7 +37,7 @@ from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
                       RespostaCerebro)
 from .cerebro import sondar as cerebro_sondar
 from . import conversa
-from .config import (FALA_MAXIMA_S, FALA_MINIMA_S, FIM_DE_FALA_S,
+from .config import (FALA_MAXIMA_S, FALA_MINIMA_S, FIM_DE_FALA_S, PRE_ROLL_S,
                      FRASES_ESPERA, FRASES_PROGRESSO, SAUDACAO, Config)
 from .eventos import FilaEventos
 from .robo import intencoes
@@ -46,7 +46,7 @@ from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from .servicos import Servicos
-from .voz import VozClient, frases, limpar_para_voz
+from .voz import PreRoll, VozClient, frases, limpar_para_voz
 from .web import (ContextoWeb, FrameHub, PonteChat, montar, preparar,
                   resolver_politica)
 
@@ -782,6 +782,9 @@ class GarraReachyMini(ReachyMiniApp):
             falar(SAUDACAO)
 
             buffer: list[np.ndarray] = []
+            # O que veio antes do limiar. Sem ele o começo da primeira palavra
+            # não chega ao STT — ver `voz.PreRoll`.
+            pre_roll = PreRoll(int(PRE_ROLL_S * sr_in))
             em_fala = False
             ultimo_som = 0.0
             ultima_conferida = time.time()
@@ -795,6 +798,7 @@ class GarraReachyMini(ReachyMiniApp):
                         em_fala = False
                         audio = np.concatenate(buffer) if buffer else np.empty(0, np.float32)
                         buffer.clear()
+                        pre_roll.limpar()
                         processar(audio, esperas)
                     elif not em_fala:
                         # Silêncio de verdade: hora de falar notificações pendentes
@@ -814,6 +818,9 @@ class GarraReachyMini(ReachyMiniApp):
                     if not em_fala:
                         em_fala = True
                         buffer.clear()
+                        # O ataque da palavra está aqui, não no bloco que
+                        # acabou de passar do limiar.
+                        buffer.extend(pre_roll.drenar())
                     ultimo_som = agora
                     buffer.append(mono)
                 elif em_fala:
@@ -823,7 +830,10 @@ class GarraReachyMini(ReachyMiniApp):
                         em_fala = False
                         audio = np.concatenate(buffer)
                         buffer.clear()
+                        pre_roll.limpar()
                         processar(audio, esperas)
+                else:
+                    pre_roll.guardar(mono)
 
                 if self._acordar.is_set():
                     # Configuração nova. Voltar ao supervisor é o caminho mais
