@@ -288,8 +288,8 @@ async def agente_testar(corpo: dict | None = None):
                             status_code=502)
 
 
-def _chave_do_gateway() -> str | None:
-    """Chave real do gateway, lida do config.yml do Garra nesta máquina."""
+def _config_do_gateway() -> dict:
+    """Bloco `gateway` do config.yml do Garra nesta máquina."""
     import pathlib
 
     try:
@@ -297,10 +297,48 @@ def _chave_do_gateway() -> str | None:
 
         arq = pathlib.Path("~/.config/garraia/config.yml").expanduser()
         dados = yaml.safe_load(arq.read_text(encoding="utf-8")) or {}
-        chave = (dados.get("gateway") or {}).get("api_key")
-        return str(chave) if chave else None
+        return (dados.get("gateway") or {}) if isinstance(dados, dict) else {}
     except Exception:
-        return None
+        return {}
+
+
+def _chave_do_gateway() -> str | None:
+    """Chave real do gateway, lida do config.yml do Garra nesta máquina."""
+    chave = _config_do_gateway().get("api_key")
+    return str(chave) if chave else None
+
+
+def _conferir_chave_do_gateway() -> str | None:
+    """Devolve a chave e reclama alto quando ela é obrigatória e não existe.
+
+    O gateway pode exigir Bearer em `/api/*` (`gateway.local_api_auth =
+    token_required`). Sem chave, a ponte manda requests sem credencial e o robô
+    reporta "gateway inalcançável" — um sintoma que não aponta para a causa.
+    Falhar aqui, no arranque, troca uma degradação muda por um erro legível.
+
+    Em `loopback_trust` (o padrão) a ausência continua sendo apenas um aviso:
+    instalações existentes não podem quebrar por causa de uma chave que o
+    gateway ainda não exige.
+    """
+    cfg = _config_do_gateway()
+    chave = _chave_do_gateway()
+    if chave:
+        return chave
+    modo = str(cfg.get("local_api_auth") or "loopback_trust")
+    if modo == "token_required":
+        raise SystemExit(
+            "companion: gateway.api_key ausente em ~/.config/garraia/config.yml, "
+            "mas o gateway está com local_api_auth=token_required. A ponte não "
+            "conseguiria autenticar em /api/* e o robô ficaria sem cérebro. "
+            "Configure a chave e reinicie."
+        )
+    log.warning(
+        "gateway.api_key não configurada: a ponte falará com /api/* sem "
+        "credencial. Funciona enquanto o gateway estiver em "
+        "local_api_auth=loopback_trust; se ele virar token_required, o robô "
+        "perde o cérebro sem aviso claro."
+    )
+    return None
 
 
 def main() -> int:
@@ -317,7 +355,7 @@ def main() -> int:
     #   0.0.0.0:8126    ponte do robô — quatro rotas, com token e agente fixo.
     # Ver companion/ponte.py para por que a alternativa (abrir a :3888) não é
     # aceitável.
-    lan = ponte.montar(token, _chave_do_gateway())
+    lan = ponte.montar(token, _conferir_chave_do_gateway())
     cfg = uvicorn.Config(lan, host="0.0.0.0", port=ponte.PORTA, log_level="warning")
     threading.Thread(target=uvicorn.Server(cfg).run, daemon=True,
                      name="ponte-robo").start()
