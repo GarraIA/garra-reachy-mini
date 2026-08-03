@@ -216,3 +216,47 @@ def test_o_rollback_tambem_nao_vaza(monkeypatch):
     r = reachy.configurar("http://10.0.0.142:8042")
     assert r["rolled_back"] is True
     assert segredo not in repr(r) and "velho" not in repr(r)
+
+
+# ── chave do gateway: exigida ou apenas avisada ─────────────────────────────
+# O gateway pode fechar `/api/*` (`local_api_auth = token_required`). A ponte
+# fala com ele em nome do robô; sem chave, o robô perderia o cérebro reportando
+# apenas "gateway inalcançável". Falhar no arranque é mais honesto — mas só
+# quando o gateway realmente exige.
+def _companion_com_config(monkeypatch, cfg):
+    from companion import servidor
+
+    monkeypatch.setattr(servidor, "_config_do_gateway", lambda: cfg)
+    return servidor
+
+
+def test_sem_chave_em_token_required_falha_no_arranque(monkeypatch):
+    import pytest
+
+    servidor = _companion_com_config(monkeypatch, {"local_api_auth": "token_required"})
+    with pytest.raises(SystemExit) as e:
+        servidor._conferir_chave_do_gateway()
+    assert "token_required" in str(e.value)
+    assert "api_key" in str(e.value)
+
+
+def test_sem_chave_em_loopback_trust_apenas_avisa(monkeypatch, caplog):
+    import logging
+
+    servidor = _companion_com_config(monkeypatch, {"local_api_auth": "loopback_trust"})
+    with caplog.at_level(logging.WARNING):
+        assert servidor._conferir_chave_do_gateway() is None
+    assert any("api_key" in r.message for r in caplog.records)
+
+
+def test_modo_ausente_e_tratado_como_loopback_trust(monkeypatch):
+    servidor = _companion_com_config(monkeypatch, {})
+    assert servidor._conferir_chave_do_gateway() is None
+
+
+def test_com_chave_nao_reclama_em_nenhum_modo(monkeypatch):
+    for modo in ("loopback_trust", "token_required"):
+        servidor = _companion_com_config(
+            monkeypatch, {"local_api_auth": modo, "api_key": "k"}
+        )
+        assert servidor._conferir_chave_do_gateway() == "k"
