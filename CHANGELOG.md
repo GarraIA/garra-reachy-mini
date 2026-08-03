@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.1 — 2026-08-03
+
+Hotfix release. Cut from the released `1.2.0`; no feature work.
+
+### Fixed
+
+- **The voice retry loop no longer leaks a thread and a socket per cycle.**
+  `_laco_voz` created a `ThreadPoolExecutor` on every entry and dropped it with
+  `shutdown(wait=False, cancel_futures=True)`, which cancels only what is still
+  queued — a query already running keeps its thread and its socket, and the
+  supervisor re-entered immediately. Measured: 100 cycles took the process from
+  76 to 176 sockets and threads; with a single shared pool it stays within +2.
+  This is the root cause of the intermittent `Process exited with code -5`:
+  descriptors ran out, GLib could not create a pipe for GWakeup, and
+  `G_BREAKPOINT()` raised SIGTRAP. A routine gateway restart was enough to
+  start the countdown.
+- The retry loop now backs off with jitter instead of re-entering with no wait,
+  and the voice cycle is considered stable after 30 s.
+- The companion fails loudly at startup when the gateway requires a token and
+  none is configured, instead of degrading silently to unauthenticated calls.
+
+### Added
+
+- `resources` in `GET /api/robot/status`: open descriptors, sockets, pipes,
+  files, threads and usage against the soft limit, classified `ok` / `warning`
+  / `critical`. The app runs on the robot and its `/proc` is not reachable from
+  the desktop, so before this the only evidence available from outside was the
+  exit code — which is exactly what was not enough last time. Counts only; no
+  path, address, peer or inode is exposed.
+
 ## 1.2.0 — 2026-08-03
 
 Validated as `1.2.0-rc.1` on the private Space and on real hardware at `:8047`

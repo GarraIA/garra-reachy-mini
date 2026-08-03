@@ -34,7 +34,7 @@ from fastapi import (
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                StreamingResponse)
 
-from .. import armazenamento, build_info, conversa
+from .. import armazenamento, build_info, conversa, recursos
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
 from ..robo.barramento import Barramento
 from ..servicos import Servicos
@@ -189,6 +189,11 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         dados["uptime_s"] = round(time.monotonic() - ctx.iniciado_em, 1)
         dados.update(ctx.servicos.json())
         dados["voice"] = {"tts_disponivel": ctx.falar is not None}
+        # Descritores abertos AGORA. O monitor de fora consulta esta rota a
+        # cada poucos segundos, então a série fica gravada junto com cada
+        # captura de falha — o que faltou quando o app morreu com -5 e só
+        # havia o código de saída para olhar.
+        dados["resources"] = recursos.medir()
         # Quem é este app e o que ele sabe fazer. O console em `:3888` decide
         # por `capabilities`, não por número de versão: comparar versões o
         # obrigaria a saber em qual release cada recurso entrou.
