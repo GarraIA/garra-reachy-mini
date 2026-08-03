@@ -443,6 +443,57 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         except _Conflito as e:
             return JSONResponse(e.atual, status_code=409)
 
+    # ── registry de agentes (Fase 1, SOMENTE leitura) ────────────────────────
+    # Mesma regra da identidade: a verdade mora no Garra; o robô é interface
+    # remota. Este endpoint repassa a leitura pela ponte autenticada e devolve
+    # apenas o JSON já redigido por ela. Sem cache, sem persistência, sem
+    # estado inventado quando o desktop está fora do ar. Fica sob /api/robot
+    # porque é o prefixo que o porteiro protege com o token do painel.
+    def _agentes_ler() -> tuple[dict[str, Any], int]:
+        import requests
+
+        cfg = armazenamento.carregar_config()
+        base = str(cfg.get("gateway_url") or "").rstrip("/")
+        chave = cfg.get("gateway_key")
+        if not base:
+            return ({"ok": False, "error": {"code": "companion_unreachable",
+                                            "detail": "gateway não configurado"}}, 503)
+        cabecalhos = {"Authorization": f"Bearer {chave}"} if chave else {}
+        try:
+            resp = requests.get(f"{base}/api/agents", headers=cabecalhos,
+                                timeout=6)
+        except requests.RequestException:
+            # A ponte no desktop não respondeu — sem tipo de exceção: o
+            # motivo é do desktop, não deste painel.
+            return ({"ok": False,
+                     "error": {"code": "companion_unreachable"}}, 503)
+        if resp.status_code == 401:
+            return ({"ok": False,
+                     "error": {"code": "companion_unauthorized"}}, 502)
+        if resp.status_code == 501:
+            return ({"ok": False,
+                     "error": {"code": "agent_registry_unsupported"}}, 501)
+        if resp.status_code == 502:
+            # A ponte respondeu, mas o gateway atrás dela não.
+            return ({"ok": False,
+                     "error": {"code": "gateway_unreachable"}}, 502)
+        try:
+            dados = resp.json()
+        except ValueError:
+            return ({"ok": False,
+                     "error": {"code": "invalid_gateway_response"}}, 502)
+        if not resp.ok or not isinstance(dados, dict) \
+                or not isinstance(dados.get("agents"), list):
+            return ({"ok": False,
+                     "error": {"code": "invalid_gateway_response"}}, 502)
+        return ({"ok": True, "agents": dados["agents"]}, 200)
+
+    @r.get("/agents")
+    async def agentes() -> JSONResponse:
+        corpo, status = await asyncio.to_thread(_agentes_ler)
+        return JSONResponse(corpo, status_code=status,
+                            headers={"Cache-Control": "no-store"})
+
     @r.post("/conversation/session")
     async def conversa_sessao_nova() -> dict[str, Any]:
         """Recomeça a conversa: sessão limpa no gateway, sem histórico herdado.

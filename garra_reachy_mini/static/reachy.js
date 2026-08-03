@@ -445,6 +445,71 @@ async function salvarIdentidade(caminho, corpo, metodo) {
   }
 }
 
+// ─── agentes (registry factual, SOMENTE leitura) ─────────────────────────────
+// Os cards vêm inteiros de GET /api/robot/agents (app → ponte → gateway).
+// Offline = indisponível: a falha LIMPA os cards — nada de localStorage, nada
+// de fila, nada de dado velho posando de atual. Nenhum botão administrativo.
+function pintarAgentes(agentes) {
+  const grid = $('agentes-cards');
+  const linha = (rot, valor) =>
+    `<div><span class="ag-rot">${esc(t(rot))}:</span> ${esc(valor)}</div>`;
+  grid.innerHTML = agentes.map((a) => {
+    const m = a.model || {};
+    const resolvido = m.resolved_model
+      || `${t('agentes.indisp_valor')} (${esc(m.resolved_model_status || 'unavailable')})`;
+    return `<div class="agente-card" data-testid="reachy-agent-card-${esc(a.id)}">`
+      + `<h3>${esc(a.display_name || a.id)} <span class="conta">${esc(a.id)}</span></h3>`
+      + linha('agentes.kind', a.kind || '—')
+      + linha('agentes.routing', a.enabled_for_routing
+              ? t('agentes.habilitado') : t('agentes.desabilitado'))
+      + linha('agentes.backend', a.backend || '—')
+      + linha('agentes.adapter', a.adapter_integrated
+              ? t('agentes.integrado') : t('agentes.nao_integrado'))
+      + linha('agentes.modelo_global', m.global_default_model || '—')
+      + linha('agentes.politica', m.model_mode || '—')
+      + linha('agentes.modelo_configurado', m.configured_model || '—')
+      + linha('agentes.modelo_pedido', m.effective_requested_model || '—')
+      + linha('agentes.provider', m.transport_provider || '—')
+      + linha('agentes.modelo_resolvido', resolvido)
+      + linha('agentes.tools', a.allowed_tools_count == null
+              ? t('agentes.tools_todas') : String(a.allowed_tools_count))
+      + linha('agentes.sessoes', String(a.api_tagged_sessions ?? 0))
+      + `</div>`;
+  }).join('');
+  $('agentes-indisponivel').hidden = true;
+  $('agentes-info').textContent = String(agentes.length);
+  pill($('p-agentes'), true, t('agentes.ok'));
+}
+
+function agentesIndisponiveis(mensagem) {
+  // A falha remove o que estava na tela: dado antigo aqui viraria mentira.
+  $('agentes-cards').innerHTML = '';
+  $('agentes-info').textContent = '';
+  $('agentes-indisponivel').hidden = false;
+  pill($('p-agentes'), false, mensagem);
+}
+
+async function carregarAgentes() {
+  if (!estado.capacidades?.agent_registry_read_only
+      && !(estado.capacidades == null)) {
+    // Build sem a rota: seção fica oculta, nenhum botão inventado.
+    $('agentes-bloco').hidden = true;
+    return;
+  }
+  $('agentes-bloco').hidden = false;
+  try {
+    const d = await api('/api/robot/agents');
+    pintarAgentes(d.agents || []);
+  } catch (e) {
+    const codigo = e.dados?.error?.code;
+    agentesIndisponiveis(
+      codigo === 'agent_registry_unsupported' ? t('agentes.sem_suporte')
+        : codigo === 'gateway_unreachable' ? t('agentes.gateway_fora')
+        : codigo === 'companion_unauthorized' ? t('agentes.sem_autorizacao')
+        : t('agentes.companion_fora'));
+  }
+}
+
 // ─── ritmo da conversa ───────────────────────────────────────────────────────
 // Este painel escreve DIRETO no `config.json` do robô — é a mesma rota que o
 // console em :3888 usa pelo companion. Uma cópia local aqui criaria duas
@@ -723,6 +788,9 @@ function ligar() {
   await carregarCapacidades();
   carregarApps();
   carregarConversa();
+  carregarAgentes();
+  const btnAgentes = $('btn-agentes-atualizar');
+  if (btnAgentes) btnAgentes.addEventListener('click', carregarAgentes);
   conectarEventos();
   // Rede de segurança: com o WebSocket de pé o estado chega por evento, mas se
   // ele cair o painel não pode congelar numa foto antiga.

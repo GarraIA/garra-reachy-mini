@@ -40,6 +40,11 @@ CAPACIDADES: dict[str, bool] = {
     # É por esta chave que o painel sabe se pode desenhar os interruptores; num
     # app anterior eles não existiriam e desligá-los não faria nada.
     "automatic_speech_toggles": True,
+    # Fase 1 do agent-manager: GET /api/robot/agents repassa o registry
+    # factual pela ponte. SOMENTE leitura — a chave diz que a rota existe
+    # neste build, não que o gateway do outro lado a suporta (isso o painel
+    # descobre pela resposta, que diferencia unsupported de unreachable).
+    "agent_registry_read_only": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

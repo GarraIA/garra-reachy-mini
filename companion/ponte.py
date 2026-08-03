@@ -57,6 +57,50 @@ PING_TIMEOUT_S = 1.0
 PING_MAX_POR_MINUTO = 120
 _ping_janela: list[float] = []
 
+# Registry de agentes (Fase 1): leitura barata, mas atravessa até o gateway.
+# Janela própria — não compartilha com o ping para uma não esfomear a outra.
+AGENTS_TIMEOUT_S = 5.0
+AGENTS_MAX_POR_MINUTO = 60
+_agents_janela: list[float] = []
+
+# O que da resposta do gateway pode atravessar a ponte. Allowlist, não
+# blocklist: o gateway já redige prompts/operador, mas a ponte não confia —
+# um campo novo no gateway só chega ao robô quando alguém o listar aqui.
+_AGENT_CAMPOS = frozenset({
+    "id", "kind", "display_name", "enabled_for_routing", "has_config",
+    "backend", "adapter_integrated", "model", "allowed_tools_count",
+    "api_tagged_sessions",
+})
+_AGENT_MODEL_CAMPOS = frozenset({
+    "global_default_model", "model_mode", "configured_model",
+    "effective_requested_model", "transport_provider", "resolved_model",
+    "resolved_model_status",
+})
+
+
+def _redigir_agente(bruto: object) -> dict | None:
+    """Filtra um descriptor à allowlist. Formato inesperado → descartado."""
+    if not isinstance(bruto, dict):
+        return None
+    limpo = {k: v for k, v in bruto.items() if k in _AGENT_CAMPOS}
+    modelo = limpo.get("model")
+    if isinstance(modelo, dict):
+        limpo["model"] = {k: v for k, v in modelo.items()
+                          if k in _AGENT_MODEL_CAMPOS}
+    elif "model" in limpo:
+        del limpo["model"]
+    return limpo if limpo.get("id") else None
+
+
+def _agents_liberado(agora: float | None = None) -> bool:
+    agora = time.monotonic() if agora is None else agora
+    corte = agora - 60.0
+    _agents_janela[:] = [t for t in _agents_janela if t > corte]
+    if len(_agents_janela) >= AGENTS_MAX_POR_MINUTO:
+        return False
+    _agents_janela.append(agora)
+    return True
+
 # Só isto atravessa. `re.fullmatch`, e não `startswith`: um prefixo deixaria
 # passar `/api/sessions/../algo`.
 #
@@ -182,6 +226,59 @@ def montar(token: str, chave_gateway: str | None) -> FastAPI:
             return JSONResponse({"ok": False, "error": {"code": "invalid_identity",
                                                         "detail": str(e)}},
                                 status_code=400)
+
+    # ── registry de agentes (Fase 1, SOMENTE leitura) ────────────────────────
+    # Rota estreita, não catch-all: GET fixo, upstream fixo (o gateway local),
+    # resposta filtrada por allowlist de campos. O token é o mesmo da ponte;
+    # o Authorization do cliente NUNCA é repassado — o token do gateway é o
+    # local, injetado aqui dentro. Erros diferenciam gateway fora do ar,
+    # rota inexistente (gateway antigo) e resposta inválida.
+    @app.get("/api/agents")
+    async def agentes_ler(request: Request) -> Response:
+        cabecalhos = {"Cache-Control": "no-store"}
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401,
+                                headers=cabecalhos)
+        if not _agents_liberado():
+            return Response(status_code=429, headers=cabecalhos)
+        global _cliente
+        if _cliente is None:
+            _cliente = httpx.AsyncClient(base_url=GATEWAY, timeout=180.0)
+        upstream = {"Content-Type": "application/json"}
+        if chave_gateway:
+            upstream["Authorization"] = f"Bearer {chave_gateway}"
+        try:
+            r = await _cliente.get("/api/agents", headers=upstream,
+                                   timeout=AGENTS_TIMEOUT_S)
+        except httpx.HTTPError:
+            # Sem o tipo da exceção: o motivo é do desktop, não da LAN.
+            return JSONResponse(
+                {"ok": False, "error": {"code": "gateway_unreachable"}},
+                status_code=502, headers=cabecalhos)
+        if r.status_code == 404:
+            # Gateway de produção sem a rota nova: recurso não suportado,
+            # que não é a mesma coisa que gateway fora do ar.
+            return JSONResponse(
+                {"ok": False, "error": {"code": "agent_registry_unsupported"}},
+                status_code=501, headers=cabecalhos)
+        if not r.is_success:
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_gateway_response"}},
+                status_code=502, headers=cabecalhos)
+        try:
+            dados = r.json()
+        except ValueError:
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_gateway_response"}},
+                status_code=502, headers=cabecalhos)
+        brutos = dados.get("agents") if isinstance(dados, dict) else None
+        if not isinstance(brutos, list):
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_gateway_response"}},
+                status_code=502, headers=cabecalhos)
+        agentes = [a for a in (_redigir_agente(b) for b in brutos) if a]
+        return JSONResponse({"ok": True, "agents": agentes},
+                            headers=cabecalhos)
 
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
