@@ -180,12 +180,24 @@ class GarraReachyMini(ReachyMiniApp):
             return {"ok": True, "salva": _salva_publica(atual),
                     "aviso": "Voz e gateway aplicados agora; o resto no próximo início."}
 
-    def _poll_notificacoes(self, cerebro: Cerebro, fila: FilaEventos,
-                           intervalo_s: float, stop_event: threading.Event) -> None:
-        """Thread auxiliar: só enfileira; quem fala é o loop principal."""
-        while not stop_event.wait(intervalo_s):
+    def _poll_notificacoes(self, cerebro_atual: list[Cerebro], fila: FilaEventos,
+                           intervalo_s: float, stop_event: threading.Event,
+                           fim_do_ciclo: threading.Event) -> None:
+        """Thread auxiliar: só enfileira; quem fala é o loop principal.
+
+        Termina com o CICLO, não com o app. Antes esperava só o `stop_event`,
+        que só é acionado quando o app inteiro encerra: cada entrada no laço de
+        voz iniciava mais uma destas, e as antigas sobreviviam publicando numa
+        `fila` que ninguém lia mais. Medido no robô, com tudo em repouso: +1
+        thread e +1 socket por minuto, linear, até o limite de descritores.
+
+        O cérebro chega numa lista de um elemento porque o laço o reconstrói
+        quando o gateway volta; sem isso esta thread seguiria consultando o
+        objeto antigo pelo resto do ciclo.
+        """
+        while not (fim_do_ciclo.wait(intervalo_s) or stop_event.is_set()):
             try:
-                for evento in cerebro.novas_mensagens():
+                for evento in cerebro_atual[0].novas_mensagens():
                     fila.publicar(evento)
             except Exception:
                 self.logger.exception("Falha no poll de notificações")
@@ -507,12 +519,6 @@ class GarraReachyMini(ReachyMiniApp):
                         "atalhos locais, mas não conversa.")
 
         fila = FilaEventos()
-        threading.Thread(
-            target=self._poll_notificacoes,
-            args=(cerebro, fila, cfg.intervalo_notificacoes_s, stop_event),
-            daemon=True,
-        ).start()
-
         sr_in = reachy_mini.media.get_input_audio_samplerate()
         sr_out = reachy_mini.media.get_output_audio_samplerate()
         if sr_in <= 0 or sr_out <= 0:
@@ -532,6 +538,19 @@ class GarraReachyMini(ReachyMiniApp):
             reachy_mini.media.start_playing()
             self._midia_ligada = True
         log.info("Conectado ao robô (mic %sHz, som %sHz).", sr_in, sr_out)
+
+        # Só agora: acima ainda havia um `return` (robô sem dispositivo de
+        # áudio), e uma thread iniciada antes dele ficaria de pé sem ninguém
+        # para encerrá-la. O evento a amarra a ESTE ciclo.
+        fim_do_ciclo = threading.Event()
+        cerebro_atual = [cerebro]
+        poll = threading.Thread(
+            target=self._poll_notificacoes,
+            args=(cerebro_atual, fila, cfg.intervalo_notificacoes_s, stop_event,
+                  fim_do_ciclo),
+            daemon=True, name="poll-notificacoes",
+        )
+        poll.start()
 
         gestos = self.comportamento
         assert gestos is not None
@@ -968,7 +987,10 @@ class GarraReachyMini(ReachyMiniApp):
                     cfg = Config.carregar()
                     if self._sondar_cerebro(cfg) and not cerebro.disponivel:
                         log.info("Cérebro voltou; reconstruindo.")
+                        antigo = cerebro
                         cerebro = self._avaliar_cerebro(cfg)
+                        cerebro_atual[0] = cerebro
+                        antigo.fechar()   # a sessão keep-alive do antigo
                     # E a voz? Esperar o STT falhar três vezes para perceber que
                     # ela caiu custa três falas do usuário, cada uma até o
                     # timeout de 60 s. Uma sondagem barata enquanto ninguém fala
@@ -985,6 +1007,12 @@ class GarraReachyMini(ReachyMiniApp):
                                 "voltando ao modo sem voz.", self._falhas_voz)
                     return
         finally:
+            # Primeiro a thread, depois o socket: fechar a sessão por baixo de
+            # uma consulta em andamento faria o poll levantar antes de ver o
+            # evento — ele trata, mas o log ficaria sujo à toa.
+            fim_do_ciclo.set()
+            poll.join(timeout=2.0)
+            cerebro.fechar()
             self._falar_texto = None
             self._calar = None
             self._trocar_sessao = None

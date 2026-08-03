@@ -123,6 +123,20 @@ class GatewayBrain:
     def _url(self, caminho: str) -> str:
         return f"{self.cfg.gateway_url}{caminho}"
 
+    def fechar(self) -> None:
+        """Devolve o socket da sessão. Idempotente, e nunca levanta.
+
+        A sessão é keep-alive: enquanto ela existe, existe uma conexão aberta
+        contra o gateway. Um cérebro descartado sem isto leva o socket junto, e
+        um app que reconstrói o cérebro de tempos em tempos acumula sockets até
+        estourar o limite de descritores — foi assim que o app morreu com
+        SIGTRAP.
+        """
+        try:
+            self.http.close()
+        except Exception:  # fechar não pode ser o que derruba o encerramento
+            pass
+
     def disponivel(self) -> bool:
         try:
             return self.http.get(self._url("/ping"), timeout=2).ok
@@ -542,6 +556,15 @@ class Cerebro:
         falar com nenhum cérebro" a cada frase que alguém disser ao robô.
         """
         return self._gateway_ok or self.reserva is not None
+
+    def fechar(self) -> None:
+        """Libera os recursos de rede deste cérebro. Idempotente.
+
+        Quem constrói um cérebro por ciclo precisa devolvê-lo no fim do ciclo:
+        o `GatewayBrain` segura uma sessão keep-alive, e um socket por ciclo é
+        crescimento linear até o limite de descritores.
+        """
+        self.gateway.fechar()
 
     def descrever(self) -> tuple[str, str]:
         """(código, descrição legível) do cérebro em uso. Sem segredo nenhum."""

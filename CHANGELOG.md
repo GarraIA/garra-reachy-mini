@@ -6,16 +6,25 @@ Hotfix release. Cut from the released `1.2.0`; no feature work.
 
 ### Fixed
 
-- **The voice retry loop no longer leaks a thread and a socket per cycle.**
-  `_laco_voz` created a `ThreadPoolExecutor` on every entry and dropped it with
-  `shutdown(wait=False, cancel_futures=True)`, which cancels only what is still
-  queued — a query already running keeps its thread and its socket, and the
-  supervisor re-entered immediately. Measured: 100 cycles took the process from
-  76 to 176 sockets and threads; with a single shared pool it stays within +2.
-  This is the root cause of the intermittent `Process exited with code -5`:
-  descriptors ran out, GLib could not create a pipe for GWakeup, and
-  `G_BREAKPOINT()` raised SIGTRAP. A routine gateway restart was enough to
-  start the countdown.
+- **The voice loop no longer leaks a thread and a socket per cycle.** This is
+  the root cause of the intermittent `Process exited with code -5`: descriptors
+  ran out, GLib could not create a pipe for GWakeup, and `G_BREAKPOINT()`
+  raised SIGTRAP. There were **two** leaks, and the second was the larger one.
+
+  - The notification poller was started on every entry to `_laco_voz` but waited
+    on the app-wide stop event, so it only ended when the whole app ended. Every
+    re-entry left another one running, publishing into an event queue nobody
+    read any more and holding its brain's keep-alive session. It now ends with
+    the cycle that started it, and the brain's session is returned with it.
+  - `_laco_voz` also created a `ThreadPoolExecutor` on every entry and dropped
+    it with `shutdown(wait=False, cancel_futures=True)`, which cancels only what
+    is still queued — a query already running keeps its thread and its socket.
+    A single shared pool replaced it.
+
+  Measured on the robot, with everything idle and one status request per minute:
+  before the second fix, `+1` thread and `+1` socket per minute, perfectly
+  linear — about sixteen hours from a fresh start to the 1024-descriptor limit.
+  A routine gateway restart was enough to start the countdown.
 - The retry loop now backs off with jitter instead of re-entering with no wait,
   and the voice cycle is considered stable after 30 s.
 - The companion fails loudly at startup when the gateway requires a token and
@@ -29,6 +38,10 @@ Hotfix release. Cut from the released `1.2.0`; no feature work.
   the desktop, so before this the only evidence available from outside was the
   exit code — which is exactly what was not enough last time. Counts only; no
   path, address, peer or inode is exposed.
+
+  This is what found the second leak: the first fix passed every test and every
+  degradation scenario on hardware, and the series still climbed by one per
+  minute with the robot doing nothing.
 
 ## 1.2.0 — 2026-08-03
 

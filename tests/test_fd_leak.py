@@ -155,3 +155,162 @@ def test_encerrar_executor_e_idempotente():
     app._executor_cerebro()
     app._encerrar_executor(timeout=1.0)
     app._encerrar_executor(timeout=1.0)  # nada a fazer, e não levanta
+
+
+# ─── segundo vazamento, achado em hardware depois do primeiro ────────────────
+# O pool único resolveu uma parte e a taxa caiu, mas não zerou: no robô, com
+# TUDO em repouso, ainda subia +1 thread e +1 socket por minuto, linear. A
+# medição está em ~/.local/state/garra-reachy/validacao-1.2.1/soak.jsonl.
+#
+# A causa era outra, e maior: `_laco_voz` iniciava a thread de notificações a
+# cada entrada, e ela esperava no `stop_event` — que só é acionado quando o app
+# INTEIRO encerra. As antigas ficavam de pé publicando numa `FilaEventos` que
+# ninguém lia mais, cada uma segurando a sessão keep-alive do seu `Cerebro`.
+
+
+class _CerebroFalso:
+    """Só o que o poll usa: `novas_mensagens()` e um socket para segurar."""
+
+    def __init__(self, destino) -> None:
+        self.sock = socket.create_connection(destino, timeout=5)
+        self.fechado = False
+
+    def novas_mensagens(self):
+        return []
+
+    def fechar(self) -> None:
+        self.fechado = True
+        self.sock.close()
+
+
+class _AppMinimo:
+    """O bastante para exercitar `_poll_notificacoes` sem robô nem gateway."""
+
+    def __init__(self) -> None:
+        import logging
+        self.logger = logging.getLogger("teste-poll")
+
+    _poll_notificacoes = None  # preenchido no import abaixo
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="precisa de /proc")
+def test_poll_de_notificacoes_termina_com_o_ciclo(buraco_negro):
+    """O invariante novo: a thread do poll morre quando o CICLO acaba."""
+    from garra_reachy_mini.main import GarraReachyMini
+
+    app = _AppMinimo()
+    app._poll_notificacoes = GarraReachyMini._poll_notificacoes.__get__(
+        app, _AppMinimo)
+
+    stop = threading.Event()
+    fim = threading.Event()
+    cerebro = _CerebroFalso(buraco_negro)
+    t = threading.Thread(target=app._poll_notificacoes,
+                         args=([cerebro], _FilaBoba(), 0.05, stop, fim),
+                         daemon=True)
+    t.start()
+    try:
+        assert t.is_alive()
+        fim.set()                      # o ciclo acabou; o app NÃO acabou
+        t.join(timeout=5)
+        assert not t.is_alive(), (
+            "a thread do poll sobreviveu ao ciclo: é o vazamento de +1 thread "
+            "por entrada no laço de voz")
+        assert not stop.is_set(), "o app não precisou encerrar para isso"
+    finally:
+        fim.set()
+        cerebro.fechar()
+
+
+class _FilaBoba:
+    def publicar(self, evento) -> None:
+        pass
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="precisa de /proc")
+def test_ciclos_do_laco_nao_acumulam_threads_nem_sockets(buraco_negro):
+    """30 ciclos: nem thread nem socket podem sobrar. Mede, não inspeciona."""
+    from garra_reachy_mini.main import GarraReachyMini
+
+    app = _AppMinimo()
+    app._poll_notificacoes = GarraReachyMini._poll_notificacoes.__get__(
+        app, _AppMinimo)
+    stop = threading.Event()
+
+    # Um ciclo de aquecimento antes da baseline: o primeiro sempre custa
+    # estruturas que não se repetem.
+    for aquecer in range(1):
+        fim = threading.Event()
+        c = _CerebroFalso(buraco_negro)
+        t = threading.Thread(target=app._poll_notificacoes,
+                             args=([c], _FilaBoba(), 0.02, stop, fim), daemon=True)
+        t.start()
+        fim.set()
+        t.join(timeout=5)
+        c.fechar()
+
+    base_fd = _contar_fds()
+    base_threads = threading.active_count()
+
+    for _ in range(30):
+        fim = threading.Event()
+        c = _CerebroFalso(buraco_negro)
+        t = threading.Thread(target=app._poll_notificacoes,
+                             args=([c], _FilaBoba(), 0.02, stop, fim), daemon=True)
+        t.start()
+        fim.set()          # é o que o `finally` do laço de voz faz
+        t.join(timeout=5)
+        c.fechar()         # e é o que `cerebro.fechar()` faz
+
+    depois = _contar_fds()
+    assert depois["socket"] - base_fd["socket"] <= 2, (
+        f"sockets {base_fd['socket']}→{depois['socket']} em 30 ciclos: a sessão "
+        "do cérebro não está sendo devolvida no fim do ciclo")
+    assert threading.active_count() - base_threads <= 2, (
+        "threads acumulando: o poll voltou a sobreviver ao ciclo")
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="precisa de /proc")
+def test_o_padrao_antigo_do_poll_vazava(buraco_negro):
+    """Prova o defeito antigo: esperar só no `stop_event` deixa a thread viva.
+
+    Sem isto, a correção parece uma preferência de estilo. O antigo esperava no
+    evento do APP; o ciclo terminar não o acordava.
+    """
+    stop_do_app = threading.Event()
+    viva = threading.Event()
+
+    def poll_antigo() -> None:
+        viva.set()
+        while not stop_do_app.wait(0.05):
+            pass
+
+    t = threading.Thread(target=poll_antigo, daemon=True)
+    t.start()
+    viva.wait(timeout=5)
+
+    fim_do_ciclo = threading.Event()
+    fim_do_ciclo.set()          # o ciclo acabou...
+    t.join(timeout=0.5)
+    assert t.is_alive(), "o padrão antigo deveria sobreviver ao fim do ciclo"
+
+    stop_do_app.set()           # só o app inteiro encerrando a matava
+    t.join(timeout=5)
+    assert not t.is_alive()
+
+
+def test_cerebro_devolve_a_sessao_ao_fechar() -> None:
+    """`Cerebro.fechar()` fecha a sessão keep-alive do gateway. Idempotente."""
+    import logging
+    from garra_reachy_mini.cerebro import GatewayBrain
+
+    class _Cfg:
+        gateway_url = "http://127.0.0.1:1"
+        gateway_key = ""
+        agent_id = "garra"
+        janela_turnos = 8
+
+    g = GatewayBrain(_Cfg(), logging.getLogger("teste-fechar"))
+    assert g.http.adapters, "a sessão nasce com adaptadores montados"
+    g.fechar()
+    g.fechar()   # idempotente: o encerramento pode passar duas vezes aqui
