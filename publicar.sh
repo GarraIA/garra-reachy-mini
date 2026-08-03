@@ -28,7 +28,10 @@ ASSISTANT="$BASE_DIR/reachy_mini_env/bin/reachy-mini-app-assistant"
 # Identidades fixas. Deliberadamente NÃO derivadas do GitHub: os namespaces são
 # diferentes de propósito (GitHub GarraIA, Hugging Face michelbr).
 DONO_HF="michelbr"
-ESPACO="garra_reachy_mini"
+# Space de produção por padrão. `GARRA_SPACE` aponta para outro — os de RC e
+# staging (`garra_reachy_mini_rc`, `garra_reachy_mini_staging`) já existem e são
+# privados, e é neles que uma build vai antes de ir ao robô de verdade.
+ESPACO="${GARRA_SPACE:-garra_reachy_mini}"
 REPO_GH="GarraIA/garra-reachy-mini"
 
 ETAPA="${1:-}"
@@ -99,6 +102,16 @@ existe = api.repo_exists(repo_id, repo_type="space")
 
 if etapa == "publico" and not existe:
     sys.exit(f"ERRO: {repo_id} não existe. Publique privado e teste no robô antes.")
+
+if etapa == "privado" and existe and not api.space_info(repo_id).private:
+    # `privado` não torna privado um Space que já é público — só `publico`
+    # mexe em visibilidade. Sem esta conferência, um `privado` no Space padrão
+    # publicaria direto para quem já tem o app instalado, achando que estava
+    # num ensaio. Quem quer ensaiar usa GARRA_SPACE.
+    sys.exit(f"ERRO: {repo_id} já é PÚBLICO — `privado` aqui publicaria para "
+             f"todo mundo.\n      Para ensaiar: GARRA_SPACE=garra_reachy_mini_rc "
+             f"bash publicar.sh privado\n      Para publicar de verdade: bash "
+             f"publicar.sh publico")
 
 if not existe:
     api.create_repo(repo_id, repo_type="space", private=True, space_sdk="static")
