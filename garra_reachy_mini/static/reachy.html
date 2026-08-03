@@ -163,6 +163,22 @@
     </div>
   </section>
 
+  <!-- ── agentes (registry factual do Garra, SOMENTE leitura) ────────────── -->
+  <!-- Os cards vêm inteiros de GET /api/robot/agents; nada é duplicado aqui.
+       Sem toggles, sem edição, sem mensagem: um registry mostra fatos. -->
+  <section class="card glass-panel largo" id="agentes-bloco"
+           data-testid="reachy-agents-section" hidden>
+    <h2><span data-i18n="agentes.titulo"></span> <span class="conta" id="agentes-info"></span></h2>
+    <div id="agentes-cards"></div>
+    <div class="dica" id="agentes-indisponivel" data-testid="reachy-agents-unavailable"
+         data-i18n="agentes.indisponivel" hidden></div>
+    <div class="linha">
+      <button id="btn-agentes-atualizar" data-i18n="agentes.atualizar"></button>
+      <span class="pill" id="p-agentes">—</span>
+    </div>
+    <div class="dica" data-i18n="agentes.nota"></div>
+  </section>
+
   <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
   <section class="card glass-panel" id="conversa-bloco">
     <h2><span data-i18n="conversa.titulo"></span> <span class="conta" id="conversa-info"></span></h2>
