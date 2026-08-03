@@ -1,9 +1,10 @@
 # Changelog
 
-## 1.2.0-rc.1 — 2026-08-03
+## 1.2.0 — 2026-08-03
 
-Release candidate, published to the private Space only. Not installed on the
-official app.
+Validated as `1.2.0-rc.1` on the private Space and on real hardware at `:8047`
+(five controlled start/stop cycles, no crash and no stuck state) before
+being promoted here.
 
 ### Added
 
