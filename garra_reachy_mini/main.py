@@ -66,6 +66,10 @@ SEM_CEREBRO_INTERVALO_S = 45.0
 # estado deles congela no instante em que a voz sobe — e a voz costuma subir
 # ANTES de o desktop estar configurado, que é exatamente quando importa.
 RECONFERIR_CEREBRO_S = 20.0
+# Quanto o laço de voz precisa durar para contar como ciclo saudável. Abaixo
+# disso ele voltou por falha (voz sumiu, cérebro sumiu, config mudou), e
+# reentrar na hora vira laço apertado — que foi o que esgotou os FDs.
+CICLO_VOZ_ESTAVEL_S = 30.0
 
 
 def _salva_publica(salva: dict) -> dict:
@@ -392,6 +396,38 @@ class GarraReachyMini(ReachyMiniApp):
                 self._acordar.clear()
                 return
 
+    def _executor_cerebro(self) -> ThreadPoolExecutor:
+        """O único pool de threads que consulta o cérebro, criado uma vez.
+
+        Um pool por entrada no laço de voz vazava: `shutdown(wait=False)` não
+        espera a tarefa em execução, e uma consulta presa contra um gateway que
+        aceita a conexão e não responde segura thread e socket até o fim do
+        processo.
+        """
+        atual = getattr(self, "_executor", None)
+        if atual is None or getattr(atual, "_shutdown", False):
+            atual = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cerebro")
+            self._executor = atual
+        return atual
+
+    def _encerrar_executor(self, timeout: float = 5.0) -> None:
+        """Encerra o pool no fim da vida do app. Idempotente.
+
+        `wait=True` num thread separado com timeout: uma consulta presa não
+        pode segurar o encerramento (o daemon mata o app em 20 s), mas também
+        não se abandona o pool sem tentar drenar.
+        """
+        atual = getattr(self, "_executor", None)
+        if atual is None:
+            return
+        self._executor = None
+        atual.shutdown(wait=False, cancel_futures=True)
+        drenar = threading.Thread(
+            target=lambda: atual.shutdown(wait=True), daemon=True,
+            name="cerebro-drain")
+        drenar.start()
+        drenar.join(timeout)
+
     def _supervisionar(self, reachy_mini: ReachyMini, stop_event: threading.Event,
                        controlador: ControladorRobo) -> None:
         """Mantém o app útil enquanto os serviços opcionais vão e voltam.
@@ -429,8 +465,21 @@ class GarraReachyMini(ReachyMiniApp):
                 log.info("Servidor de voz OK em %s (%s, multilíngue=%s)",
                          cfg.voz_url, saude.get("device"), saude.get("tts_multilingue"))
                 self.servicos.marcar("voice", True, detalhe=cfg.voz_url)
-                espera, avisou = 3.0, False
+                avisou = False
+                entrou_em = time.monotonic()
                 self._laco_voz(reachy_mini, stop_event, cfg, controlador, voz)
+                # Reentrar na hora é o que transformava uma indisponibilidade
+                # prolongada num laço apertado: o laço de voz volta na hora
+                # quando o cérebro ou a voz está fora, e cada volta paga o
+                # custo de reconstruir tudo. Só zera a espera quando o laço
+                # realmente ficou de pé por um tempo; se voltou rápido, é
+                # falha, e falha pede recuo com jitter (dois robôs na mesma
+                # rede não podem sincronizar suas tentativas).
+                if time.monotonic() - entrou_em >= CICLO_VOZ_ESTAVEL_S:
+                    espera = 3.0
+                else:
+                    self._esperar(stop_event, espera * (0.7 + random.random() * 0.6))
+                    espera = min(espera * 1.6, 60.0)
                 continue
 
             self.servicos.marcar(
@@ -445,7 +494,7 @@ class GarraReachyMini(ReachyMiniApp):
                     "Painel, câmera, movimentos e rastreamento continuam "
                     "funcionando; a voz entra sozinha quando a URL responder.",
                     cfg.voz_url)
-            self._esperar(stop_event, espera)
+            self._esperar(stop_event, espera * (0.7 + random.random() * 0.6))
             espera = min(espera * 1.6, 60.0)
 
     def _laco_voz(self, reachy_mini: ReachyMini, stop_event: threading.Event,
@@ -494,7 +543,19 @@ class GarraReachyMini(ReachyMiniApp):
         # Consultar o modelo numa thread é o que permite responder direto
         # quando dá tempo: o laço principal fica livre para decidir se o aviso
         # falado ainda faz sentido, em vez de bloquear na chamada.
-        executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cerebro")
+        # Executor ÚNICO do app, não um por entrada no laço.
+        #
+        # Antes era criado aqui e descartado no `finally` com
+        # `shutdown(wait=False)`. Isso cancela só o que está na fila: uma
+        # consulta JÁ em execução mantém a thread e o socket dela viva para
+        # sempre quando o gateway aceita a conexão e não responde. Como o
+        # supervisor reentra neste laço na hora (`continue`), cada volta
+        # abandonava mais uma thread e mais um socket — medido: crescimento
+        # linear de 1 socket + 1 thread por ciclo, até estourar o limite de
+        # FDs. Aí o GLib não consegue criar o pipe do GWakeup, chama
+        # G_BREAKPOINT e o processo morre com SIGTRAP, que o daemon reporta
+        # como `Process exited with code -5`.
+        executor = self._executor_cerebro()
 
         def calar(motivo: str = "barge-in") -> None:
             """Corta o áudio agora. É o e-stop do alto-falante, sem limite de 1,2 s."""
@@ -927,13 +988,15 @@ class GarraReachyMini(ReachyMiniApp):
             self._falar_texto = None
             self._calar = None
             self._trocar_sessao = None
-            executor.shutdown(wait=False, cancel_futures=True)
+            # O executor sobrevive ao laço de propósito (ver acima). Quem o
+            # encerra é `_encerrar_executor`, no fim da vida do app.
             self.servicos.marcar(
                 "voice", False, codigo="stopped",
                 detalhe="voice loop not running")
 
     def _encerrar_robo(self) -> None:
         """Derruba as threads do robô na ordem certa, sem deixar órfã."""
+        self._encerrar_executor()
         for nome, encerrar in (
             ("comportamento", getattr(self.comportamento, "encerrar", None)),
             ("câmera", getattr(self.hub, "encerrar", None)),

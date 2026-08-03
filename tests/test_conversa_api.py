@@ -200,10 +200,30 @@ def test_progresso_nunca_vem_antes_do_aviso():
     assert "max(politica.prazo_progresso(turno.inicio), prazo_ack)" in FONTE
 
 
-def test_o_executor_morre_com_o_laco():
-    """Um pool encerrado sobrevivendo ao laço deixaria o robô mudo sem erro."""
-    assert "executor.shutdown(wait=False, cancel_futures=True)" in FONTE
-    assert "self._executor" not in FONTE
+def test_o_executor_e_unico_e_sobrevive_ao_laco():
+    """Um pool por entrada no laço vazava thread e socket a cada volta.
+
+    A guarda anterior exigia o contrário — `shutdown(wait=False)` no `finally`
+    — e foi ela que congelou o vazamento: `wait=False` não espera a tarefa em
+    execução, então uma consulta presa contra um gateway que aceita a conexão
+    e não responde segurava thread e socket até o processo morrer. Medido: 1
+    socket + 1 thread por ciclo, até estourar o limite de FDs (SIGTRAP / -5).
+
+    A preocupação original continua valendo e virou código: um pool JÁ
+    encerrado não pode ser reutilizado, senão o robô fica mudo sem erro. Por
+    isso `_executor_cerebro` recria quando `_shutdown` está marcado.
+    """
+    assert "executor = self._executor_cerebro()" in FONTE
+    assert "executor.shutdown(wait=False, cancel_futures=True)" not in FONTE
+    assert 'getattr(atual, "_shutdown", False)' in FONTE, (
+        "um pool encerrado tem de ser substituído, não reutilizado")
+    assert "self._encerrar_executor()" in FONTE, "o pool precisa ser fechado no fim"
+
+
+def test_o_laco_de_voz_recua_quando_volta_rapido():
+    """Reentrar na hora era o que transformava indisponibilidade em laço apertado."""
+    assert "CICLO_VOZ_ESTAVEL_S" in FONTE
+    assert "random.random()" in FONTE, "backoff sem jitter sincroniza robôs"
 
 
 def test_o_laco_de_voz_nao_gira_sem_limpar_o_sinal():
