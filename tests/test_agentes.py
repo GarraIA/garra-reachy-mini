@@ -205,7 +205,7 @@ def app_cliente(backend, tmp_path, monkeypatch):
 
     monkeypatch.setenv("GARRA_REACHY_DIR", str(tmp_path))
     monkeypatch.setattr(armazenamento, "carregar_config",
-                        lambda: {"gateway_url": "http://10.0.0.24:8126",
+                        lambda: {"gateway_url": "http://192.0.2.24:8126",
                                  "gateway_key": "chave-nao-e-segredo"})
     ctrl = ControladorRobo(backend, semente=1, dir_capturas=tmp_path)
     ctrl.iniciar()
