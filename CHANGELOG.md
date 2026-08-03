@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.0-rc.1 — 2026-08-03
+
+Release candidate, published to the private Space only. Not installed on the
+official app.
+
+### Added
+
+- **Agents section (read-only).** The panel shows the factual agent registry
+  of the Garra gateway: Garra with its global default, override, provider and
+  provider-resolved model as separate facts; Forja as a command adapter that
+  is not integrated; Hera as a remote agent with no bridge. Cards are rendered
+  entirely from `GET /api/robot/agents`; nothing is cached and a failure
+  clears them, so an offline gateway never leaves stale data on screen.
+  Capability key: `agent_registry_read_only`.
+- Narrow, authenticated companion route (`GET /api/agents`) with a fixed
+  upstream, a field allowlist, its own rate limit and `Cache-Control:
+  no-store`. The bridge token never reaches the browser.
+
+### Not included
+
+No administration, no toggles, no messaging, no adapters, no voice or
+wake-phrase changes. The registry is facts only.
+
 ## 1.1.0 — 2026-08-01
 
 Everything here was validated on real hardware in an isolated staging build
