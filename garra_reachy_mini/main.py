@@ -34,7 +34,7 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 
 from enum import Enum
 
-from . import armazenamento
+from . import armazenamento, ativacao
 from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
                       RespostaCerebro)
 from .cerebro import sondar as cerebro_sondar
@@ -72,6 +72,12 @@ RECONFERIR_CEREBRO_S = 20.0
 # disso ele voltou por falha (voz sumiu, cérebro sumiu, config mudou), e
 # reentrar na hora vira laço apertado — que foi o que esgotou os FDs.
 CICLO_VOZ_ESTAVEL_S = 30.0
+
+
+# Rejeição em sala barulhenta pode acontecer a cada frase dita perto do robô.
+# O evento é diagnóstico, não telemetria de tudo que se fala: no máximo um por
+# janela, e um contador do que foi agregado.
+REJEICAO_INTERVALO_S = 30.0
 
 
 class ResultadoFala(Enum):
@@ -562,6 +568,12 @@ class GarraReachyMini(ReachyMiniApp):
             self._midia_ligada = True
         log.info("Conectado ao robô (mic %sHz, som %sHz).", sr_in, sr_out)
 
+        # A sessão de ativação: uma por instância do laço de voz, viva entre
+        # turnos, morta com o laço. Dois carimbos de tempo — nenhuma thread,
+        # nenhum timer, nenhuma task, que é o que o 1.2.1 acabou de custar.
+        sessao_ativacao = ativacao.Sessao()
+        rejeicoes = {"ultimo": 0.0, "suprimidas": 0}
+
         # Só agora: acima ainda havia um `return` (robô sem dispositivo de
         # áudio), e uma thread iniciada antes dele ficaria de pé sem ninguém
         # para encerrá-la. O evento a amarra a ESTE ciclo.
@@ -674,6 +686,11 @@ class GarraReachyMini(ReachyMiniApp):
                     time.sleep(passo)
                     restante -= passo
                 drenar_mic(0.4)
+                # O instante em que o alto-falante calou de vez. A margem
+                # anti-eco se mede a partir DAQUI, contra o carimbo de captura
+                # do áudio — nunca contra o relógio da avaliação, que só chega
+                # depois do STT.
+                sessao_ativacao.falou_ate = time.monotonic()
                 gestos.ouvindo()
             finally:
                 self._lock_fala.release()
@@ -689,6 +706,11 @@ class GarraReachyMini(ReachyMiniApp):
             dur = audio.size / sr_in
             if dur < FALA_MINIMA_S:
                 return
+            # O instante em que este áudio COMEÇOU a ser capturado, derivado da
+            # própria duração e tomado antes do STT. A margem anti-eco precisa
+            # disto e não do relógio da avaliação: o STT leva segundos, e medir
+            # depois dele julgaria o áudio errado.
+            capturado_em = time.monotonic() - dur
             gestos.pensando()
             t0 = time.time()
             try:
@@ -702,6 +724,46 @@ class GarraReachyMini(ReachyMiniApp):
             if not texto or len(texto) < 2:
                 gestos.ouvindo()
                 return
+            # ── frase de ativação ─────────────────────────────────────────
+            # ANTES do log, do evento e de tudo a jusante. O `publicar` é o que
+            # leva o transcript ao painel e ao histórico: um gate depois dele já
+            # teria persistido o que devia sumir. Pelo mesmo motivo o texto
+            # rejeitado não entra no log do app.
+            conf_wake = Config.carregar()
+            ativ = ativacao.Ativacao.de(conf_wake.conversa)
+            # O e-stop é reconhecido ANTES da decisão e é o único bypass: um
+            # "pare" que dependa de frase de ativação não é um e-stop.
+            e_stop = bool(cfg.atalhos_locais
+                          and intencoes.reconhecer(texto).acao == "stop")
+            veredicto = ativacao.avaliar(texto, capturado_em, sessao_ativacao,
+                                       ativ, time.monotonic(), e_stop=e_stop)
+            if not veredicto.aceito:
+                agora_r = time.monotonic()
+                if agora_r - rejeicoes["ultimo"] >= REJEICAO_INTERVALO_S:
+                    # Evento redigido: faixa de duração, nunca o valor exato, e
+                    # nenhum resquício do que foi dito — sem transcript, sem
+                    # hash, sem trecho.
+                    controlador.eventos.publicar(
+                        "voice.wake.rejected", reason=veredicto.motivo,
+                        audio_duration_bucket=ativacao.faixa_de_duracao(dur),
+                        wake_session_state=veredicto.estado_sessao,
+                        suppressed_since_last=rejeicoes["suprimidas"])
+                    rejeicoes["ultimo"] = agora_r
+                    rejeicoes["suprimidas"] = 0
+                else:
+                    rejeicoes["suprimidas"] += 1
+                gestos.ouvindo()
+                return
+            if veredicto.abriu_sessao:
+                controlador.eventos.publicar(
+                    "voice.wake.activated", window_s=ativ.janela_s,
+                    session_max_s=ativ.sessao_max_s)
+            if veredicto.so_ativacao:
+                # "Fala Garra" sozinho: a sessão abriu e não há o que responder.
+                gestos.ouvindo()
+                return
+            texto = veredicto.texto
+
             log.info("🎤 Você (%.1fs): %s", time.time() - t0, texto)
             correlacao = f"voz_{int(time.time() * 1000)}"
             controlador.eventos.publicar(
@@ -882,6 +944,12 @@ class GarraReachyMini(ReachyMiniApp):
                      "progress_messages": turno.progressos})
             if self._turno is turno:
                 self._turno = None
+            # A janela de inatividade renova AGORA, não quando o enunciado foi
+            # aceito: entre uma coisa e outra houve modelo, TTS e dreno do
+            # microfone, e renovar na aceitação fecharia a sessão justamente
+            # quando a pessoa pôde voltar a falar. O teto da sessão não é
+            # tocado — ele conta desde a ativação e nunca renova.
+            sessao_ativacao.renovar(time.monotonic())
             # Só agora o histórico pode ser marcado como falado.
             cerebro.confirmar_falado(resposta.marca)
 

@@ -73,6 +73,20 @@ PADRAO: dict[str, Any] = {
     # desligado e passe por aqui, em vez de virar mais uma fala automática sem
     # interruptor. Ver `voice.turn.tool_preamble`.
     "announce_tool_usage": False,
+    # ── frase de ativação ────────────────────────────────────────────────────
+    # Governa o que o robô ESCUTA, e por isso é independente dos dois mestres
+    # acima: "escute e obedeça, mas responda só no chat" é uma combinação
+    # legítima. Nasce desligada — ligar isto muda como se fala com o robô, e
+    # ninguém deve descobrir a mudança por um upgrade.
+    "wake_phrase_enabled": False,
+    "wake_phrase_text": "Fala Garra",
+    # Inatividade: quanto tempo de silêncio fecha a sessão. Renovado ao FIM de
+    # cada turno, nunca na aceitação.
+    "wake_phrase_window_s": 15,
+    # Teto da SESSÃO, contado da ativação e nunca renovado. Não é uma segunda
+    # janela de inatividade: é o que impede uma sala barulhenta de manter o
+    # robô escutando indefinidamente.
+    "wake_phrase_session_max_s": 90,
     "progress_update_delay_ms": 10000,
     "max_progress_messages": 1,
     "acknowledgement_cut_threshold_ms": 1200,
@@ -92,9 +106,15 @@ PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": False}
 
 BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
              "spoken_acknowledgements_enabled", "spoken_progress_updates",
-             "announce_tool_usage")
+             "announce_tool_usage", "wake_phrase_enabled")
+
+# A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
+# folgado para isso e curto o bastante para não virar um parágrafo.
+FRASE_MAX = 64
 
 LIMITES = {
+    "wake_phrase_window_s": (3, 120),
+    "wake_phrase_session_max_s": (15, 600),
     "progress_update_delay_ms": (1000, 120000),
     "max_progress_messages": (0, 5),
     "acknowledgement_cut_threshold_ms": (0, 10000),
@@ -131,9 +151,23 @@ def normalizar(bruto: dict | None) -> dict:
         if chave in bruto:
             c[chave] = bool(bruto[chave])
     for campo in ("progress_update_delay_ms", "max_progress_messages",
-                  "acknowledgement_cut_threshold_ms"):
+                  "acknowledgement_cut_threshold_ms",
+                  "wake_phrase_window_s", "wake_phrase_session_max_s"):
         if campo in bruto:
             c[campo] = _inteiro(bruto[campo], c[campo], *LIMITES[campo])
+    # O teto tem de caber a janela. Um teto menor que a inatividade daria uma
+    # sessão que expira antes do primeiro silêncio — configuração que só pode
+    # ter vindo de engano.
+    if c["wake_phrase_session_max_s"] < c["wake_phrase_window_s"]:
+        c["wake_phrase_session_max_s"] = c["wake_phrase_window_s"]
+    if "wake_phrase_text" in bruto:
+        # Frase vazia, só espaço ou só pontuação é RECUSADA, e a anterior fica.
+        # Gravar vazio deixaria a ativação ligada e inalcançável: o robô ficaria
+        # surdo sem ninguém ter pedido isso.
+        candidata = str(bruto["wake_phrase_text"] or "").strip()[:FRASE_MAX]
+        from .ativacao import tokens as _tokens
+        if candidata and _tokens(candidata):
+            c["wake_phrase_text"] = candidata
     perfis = bruto.get("profiles")
     if isinstance(perfis, dict):
         for nome in MODOS:

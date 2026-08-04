@@ -50,6 +50,10 @@ CAPACIDADES: dict[str, bool] = {
     # anterior precisa saber que aquele build **não** tem como calar o
     # alto-falante, em vez de desenhar um interruptor que não liga em nada.
     "speech_output_control": True,
+    # Frase de ativação (`wake_phrase_*`). Governa o que o robô ESCUTA, e por
+    # isso é independente do mestre da saída: "escute e obedeça, mas responda
+    # só no chat" é combinação legítima.
+    "wake_phrase": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

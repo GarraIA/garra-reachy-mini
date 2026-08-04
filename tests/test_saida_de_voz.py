@@ -294,8 +294,8 @@ def test_capacidade_anunciada_para_o_painel() -> None:
     assert build_info.CAPACIDADES["speech_output_control"] is True
     assert build_info.CAPACIDADES["automatic_speech_toggles"] is True, (
         "a capacidade histórica continua: os controles antigos não sumiram")
-    assert "wake_phrase" not in build_info.CAPACIDADES, (
-        "a wake phrase não existe neste build e não pode ser anunciada")
+    assert build_info.CAPACIDADES["wake_phrase"] is True, (
+        "a wake phrase existe neste build; um painel antigo precisa saber")
 
 
 # ─── recursos: o B0 não pode reintroduzir o que o 1.2.1 fechou ───────────────
