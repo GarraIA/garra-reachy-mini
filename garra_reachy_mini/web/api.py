@@ -79,8 +79,20 @@ class ContextoWeb:
     iniciado_em: float = field(default_factory=time.monotonic)
 
 
-def _erro(status: int, mensagem: str) -> HTTPException:
-    return HTTPException(status_code=status, detail={"ok": False, "error": mensagem})
+def _erro(status: int, mensagem: str, codigo: str | None = None) -> HTTPException:
+    """Erro da API.
+
+    Sem `codigo`, mantém a forma histórica (`error` é a mensagem) — 20 rotas
+    dependem dela. Com `codigo`, usa a forma legível por máquina que as rotas de
+    agentes já adotaram (`error.code`), porque um cliente não deve ter de
+    inspecionar texto em português para saber o que aconteceu.
+    """
+    if codigo is None:
+        return HTTPException(status_code=status,
+                             detail={"ok": False, "error": mensagem})
+    return HTTPException(
+        status_code=status,
+        detail={"ok": False, "error": {"code": codigo, "detail": mensagem}})
 
 
 def preparar(app: FastAPI, politica: Politica, limitador: Limitador | None = None) -> None:
@@ -639,23 +651,40 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
     async def falar(corpo: dict[str, Any] = Body(...)) -> dict[str, Any]:
         texto = str(corpo.get("text") or corpo.get("texto") or "").strip()
         if not texto:
-            raise _erro(400, "texto vazio")
+            raise _erro(400, "texto vazio", codigo="invalid_text")
         if ctx.falar is None:
-            raise _erro(503, "a síntese de voz não está disponível neste processo")
-        await _falar_seguro(ctx, texto)
+            raise _erro(503, "a síntese de voz não está disponível neste processo",
+                        codigo="tts_unavailable")
+        # Quatro desfechos distintos, e nenhum deles é um `false` genérico:
+        # "você desligou a voz", "não há TTS aqui", "o texto não serve" e
+        # "tentou tocar e falhou" pedem reações diferentes de quem chamou.
+        resultado = await _falar_seguro(ctx, texto)
+        if resultado == "speech_output_disabled":
+            # 409, e não 403: não é falta de permissão, é conflito com o estado
+            # configurado — que o próprio chamador pode mudar.
+            raise _erro(409, "a saída de voz está desligada na configuração",
+                        codigo="speech_output_disabled")
+        if resultado == "playback_failed":
+            raise _erro(502, "a fala falhou ao tocar", codigo="playback_failed")
         return {"ok": True}
 
     return r
 
 
-async def _falar_seguro(ctx: ContextoWeb, texto: str) -> None:
+async def _falar_seguro(ctx: ContextoWeb, texto: str) -> str | None:
+    """Fala sem deixar a exceção subir. Devolve o código do resultado.
+
+    O texto pedido NUNCA entra no log nem no evento de erro: o que se registra
+    é a falha, não o que a pessoa mandou o robô dizer.
+    """
     if ctx.falar is None:
-        return
+        return "tts_unavailable"
     try:
-        await ctx.falar(texto)
+        return await ctx.falar(texto)
     except Exception as e:  # pragma: no cover
-        log.warning("falha ao falar: %s", e)
-        ctx.eventos.publicar("voice.error", error=str(e))
+        log.warning("falha ao falar: %s", type(e).__name__)
+        ctx.eventos.publicar("voice.error", error=type(e).__name__)
+        return "playback_failed"
 
 
 # ─── WebSocket de eventos ────────────────────────────────────────────────────

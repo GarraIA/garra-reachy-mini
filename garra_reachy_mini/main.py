@@ -32,6 +32,8 @@ import numpy as np
 from pydantic import BaseModel
 from reachy_mini import ReachyMini, ReachyMiniApp
 
+from enum import Enum
+
 from . import armazenamento
 from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
                       RespostaCerebro)
@@ -70,6 +72,21 @@ RECONFERIR_CEREBRO_S = 20.0
 # disso ele voltou por falha (voz sumiu, cérebro sumiu, config mudou), e
 # reentrar na hora vira laço apertado — que foi o que esgotou os FDs.
 CICLO_VOZ_ESTAVEL_S = 30.0
+
+
+class ResultadoFala(Enum):
+    """Por que uma tentativa de fala terminou como terminou.
+
+    `falar()` devolvia `None` e levantava só para "já estou falando". Um `False`
+    genérico — ou silêncio — não distingue "o usuário desligou a voz" de "o TTS
+    caiu", e essas duas coisas pedem reações opostas de quem chamou: a primeira
+    é preferência respeitada, a segunda é defeito.
+    """
+
+    FALADA = "spoken"
+    DESABILITADA = "speech_output_disabled"
+    TTS_INDISPONIVEL = "tts_unavailable"
+    FALHA = "playback_failed"
 
 
 def _salva_publica(salva: dict) -> dict:
@@ -351,11 +368,17 @@ class GarraReachyMini(ReachyMiniApp):
             self.politica.url_visivel, self.politica.url_visivel,
         )
 
-    async def _falar_async(self, texto: str) -> None:
-        """Fala pedida pelo painel. Nunca sobrepõe a fala do loop principal."""
+    async def _falar_async(self, texto: str) -> str:
+        """Fala pedida pelo painel. Nunca sobrepõe a fala do loop principal.
+
+        Devolve o código do resultado para a rota poder responder o que de fato
+        aconteceu. Um pedido explícito que devolve sucesso e produz silêncio é
+        indistinguível de um defeito.
+        """
         if self._falar_texto is None:  # pragma: no cover - só antes do run()
             raise RuntimeError("a voz ainda não está pronta")
-        await asyncio.to_thread(self._falar_texto, texto, False)
+        r = await asyncio.to_thread(self._falar_texto, texto, False)
+        return r.value if isinstance(r, ResultadoFala) else ResultadoFala.FALADA.value
 
     def _calar_agora(self, motivo: str = "painel") -> None:
         """Corta a fala em curso. Chamado pelo botão de parada do painel."""
@@ -612,8 +635,16 @@ class GarraReachyMini(ReachyMiniApp):
             `turno` amarra o áudio ao turno corrente — sem ele, uma resposta
             atrasada de um turno já substituído ainda sairia pelo alto-falante.
             """
+            # O mestre da saída, lido AGORA e não no arranque do laço: é o que
+            # faz o interruptor do painel valer na fala seguinte, sem restart.
+            # Antes de tomar a trava, antes do TTS, antes de qualquer estado —
+            # desligado, esta função não pode ter efeito colateral nenhum.
+            if not conversa.Politica.de(Config.carregar().conversa).saida_habilitada:
+                log.info("Fala suprimida: saída de voz desligada na configuração.")
+                return ResultadoFala.DESABILITADA
             if not self._lock_fala.acquire(blocking=bloqueante):
                 raise RuntimeError("o robô já está falando")
+            houve_audio = False
             try:
                 gestos.falando()
                 inicio, duracao = time.time(), 0.0
@@ -635,6 +666,7 @@ class GarraReachyMini(ReachyMiniApp):
                             break   # outro turno assumiu; esta fala morreu aqui
                     else:
                         reachy_mini.media.push_audio_sample(onda)
+                    houve_audio = True
                     duracao += onda.size / sr_out
                 restante = inicio + duracao - time.time() + 0.6
                 while restante > 0 and not stop_event.is_set():
@@ -645,6 +677,10 @@ class GarraReachyMini(ReachyMiniApp):
                 gestos.ouvindo()
             finally:
                 self._lock_fala.release()
+            # Nenhuma onda chegou ao alto-falante: ou o TTS falhou frase a
+            # frase, ou o turno foi substituído no meio. Quem chamou merece
+            # saber a diferença entre isso e uma fala que aconteceu.
+            return ResultadoFala.FALADA if houve_audio else ResultadoFala.FALHA
 
         # A partir daqui o painel também consegue falar pelo robô.
         self._falar_texto = falar

@@ -38,7 +38,19 @@ MODOS = ("fast", "informative")
 # tempo que o usuário ajustou à mão: cada modo guarda o seu.
 PADRAO: dict[str, Any] = {
     "mode": "fast",
-    # ── controle mestre ──────────────────────────────────────────────────────
+    # ── mestre da SAÍDA de voz ───────────────────────────────────────────────
+    # Desligado, nada sai pelo alto-falante: nem resposta final, nem aviso, nem
+    # saudação, nem o que o painel pedir. O texto continua no chat, e escuta,
+    # comandos, tools e movimento seguem funcionando.
+    #
+    # É um campo NOVO, e tinha de ser. `automatic_speech_enabled` já existe em
+    # produção valendo `False` em robôs que **falam a resposta final** — ele
+    # nunca governou a saída, só a fala automática. Reaproveitá-lo como mestre
+    # emudeceria, no upgrade, todo robô que hoje responde. Por isso o default
+    # aqui é `True`: config antiga não tem a chave, e a ausência tem de
+    # normalizar para o comportamento de hoje.
+    "speech_output_enabled": True,
+    # ── controle mestre da fala AUTOMÁTICA ───────────────────────────────────
     # Desligado, o robô só fala a resposta final e o que o usuário pediu
     # explicitamente. Nenhum atraso o contorna: 4 s, 30 s ou 5 min de espera
     # continuam em silêncio. Os controles abaixo são refinamentos DENTRO do
@@ -78,8 +90,9 @@ PADRAO: dict[str, Any] = {
 # Também silenciosa por padrão, pelo mesmo veredicto do hardware.
 PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": False}
 
-BOOLEANOS = ("automatic_speech_enabled", "spoken_acknowledgements_enabled",
-             "spoken_progress_updates", "announce_tool_usage")
+BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
+             "spoken_acknowledgements_enabled", "spoken_progress_updates",
+             "announce_tool_usage")
 
 LIMITES = {
     "progress_update_delay_ms": (1000, 120000),
@@ -159,6 +172,9 @@ class Politica:
     max_progresso: int
     corte_ms: int
     progresso_falado: bool
+    # O mestre da saída. Separado de `fala_automatica` de propósito: um governa
+    # se o alto-falante toca, o outro se o robô fala sem ser perguntado.
+    saida_habilitada: bool = True
     fala_automatica: bool = True
     ack_habilitado: bool = True
     anunciar_ferramenta: bool = False
@@ -176,6 +192,7 @@ class Politica:
             max_progresso=c["max_progress_messages"],
             corte_ms=c["acknowledgement_cut_threshold_ms"],
             progresso_falado=c["spoken_progress_updates"],
+            saida_habilitada=c["speech_output_enabled"],
             fala_automatica=c["automatic_speech_enabled"],
             ack_habilitado=c["spoken_acknowledgements_enabled"],
             anunciar_ferramenta=c["announce_tool_usage"],
@@ -183,28 +200,45 @@ class Politica:
         )
 
     # ── o que pode sair pelo alto-falante sem o usuário pedir ────────────────
-    # Quatro perguntas, um lugar só. O mestre entra em cada uma por `and`, e é
-    # por isso que nenhum atraso, modo ou refinamento consegue contorná-lo: não
-    # existe caminho que produza fala automática sem passar por aqui.
+    # Quatro perguntas, um lugar só. Os DOIS mestres entram em cada uma por
+    # `and`, e é por isso que nenhum atraso, modo ou refinamento consegue
+    # contorná-los: não existe caminho que produza fala automática sem passar
+    # por aqui. A ordem do `and` não é estilo — `saida_habilitada` vem primeiro
+    # porque é a pergunta mais forte: com ela falsa, nada toca.
     @property
     def pode_avisar(self) -> bool:
         """Frase de espera enquanto o modelo pensa."""
-        return self.fala_automatica and self.ack_habilitado
+        return (self.saida_habilitada and self.fala_automatica
+                and self.ack_habilitado)
 
     @property
     def pode_progredir(self) -> bool:
         """"Ainda estou nisso", em tarefa longa."""
-        return self.fala_automatica and self.progresso_falado
+        return (self.saida_habilitada and self.fala_automatica
+                and self.progresso_falado)
 
     @property
     def pode_anunciar_ferramenta(self) -> bool:
         """"Deixa eu ver isso" antes de câmera ou tool."""
-        return self.fala_automatica and self.anunciar_ferramenta
+        return (self.saida_habilitada and self.fala_automatica
+                and self.anunciar_ferramenta)
 
     @property
     def pode_saudar(self) -> bool:
         """Saudação ao subir o loop de voz, sem pergunta nenhuma."""
-        return self.fala_automatica and self.saudacao_habilitada
+        return (self.saida_habilitada and self.fala_automatica
+                and self.saudacao_habilitada)
+
+    @property
+    def pode_responder_falando(self) -> bool:
+        """A RESPOSTA FINAL pode sair pelo alto-falante?
+
+        Existe separada das quatro acima porque a resposta final nunca foi fala
+        automática: ela sai porque alguém perguntou. Só o mestre da saída a
+        governa — `automatic_speech_enabled` desligado continua respondendo em
+        voz alta, que é o comportamento de hoje em produção.
+        """
+        return self.saida_habilitada
 
     @property
     def alguma_fala_automatica(self) -> bool:
@@ -216,7 +250,14 @@ class Politica:
         return self.pode_avisar or self.pode_progredir
 
     def motivo_silencio(self) -> str:
-        """Por que não vai falar. Vai no evento, para o painel não adivinhar."""
+        """Por que não vai falar. Vai no evento, para o painel não adivinhar.
+
+        O mestre da saída vem primeiro: quando ele está desligado, dizer
+        "acknowledgements desabilitados" mandaria o usuário mexer no
+        interruptor errado.
+        """
+        if not self.saida_habilitada:
+            return "speech_output_disabled"
         return ("automatic_speech_disabled" if not self.fala_automatica
                 else "spoken_acknowledgements_disabled")
 
@@ -301,6 +342,12 @@ class CoordenadorAudio:
     def tocar_ack(self, turno: Turno, onda) -> bool:
         """Enfileira o aviso. `False` se o turno já não vale."""
         with self._lock:
+            if not turno.politica.saida_habilitada:
+                # Cinto e suspensórios. Quem chama já pergunta `pode_avisar`,
+                # mas o coordenador é o dono do alto-falante: uma rota nova que
+                # esqueça de perguntar morre aqui, e não no robô do usuário.
+                turno.ack_estado = CANCELADO
+                return False
             if not turno.vivo or self._turno_atual != turno.id:
                 turno.ack_estado = CANCELADO
                 return False
@@ -355,6 +402,8 @@ class CoordenadorAudio:
     def tocar_final(self, turno: Turno, ondas) -> bool:
         """Enfileira a resposta. `False` se outro turno já assumiu."""
         with self._lock:
+            if not turno.politica.saida_habilitada:
+                return False
             if not turno.vivo or self._turno_atual != turno.id:
                 return False
             self._tipo = "final_response"
