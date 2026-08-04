@@ -1,9 +1,10 @@
 # Changelog
 
-## 1.3.0 — não publicada
+## 1.3.0 — 2026-08-04
 
-Validada em hardware até a etapa de ciclos start/stop; a publicação aguarda a
-recuperação do daemon do robô. O código está completo e a suíte, verde.
+Validada em hardware: cinco ciclos start/stop esperando estado, e 30 minutos de
+soak com fd em tendência levemente negativa, threads imóveis e nenhuma captura
+de SIGTRAP ou `stopping_timeout`.
 
 ### Added
 
