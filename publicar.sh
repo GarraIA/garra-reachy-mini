@@ -31,7 +31,7 @@ DONO_HF="michelbr"
 # Space de produção por padrão. `GARRA_SPACE` aponta para outro — os de RC e
 # staging (`garra_reachy_mini_rc`, `garra_reachy_mini_staging`) já existem e são
 # privados, e é neles que uma build vai antes de ir ao robô de verdade.
-ESPACO="${GARRA_SPACE:-garra_reachy_mini}"
+# Quem resolve o nome é `tools/publicacao.py`, para que o contrato tenha teste.
 REPO_GH="GarraIA/garra-reachy-mini"
 
 ETAPA="${1:-}"
@@ -39,6 +39,8 @@ case "$ETAPA" in
   privado|publico|oficial) ;;
   *) sed -n '2,20p' "$0"; exit 2 ;;
 esac
+
+ESPACO="$(PYTHONPATH="$APP_DIR" "$PY" -m tools.publicacao espaco)" || exit 1
 
 # ── conferências que precedem qualquer escrita ──────────────────────────────
 [ "$(git -C "$APP_DIR" rev-parse --show-toplevel)" = "$APP_DIR" ] \
@@ -98,22 +100,21 @@ from huggingface_hub import HfApi
 etapa, repo_id, app_dir, sha, versao = sys.argv[1:6]
 api = HfApi()   # o token vem do armazenamento do HF; nunca passa por aqui
 
+sys.path.insert(0, app_dir)
+from tools.publicacao import ErroDePublicacao, decidir   # noqa: E402
+
 existe = api.repo_exists(repo_id, repo_type="space")
+privado = api.space_info(repo_id).private if existe else None
 
-if etapa == "publico" and not existe:
-    sys.exit(f"ERRO: {repo_id} não existe. Publique privado e teste no robô antes.")
+# A decisão mora em `tools/publicacao.py`, com teste para os seis casos. O que
+# ela protege é simples de perder de vista aqui: só a etapa `publico` muda
+# visibilidade, e um publish acidental não se desfaz.
+try:
+    plano = decidir(etapa, existe, privado)
+except ErroDePublicacao as e:
+    sys.exit(f"ERRO: {e}")
 
-if etapa == "privado" and existe and not api.space_info(repo_id).private:
-    # `privado` não torna privado um Space que já é público — só `publico`
-    # mexe em visibilidade. Sem esta conferência, um `privado` no Space padrão
-    # publicaria direto para quem já tem o app instalado, achando que estava
-    # num ensaio. Quem quer ensaiar usa GARRA_SPACE.
-    sys.exit(f"ERRO: {repo_id} já é PÚBLICO — `privado` aqui publicaria para "
-             f"todo mundo.\n      Para ensaiar: GARRA_SPACE=garra_reachy_mini_rc "
-             f"bash publicar.sh privado\n      Para publicar de verdade: bash "
-             f"publicar.sh publico")
-
-if not existe:
+if plano.criar_privado:
     api.create_repo(repo_id, repo_type="space", private=True, space_sdk="static")
     print(f"[OK] Space criado privado: {repo_id}")
 else:
@@ -144,7 +145,7 @@ api.upload_file(
     commit_message=f"build stamp {sha[:12]}",
 )
 
-if etapa == "publico":
+if plano.tornar_publico:
     api.update_repo_settings(repo_id, repo_type="space", private=False)
     print("[OK] Space agora é PÚBLICO")
 
