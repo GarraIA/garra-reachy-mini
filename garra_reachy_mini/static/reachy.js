@@ -545,7 +545,28 @@ function pintarConversa(d) {
        ? t('conversa.mudo_curto')
        : t(`conversa.${c.mode || 'fast'}_curto`));
   $('conversa-progresso-ms').disabled = c.spoken_progress_updates === false;
+  // Ativação: independente dos dois mestres acima.
+  $('conversa-wake').checked = c.wake_phrase_enabled === true;
+  $('conversa-wake-texto').value = c.wake_phrase_text ?? 'Fala Garra';
+  const jan = c.wake_phrase_window_s ?? 15;
+  const teto = c.wake_phrase_session_max_s ?? 90;
+  $('conversa-wake-janela').value = jan;
+  $('v-conversa-wake-janela').textContent = `${jan} s`;
+  $('conversa-wake-teto').value = teto;
+  $('v-conversa-wake-teto').textContent = `${teto} s`;
   sincronizarMestre();
+  sincronizarWake();
+}
+
+// Ativação desligada: os três campos ficam inativos e os valores continuam
+// salvos. NÃO depende dos mestres de fala — com a saída de voz desligada, a
+// frase de ativação segue governando o que o robô escuta.
+function sincronizarWake() {
+  const ligada = $('conversa-wake').checked;
+  for (const linha of document.querySelectorAll('[data-conversa-wake-sub]')) {
+    linha.style.opacity = ligada ? '' : '0.55';
+    for (const el of linha.querySelectorAll('input')) el.disabled = !ligada;
+  }
 }
 
 // Mestre desligado: subordinados desabilitados, VALORES PRESERVADOS. Religar
@@ -760,6 +781,12 @@ function ligar() {
     // do usuário assim que ele desligasse o mestre.
     spoken_progress_updates: $('conversa-progresso').checked,
     speech_output_enabled: $('conversa-saida').checked,
+    wake_phrase_enabled: $('conversa-wake').checked,
+    // Frase vazia nem sai daqui: o servidor também recusa, mas deixar o campo
+    // vazio chegar lá gravaria a anterior sem o usuário entender por quê.
+    wake_phrase_text: $('conversa-wake-texto').value.trim() || undefined,
+    wake_phrase_window_s: Number($('conversa-wake-janela').value),
+    wake_phrase_session_max_s: Number($('conversa-wake-teto').value),
     automatic_speech_enabled: $('conversa-mestre').checked,
     spoken_acknowledgements_enabled: $('conversa-ack-on').checked,
     announce_tool_usage: $('conversa-tool-on').checked,
@@ -770,6 +797,11 @@ function ligar() {
   // Reflete na hora; grava só no botão, numa escrita e numa revisão só.
   $('conversa-mestre').addEventListener('change', sincronizarMestre);
   $('conversa-saida').addEventListener('change', sincronizarMestre);
+  $('conversa-wake').addEventListener('change', sincronizarWake);
+  $('conversa-wake-janela').addEventListener('input', (e) =>
+    $('v-conversa-wake-janela').textContent = `${e.target.value} s`);
+  $('conversa-wake-teto').addEventListener('input', (e) =>
+    $('v-conversa-wake-teto').textContent = `${e.target.value} s`);
 
   $('btn-identidade-salvar').addEventListener('click', () =>
     salvarIdentidade('/api/robot/agent-identity', {

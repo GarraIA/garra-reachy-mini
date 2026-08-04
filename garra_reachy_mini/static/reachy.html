@@ -237,7 +237,31 @@
       </label>
     </div>
     <div class="linha" style="margin-top:10px">
-      <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
+    <!-- Frase de ativação. Fora dos dois mestres de propósito: ela governa o
+         que o robô ESCUTA, e continua valendo com o alto-falante desligado. -->
+    <hr class="divisor">
+    <label class="caixa" id="linha-conversa-wake">
+      <input type="checkbox" id="conversa-wake">
+      <span data-i18n="conversa.wake"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.wake_dica"></div>
+    <div class="linha" data-conversa-wake-sub="1">
+      <label for="conversa-wake-texto"><span data-i18n="conversa.wake_texto"></span></label>
+      <input type="text" id="conversa-wake-texto" maxlength="64"
+             autocomplete="off" spellcheck="false">
+    </div>
+    <div class="linha" data-conversa-wake-sub="1">
+      <label for="conversa-wake-janela"><span data-i18n="conversa.wake_janela"></span>
+        <b id="v-conversa-wake-janela">—</b></label>
+      <input type="range" id="conversa-wake-janela" min="3" max="120" step="1">
+    </div>
+    <div class="linha" data-conversa-wake-sub="1">
+      <label for="conversa-wake-teto"><span data-i18n="conversa.wake_teto"></span>
+        <b id="v-conversa-wake-teto">—</b></label>
+      <input type="range" id="conversa-wake-teto" min="15" max="600" step="5">
+    </div>
+    <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
+
       <span class="pill" id="p-conversa">—</span>
     </div>
     <div class="status-lista" id="conversa-metricas" style="margin-top:12px"></div>
