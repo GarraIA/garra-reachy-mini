@@ -388,3 +388,61 @@ def test_nenhuma_thread_timer_ou_task_nova_no_caminho_da_ativacao() -> None:
                      "ThreadPoolExecutor"):
         assert proibido not in corpo, (
             f"{proibido} no caminho do turno — é a forma do defeito do 1.2.1")
+
+
+# ─── o defeito que só o hardware pegou ───────────────────────────────────────
+# `normalizar()` (leitura do disco) e `perfil_atualizado()` (escrita pelo
+# painel) tinham listas de campos SEPARADAS. As chaves novas entraram só na
+# primeira, então a configuração valia pelo arquivo e era silenciosamente
+# ignorada pelo painel. Nenhum teste de unidade sobre `normalizar` alcançava
+# isso; a validação no robô alcançou.
+
+def test_toda_chave_do_padrao_sobrevive_a_escrita_pelo_painel() -> None:
+    """A invariante que impede as duas listas de divergirem de novo."""
+    base = conversa.normalizar({})
+    alteracoes = {
+        "speech_output_enabled": False,
+        "automatic_speech_enabled": True,
+        "spoken_acknowledgements_enabled": True,
+        "spoken_progress_updates": True,
+        "announce_tool_usage": True,
+        "wake_phrase_enabled": True,
+        "wake_phrase_text": "Ei Robô",
+        "wake_phrase_window_s": 42,
+        "wake_phrase_session_max_s": 300,
+        "progress_update_delay_ms": 5000,
+        "max_progress_messages": 3,
+        "acknowledgement_cut_threshold_ms": 900,
+        "mode": "informative",
+    }
+    escrito = conversa.perfil_atualizado(base, alteracoes)
+    for chave, valor in alteracoes.items():
+        assert escrito[chave] == valor, (
+            f"{chave} não sobreviveu à escrita — `perfil_atualizado` não "
+            "conhece a chave, e o painel a ignoraria em silêncio")
+    # E nenhuma chave do padrão pode ficar de fora dos dois caminhos.
+    assert set(conversa.PADRAO) - {"profiles", "revision"} <= set(alteracoes) | {
+        "mode"}, "há chave no PADRÃO que este teste não exercita"
+
+
+def test_a_escrita_valida_igual_a_leitura() -> None:
+    base = conversa.normalizar({})
+    for mudanca in ({"wake_phrase_text": "   "}, {"wake_phrase_text": "!!!"},
+                    {"wake_phrase_window_s": 1}, {"wake_phrase_window_s": 999},
+                    {"wake_phrase_session_max_s": 5}):
+        pela_escrita = conversa.perfil_atualizado(base, mudanca)
+        pela_leitura = conversa.normalizar({**base, **mudanca})
+        for chave in ("wake_phrase_text", "wake_phrase_window_s",
+                      "wake_phrase_session_max_s"):
+            assert pela_escrita[chave] == pela_leitura[chave], (
+                f"{chave} valida diferente conforme o caminho: {mudanca}")
+
+
+def test_escrita_parcial_preserva_as_demais_chaves() -> None:
+    base = conversa.perfil_atualizado(conversa.normalizar({}), {
+        "wake_phrase_enabled": True, "wake_phrase_text": "Ei Robô",
+        "speech_output_enabled": False})
+    depois = conversa.perfil_atualizado(base, {"mode": "informative"})
+    assert depois["wake_phrase_enabled"] is True
+    assert depois["wake_phrase_text"] == "Ei Robô"
+    assert depois["speech_output_enabled"] is False
