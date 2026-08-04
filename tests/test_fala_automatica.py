@@ -247,8 +247,12 @@ def test_os_interruptores_sobrevivem_a_normalizacao():
     após restart" significa do lado do arquivo."""
     gravado = conversa.normalizar(TUDO_DESLIGADO)
     assert conversa.normalizar(gravado) == gravado
-    for chave in conversa.BOOLEANOS:
+    for chave in set(TUDO_DESLIGADO) & set(conversa.BOOLEANOS):
         assert gravado[chave] is False
+    # E o mestre da SAÍDA não é desligado por tabela: "desliguei tudo" aqui
+    # sempre quis dizer as falas automáticas. Quem desliga o alto-falante
+    # inteiro tem de dizer isso explicitamente.
+    assert gravado["speech_output_enabled"] is True
     arranque = conversa.normalizar_arranque(SEM_SAUDACAO)
     assert conversa.normalizar_arranque(arranque) == arranque
 
@@ -315,9 +319,12 @@ def test_desligar_tudo_numa_escrita_so(api):
         "revision": 0, "updated_by": "garra-dashboard"})
     assert r.status_code == 200, r.text
     d = r.json()
-    for chave in conversa.BOOLEANOS:
+    for chave in set(TUDO_DESLIGADO) & set(conversa.BOOLEANOS):
         assert d["conversation"][chave] is False, chave
     assert d["startup"]["spoken_greeting_enabled"] is False
+    # Uma escrita que não menciona o mestre da saída não o toca — é o que
+    # impede um robô de emudecer porque alguém desligou os avisos.
+    assert d["conversation"]["speech_output_enabled"] is True
     # `effective` é o que o robô vai obedecer, não o que foi pedido.
     assert d["effective"]["fala_automatica"] is False
     assert d["effective"]["saudacao_habilitada"] is False

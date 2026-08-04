@@ -182,22 +182,35 @@
   <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
   <section class="card glass-panel" id="conversa-bloco">
     <h2><span data-i18n="conversa.titulo"></span> <span class="conta" id="conversa-info"></span></h2>
-    <!-- Controle mestre, antes do modo: o modo decide QUANDO uma fala
-         automática pode sair, este decide SE ela existe. -->
-    <label class="caixa" id="linha-conversa-mestre">
+    <!-- Dois mestres, e a ordem na tela é a ordem da autoridade. O de cima
+         decide se o alto-falante toca; o de baixo, se o robô fala sem ser
+         perguntado. Desligar o de baixo NÃO cala a resposta final — foi o
+         que sempre valeu, e mudar isso emudeceria robôs no upgrade. -->
+    <label class="caixa" id="linha-conversa-saida">
+      <input type="checkbox" id="conversa-saida">
+      <span data-i18n="conversa.saida"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.saida_dica"></div>
+    <label class="caixa" id="linha-conversa-mestre" data-conversa-saida-sub="1">
       <input type="checkbox" id="conversa-mestre">
       <span data-i18n="conversa.mestre"></span>
     </label>
     <div class="dica" data-i18n="conversa.mestre_dica"></div>
-    <label class="caixa" data-conversa-sub="1">
+    <label class="caixa" data-conversa-sub="1" data-conversa-saida-sub="1">
       <input type="checkbox" id="conversa-ack-on">
       <span data-i18n="conversa.ack_on"></span>
     </label>
-    <label class="caixa" data-conversa-sub="1">
+    <!-- Escondido de propósito: nenhum caminho de código anuncia ferramenta
+         hoje, então este interruptor não mudava comportamento nenhum. A chave
+         `announce_tool_usage` continua existindo e desligada, pronta para
+         quando o preâmbulo existir; um controle visível que não liga em nada é
+         pior que um controle ausente. -->
+    <label class="caixa" data-conversa-sub="1" data-conversa-saida-sub="1"
+           id="linha-conversa-tool" hidden>
       <input type="checkbox" id="conversa-tool-on">
       <span data-i18n="conversa.tool_on"></span>
     </label>
-    <label class="caixa" data-conversa-sub="1">
+    <label class="caixa" data-conversa-sub="1" data-conversa-saida-sub="1">
       <input type="checkbox" id="conversa-saudacao">
       <span data-i18n="conversa.saudacao"></span>
     </label>
@@ -224,7 +237,31 @@
       </label>
     </div>
     <div class="linha" style="margin-top:10px">
-      <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
+    <!-- Frase de ativação. Fora dos dois mestres de propósito: ela governa o
+         que o robô ESCUTA, e continua valendo com o alto-falante desligado. -->
+    <hr class="divisor">
+    <label class="caixa" id="linha-conversa-wake">
+      <input type="checkbox" id="conversa-wake">
+      <span data-i18n="conversa.wake"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.wake_dica"></div>
+    <div class="linha" data-conversa-wake-sub="1">
+      <label for="conversa-wake-texto"><span data-i18n="conversa.wake_texto"></span></label>
+      <input type="text" id="conversa-wake-texto" maxlength="64"
+             autocomplete="off" spellcheck="false">
+    </div>
+    <div class="linha" data-conversa-wake-sub="1">
+      <label for="conversa-wake-janela"><span data-i18n="conversa.wake_janela"></span>
+        <b id="v-conversa-wake-janela">—</b></label>
+      <input type="range" id="conversa-wake-janela" min="3" max="120" step="1">
+    </div>
+    <div class="linha" data-conversa-wake-sub="1">
+      <label for="conversa-wake-teto"><span data-i18n="conversa.wake_teto"></span>
+        <b id="v-conversa-wake-teto">—</b></label>
+      <input type="range" id="conversa-wake-teto" min="15" max="600" step="5">
+    </div>
+    <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
+
       <span class="pill" id="p-conversa">—</span>
     </div>
     <div class="status-lista" id="conversa-metricas" style="margin-top:12px"></div>

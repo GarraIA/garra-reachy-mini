@@ -45,6 +45,15 @@ CAPACIDADES: dict[str, bool] = {
     # neste build, não que o gateway do outro lado a suporta (isso o painel
     # descobre pela resposta, que diferencia unsupported de unreachable).
     "agent_registry_read_only": True,
+    # Mestre da SAÍDA de voz (`speech_output_enabled`). Chave própria, e não
+    # dobrada em `automatic_speech_toggles`: um painel que fale com um app
+    # anterior precisa saber que aquele build **não** tem como calar o
+    # alto-falante, em vez de desenhar um interruptor que não liga em nada.
+    "speech_output_control": True,
+    # Frase de ativação (`wake_phrase_*`). Governa o que o robô ESCUTA, e por
+    # isso é independente do mestre da saída: "escute e obedeça, mas responda
+    # só no chat" é combinação legítima.
+    "wake_phrase": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre
