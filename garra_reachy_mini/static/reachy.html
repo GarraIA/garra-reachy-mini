@@ -182,22 +182,35 @@
   <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
   <section class="card glass-panel" id="conversa-bloco">
     <h2><span data-i18n="conversa.titulo"></span> <span class="conta" id="conversa-info"></span></h2>
-    <!-- Controle mestre, antes do modo: o modo decide QUANDO uma fala
-         automática pode sair, este decide SE ela existe. -->
-    <label class="caixa" id="linha-conversa-mestre">
+    <!-- Dois mestres, e a ordem na tela é a ordem da autoridade. O de cima
+         decide se o alto-falante toca; o de baixo, se o robô fala sem ser
+         perguntado. Desligar o de baixo NÃO cala a resposta final — foi o
+         que sempre valeu, e mudar isso emudeceria robôs no upgrade. -->
+    <label class="caixa" id="linha-conversa-saida">
+      <input type="checkbox" id="conversa-saida">
+      <span data-i18n="conversa.saida"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.saida_dica"></div>
+    <label class="caixa" id="linha-conversa-mestre" data-conversa-saida-sub="1">
       <input type="checkbox" id="conversa-mestre">
       <span data-i18n="conversa.mestre"></span>
     </label>
     <div class="dica" data-i18n="conversa.mestre_dica"></div>
-    <label class="caixa" data-conversa-sub="1">
+    <label class="caixa" data-conversa-sub="1" data-conversa-saida-sub="1">
       <input type="checkbox" id="conversa-ack-on">
       <span data-i18n="conversa.ack_on"></span>
     </label>
-    <label class="caixa" data-conversa-sub="1">
+    <!-- Escondido de propósito: nenhum caminho de código anuncia ferramenta
+         hoje, então este interruptor não mudava comportamento nenhum. A chave
+         `announce_tool_usage` continua existindo e desligada, pronta para
+         quando o preâmbulo existir; um controle visível que não liga em nada é
+         pior que um controle ausente. -->
+    <label class="caixa" data-conversa-sub="1" data-conversa-saida-sub="1"
+           id="linha-conversa-tool" hidden>
       <input type="checkbox" id="conversa-tool-on">
       <span data-i18n="conversa.tool_on"></span>
     </label>
-    <label class="caixa" data-conversa-sub="1">
+    <label class="caixa" data-conversa-sub="1" data-conversa-saida-sub="1">
       <input type="checkbox" id="conversa-saudacao">
       <span data-i18n="conversa.saudacao"></span>
     </label>

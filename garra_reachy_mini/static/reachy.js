@@ -532,13 +532,18 @@ function pintarConversa(d) {
   $('conversa-progresso-ms').value = prog;
   $('v-conversa-progresso-ms').textContent = `${(prog / 1000).toFixed(0)} s`;
   $('conversa-progresso').checked = c.spoken_progress_updates !== false;
+  // `!== false` de propósito nos dois: config antiga sem a chave cai no
+  // default do servidor, e para a SAÍDA esse default é ligado.
+  $('conversa-saida').checked = c.speech_output_enabled !== false;
   $('conversa-mestre').checked = c.automatic_speech_enabled !== false;
   $('conversa-ack-on').checked = c.spoken_acknowledgements_enabled !== false;
   $('conversa-tool-on').checked = c.announce_tool_usage === true;
   $('conversa-saudacao').checked = (d.startup || {}).spoken_greeting_enabled !== false;
-  $('conversa-info').textContent = c.automatic_speech_enabled === false
-    ? t('conversa.mudo_curto')
-    : t(`conversa.${c.mode || 'fast'}_curto`);
+  $('conversa-info').textContent = c.speech_output_enabled === false
+    ? t('conversa.sem_voz_curto')
+    : (c.automatic_speech_enabled === false
+       ? t('conversa.mudo_curto')
+       : t(`conversa.${c.mode || 'fast'}_curto`));
   $('conversa-progresso-ms').disabled = c.spoken_progress_updates === false;
   sincronizarMestre();
 }
@@ -547,7 +552,15 @@ function pintarConversa(d) {
 // devolve o ajuste de cada um em vez de zerar tudo. Aqui é só aparência — quem
 // cala o robô é a política do lado dele.
 function sincronizarMestre() {
-  const ligado = $('conversa-mestre').checked;
+  // Dois mestres, e a saída manda no de baixo. Desligar a saída inativa tudo,
+  // inclusive o mestre da fala automática — com o alto-falante calado, "falar
+  // avisos" não decide mais nada.
+  const saida = $('conversa-saida').checked;
+  for (const linha of document.querySelectorAll('[data-conversa-saida-sub]')) {
+    linha.style.opacity = saida ? '' : '0.55';
+    for (const el of linha.querySelectorAll('input')) el.disabled = !saida;
+  }
+  const ligado = saida && $('conversa-mestre').checked;
   for (const linha of document.querySelectorAll('[data-conversa-sub]')) {
     linha.style.opacity = ligado ? '' : '0.55';
     for (const el of linha.querySelectorAll('input')) el.disabled = !ligado;
@@ -746,6 +759,7 @@ function ligar() {
     // `disabled` do navegador é aparência, e apagá-los aqui perderia o ajuste
     // do usuário assim que ele desligasse o mestre.
     spoken_progress_updates: $('conversa-progresso').checked,
+    speech_output_enabled: $('conversa-saida').checked,
     automatic_speech_enabled: $('conversa-mestre').checked,
     spoken_acknowledgements_enabled: $('conversa-ack-on').checked,
     announce_tool_usage: $('conversa-tool-on').checked,
@@ -755,6 +769,7 @@ function ligar() {
     $('conversa-progresso-ms').disabled = !e.target.checked);
   // Reflete na hora; grava só no botão, numa escrita e numa revisão só.
   $('conversa-mestre').addEventListener('change', sincronizarMestre);
+  $('conversa-saida').addEventListener('change', sincronizarMestre);
 
   $('btn-identidade-salvar').addEventListener('click', () =>
     salvarIdentidade('/api/robot/agent-identity', {
