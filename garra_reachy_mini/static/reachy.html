@@ -172,6 +172,17 @@
     <div id="agentes-cards"></div>
     <div class="dica" id="agentes-indisponivel" data-testid="reachy-agents-unavailable"
          data-i18n="agentes.indisponivel" hidden></div>
+    <!-- Esta tela é somente leitura, e o link diz onde a escrita mora. Sem ele,
+         quem quisesse mudar algo procuraria um botão que este painel nunca vai
+         ter — e o robô não pode virar um segundo dono da configuração.
+         O gateway é loopback, então o link só abre no computador que o
+         hospeda; o texto diz isso em vez de deixar a pessoa descobrir com um
+         erro de conexão. -->
+    <div class="dica" data-testid="reachy-agents-admin-hint">
+      <span data-i18n="agentes.administrar_em"></span>
+      <a href="http://127.0.0.1:3888/#/agentes" target="_blank" rel="noopener"
+         data-testid="reachy-agents-admin-link">127.0.0.1:3888</a>
+    </div>
     <div class="linha">
       <button id="btn-agentes-atualizar" data-i18n="agentes.atualizar"></button>
       <span class="pill" id="p-agentes">—</span>

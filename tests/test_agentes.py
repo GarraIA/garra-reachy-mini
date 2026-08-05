@@ -347,6 +347,58 @@ def test_js_renderiza_da_api_e_sem_storage():
     assert "innerHTML = ''" in bloco
 
 
+def test_o_portao_le_a_capability_do_status_e_nao_do_catalogo_de_acoes():
+    """A causa raiz de "os agentes não aparecem", travada.
+
+    São duas coisas com o mesmo nome: `/api/robot/capabilities` é o catálogo de
+    AÇÕES do robô e é o que `estado.capacidades` guarda; as flags do build vêm
+    no bloco `capabilities` do `/api/robot/status`, em `estado.status`.
+
+    O portão perguntava ao objeto errado, a condição era verdadeira sempre, e a
+    seção se escondia sem nunca chamar `/api/robot/agents` — rota no ar, dado
+    disponível, tela vazia e nenhum erro para explicar.
+    """
+    import pathlib
+
+    raiz = pathlib.Path(__file__).resolve().parents[1] / "garra_reachy_mini"
+    js = (raiz / "static" / "reachy.js").read_text(encoding="utf-8")
+    bloco = js.split("function temRegistroDeAgentes")[1].split("function carregarAgentes")[0]
+
+    assert "estado.status" in bloco, "a capability de build vem do status"
+    assert "estado.capacidades" not in bloco, (
+        "estado.capacidades é o catálogo de ações; não carrega flags de build"
+    )
+    # Não sei ainda ≠ não tem. Esconder no primeiro caso e nunca voltar é a
+    # forma do defeito anterior.
+    assert "return null" in bloco
+
+
+def test_carregando_e_um_estado_visivel():
+    import pathlib
+
+    raiz = pathlib.Path(__file__).resolve().parents[1] / "garra_reachy_mini"
+    js = (raiz / "static" / "reachy.js").read_text(encoding="utf-8")
+    assert "function agentesCarregando" in js
+    assert "agentes.carregando" in js
+    # A falha precisa dizer o que houve, e não só apagar a tela.
+    indisp = js.split("function agentesIndisponiveis")[1].split("\n}")[0]
+    assert "textContent = mensagem" in indisp
+
+
+def test_html_aponta_onde_administrar_sem_virar_dono():
+    import pathlib
+
+    raiz = pathlib.Path(__file__).resolve().parents[1] / "garra_reachy_mini"
+    html = (raiz / "static" / "reachy.html").read_text(encoding="utf-8")
+    secao = html.split('data-testid="reachy-agents-section"')[1].split("</section>")[0]
+    assert 'data-testid="reachy-agents-admin-link"' in secao
+    assert "3888" in secao, "o link leva ao painel do gateway"
+    assert "agentes.administrar_em" in secao
+    # Continua somente leitura: o link é uma indicação, não um controle.
+    assert "<form" not in secao.lower()
+    assert "<input" not in secao.lower()
+
+
 def test_i18n_tem_as_chaves_nos_dois_idiomas():
     import pathlib
     import re
