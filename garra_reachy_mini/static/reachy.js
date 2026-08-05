@@ -486,14 +486,52 @@ function agentesIndisponiveis(mensagem) {
   $('agentes-cards').innerHTML = '';
   $('agentes-info').textContent = '';
   $('agentes-indisponivel').hidden = false;
+  $('agentes-indisponivel').textContent = mensagem;
   pill($('p-agentes'), false, mensagem);
 }
 
+// Carregando é um terceiro estado, e precisa aparecer como tal. Sem ele, o
+// intervalo entre abrir a tela e o dado chegar é indistinguível de "não há
+// agentes" — e foi exatamente essa confusão que escondeu o defeito do portão.
+function agentesCarregando() {
+  $('agentes-cards').innerHTML = '';
+  $('agentes-info').textContent = '';
+  $('agentes-indisponivel').hidden = true;
+  pill($('p-agentes'), null, t('agentes.carregando'));
+}
+
+// A capability de BUILD vive em `/api/robot/status`, não em
+// `/api/robot/capabilities`.
+//
+// São duas coisas diferentes com o mesmo nome: `/api/robot/capabilities`
+// devolve o catálogo de AÇÕES do robô (`actions`, `dances`, `expressions`,
+// `limits`), e é ele que `estado.capacidades` guarda. As flags do build — entre
+// elas `agent_registry_read_only` — vêm no bloco `capabilities` do
+// `/api/robot/status`, já carregado em `estado.status`.
+//
+// O portão perguntava ao objeto errado. Como o catálogo de ações nunca tem essa
+// chave, a condição era verdadeira SEMPRE: a seção se escondia e
+// `/api/robot/agents` nunca chegava a ser chamado — a rota funcionava, o dado
+// existia, e a tela ficava vazia sem erro nenhum para explicar por quê.
+function temRegistroDeAgentes() {
+  const caps = estado.status?.capabilities;
+  // Status ainda não carregou: não é "não tem", é "não sei ainda". Esconder
+  // agora e não voltar mais é como o defeito anterior se parecia.
+  if (caps == null) return null;
+  return caps.agent_registry_read_only === true;
+}
+
 async function carregarAgentes() {
-  if (!estado.capacidades?.agent_registry_read_only
-      && !(estado.capacidades == null)) {
+  const suportado = temRegistroDeAgentes();
+  if (suportado === false) {
     // Build sem a rota: seção fica oculta, nenhum botão inventado.
     $('agentes-bloco').hidden = true;
+    return;
+  }
+  if (suportado === null) {
+    // Sem status ainda: mostra o bloco em carregamento em vez de sumir com ele.
+    $('agentes-bloco').hidden = false;
+    agentesCarregando();
     return;
   }
   $('agentes-bloco').hidden = false;
