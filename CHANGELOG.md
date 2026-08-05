@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.3.1 — 2026-08-04
+
+Correção de um defeito silencioso: a seção de agentes existia e nunca aparecia.
+
+### Fixed
+
+- **A seção de agentes ficava escondida por uma colisão de nome.** Medido no
+  robô, com o DOM aberto: `agentes-bloco` estava `hidden`, com zero cards e sem
+  nenhuma mensagem de erro, e a lista de Network mostrava que
+  `/api/robot/agents` nunca era chamado — enquanto a rota, pedida à mão,
+  respondia 200 com `reachy_voice`, `forja` e `hera`.
+
+  `estado.capacidades` guarda `GET /api/robot/capabilities`, que é o catálogo de
+  **ações** do robô (`actions`, `dances`, `expressions`, `limits`). As flags de
+  **build** — entre elas `agent_registry_read_only` — vêm no bloco
+  `capabilities` do `GET /api/robot/status`. O portão perguntava a flag de build
+  ao catálogo de ações; como essa chave nunca existe ali, a condição era
+  verdadeira sempre e a função voltava antes do fetch.
+
+- **"Não sei ainda" deixou de ser tratado como "não tem".** Enquanto o status
+  não chega, a seção mostra *carregando* em vez de sumir — esconder no primeiro
+  caso e nunca voltar é a forma exata do defeito anterior. E a falha agora
+  escreve o motivo na tela, em vez de apenas limpá-la.
+
+### Added
+
+- **Link para onde se administra.** A seção continua somente leitura — o robô
+  não pode virar um segundo dono da configuração —, e agora diz onde a escrita
+  mora. O gateway é loopback, então o texto avisa que o link abre no computador
+  que o hospeda.
+
 ## 1.3.0 — 2026-08-04
 
 Validada em hardware: cinco ciclos start/stop esperando estado, e 30 minutos de
