@@ -7,6 +7,14 @@ Endpoints:
     POST /transcrever?sr=16000      -> corpo: float32 mono cru; retorna {"texto": ...}
     POST /falar                     -> json {"texto": ..., "sr": 16000}; retorna float32 mono cru
 
+Para o gateway do Garra, que só sabe pedir voz no dialeto da OpenAI:
+    GET  /                          -> 200; é o que a sonda de saúde dele chama
+    POST /v1/audio/speech           -> json {"input": ..., "response_format": "wav"}; retorna WAV
+
+No `config.yml` do gateway: `voice.tts_provider: lmstudio` e
+`voice.tts_endpoint: http://127.0.0.1:8123`. Um Chatterbox só, para o robô e
+para o console.
+
 Uso:
     voz_env/bin/python servidor_voz.py
 """
@@ -17,6 +25,7 @@ import ipaddress
 import logging
 import os
 import time
+import wave
 
 import numpy as np
 import torch
@@ -35,6 +44,10 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # máquina alcança a GPU de qualquer jeito. Sem isto, escutar em 0.0.0.0 entrega
 # transcrição e síntese — e ~7 GB de VRAM — a qualquer aparelho da LAN.
 TOKEN = (os.environ.get("GARRA_VOZ_TOKEN") or "").strip()
+
+# A taxa em que o Chatterbox gera. A rota da OpenAI entrega nela, sem
+# reamostrar: quem toca é um navegador, não o alto-falante do robô.
+SR_FALA = 24000
 
 stt = None
 tts = None
@@ -147,17 +160,8 @@ async def transcrever(request: Request, sr: int = Query(default=16000)):
     return JSONResponse({"texto": texto})
 
 
-@app.post("/falar")
-async def falar(request: Request):
-    if not autorizado(request):
-        return NEGADO
-    dados = await request.json()
-    texto = (dados.get("texto") or "").strip()
-    sr_destino = int(dados.get("sr") or 16000)
-    if not texto:
-        return Response(content=b"", media_type="application/octet-stream")
-
-    t0 = time.time()
+def sintetizar(texto: str, sr_destino: int) -> np.ndarray:
+    """Texto para float32 mono em `sr_destino`, com pico no máximo 1.0."""
     if tts_multilingue:
         onda = tts.generate(texto, language_id="pt")
     else:
@@ -177,6 +181,37 @@ async def falar(request: Request):
     pico = float(np.max(np.abs(onda_np)) or 1.0)
     if pico > 1.0:
         onda_np = onda_np / pico
+    return onda_np
+
+
+def wav_pcm16(onda: np.ndarray, sr: int) -> bytes:
+    """float32 mono para um arquivo WAV de 16 bits.
+
+    O corte em ±1.0 vem ANTES da conversão: 1.2 multiplicado por 32767 não cabe
+    em int16 e dá a volta para negativo, que no alto-falante é um estalo.
+    """
+    pcm = (np.clip(onda, -1.0, 1.0) * 32767.0).astype("<i2")
+    saida = io.BytesIO()
+    with wave.open(saida, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+    return saida.getvalue()
+
+
+@app.post("/falar")
+async def falar(request: Request):
+    if not autorizado(request):
+        return NEGADO
+    dados = await request.json()
+    texto = (dados.get("texto") or "").strip()
+    sr_destino = int(dados.get("sr") or 16000)
+    if not texto:
+        return Response(content=b"", media_type="application/octet-stream")
+
+    t0 = time.time()
+    onda_np = sintetizar(texto, sr_destino)
     log.info("TTS %.2fs para %d amostras (%d caracteres)",
              time.time() - t0, onda_np.size, len(texto))
     log.debug("TTS texto: %r", texto)
@@ -185,6 +220,50 @@ async def falar(request: Request):
         media_type="application/octet-stream",
         headers={"X-Sample-Rate": str(sr_destino)},
     )
+
+
+# ─── dialeto da OpenAI, para o gateway do Garra ──────────────────────────────
+def _recusa(mensagem: str) -> JSONResponse:
+    return JSONResponse(
+        {"error": {"message": mensagem, "type": "invalid_request_error"}},
+        status_code=400)
+
+
+@app.get("/")
+def raiz():
+    # Sem token, como `/saude`: a sonda do gateway não manda credencial e só
+    # olha o status. Um 404 aqui é o que aparecia no console como "quebrado".
+    return {"service": "garra-voz", "stt": stt is not None, "tts": tts is not None}
+
+
+@app.get("/v1/models")
+def modelos():
+    # Com `tts_provider: lmstudio` é ESTA a sonda de saúde do gateway, não a
+    # raiz. Sem token, pelo mesmo motivo de `/saude`.
+    return {"object": "list",
+            "data": [{"id": "chatterbox-pt", "object": "model", "owned_by": "garra-voz"}]}
+
+
+@app.post("/v1/audio/speech")
+async def speech(request: Request):
+    if not autorizado(request):
+        return NEGADO
+    dados = await request.json()
+    texto = str(dados.get("input") or "").strip()
+    formato = str(dados.get("response_format") or "wav").lower()
+    # Recusar, e não devolver um WAV vazio com 200: o console tocaria silêncio
+    # e chamaria de sucesso.
+    if not texto:
+        return _recusa("input is required")
+    if formato != "wav":
+        return _recusa("only response_format=wav is supported")
+
+    t0 = time.time()
+    onda = sintetizar(texto, SR_FALA)
+    log.info("TTS (openai) %.2fs para %d amostras (%d caracteres)",
+             time.time() - t0, onda.size, len(texto))
+    log.debug("TTS texto: %r", texto)
+    return Response(content=wav_pcm16(onda, SR_FALA), media_type="audio/wav")
 
 
 if __name__ == "__main__":
