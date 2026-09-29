@@ -96,7 +96,8 @@ def test_o_erro_de_borda_do_stt_ainda_ativa(ouvido, resto) -> None:
     "Falta garra nesse time.",
     "Fala barra de ferro",
     "Fala garras afiadas",
-    "Fala gara",
+    # "Fala gara" saiu desta lista em 29/09/2026: foi o que o Whisper escreveu
+    # quando o Michel disse a frase. Ver a seção da letra dobrada, mais abaixo.
     "Paula Garra, tudo bem com você?",
     "Fala, guerra, que horas são?",
     "Vou agarrar aqui",
@@ -516,6 +517,8 @@ def test_toda_chave_do_padrao_sobrevive_a_escrita_pelo_painel() -> None:
         "wake_phrase_text": "Ei Robô",
         "wake_phrase_window_s": 42,
         "wake_phrase_session_max_s": 300,
+        "wake_second_listen_enabled": False,
+        "wake_diagnostics_enabled": True,
         "ambient_context_enabled": True,
         "ambient_context_window_s": 90,
         "notebook_enabled": True,
@@ -555,3 +558,170 @@ def test_escrita_parcial_preserva_as_demais_chaves() -> None:
     assert depois["wake_phrase_enabled"] is True
     assert depois["wake_phrase_text"] == "Ei Robô"
     assert depois["speech_output_enabled"] is False
+
+
+# ─── diagnóstico: o que o robô ouviu NO LUGAR da frase ───────────────────────
+# Medido em 29/09/2026 com som de verdade (caixas de som → microfone do robô):
+# "Fala Garra, que horas são?" chegou com dois caracteres a mais e foi recusada.
+# O evento de rejeição não diz o que foi ouvido, de propósito — e por isso não
+# havia como saber por quê. `quase` devolve só o trecho que se parece com a
+# frase, nunca o resto do enunciado.
+def quase(texto: str, frase=("fala", "garra")):
+    return ativacao.quase(ativacao.tokens(texto), frase)
+
+
+@pytest.mark.parametrize("ouvido,posicao,distancia,trecho", [
+    ("E fala Garra, que horas são?", 1, 0, "fala garra"),
+    ("Ah, é... fala Garra, tudo bem?", 2, 0, "fala garra"),
+    ("Paula Garra, tudo bem com você?", 0, 2, "paula garra"),
+    ("Fala, guerra, que horas são?", 0, 2, "fala guerra"),
+    ("Fala Gara, tudo bem?", 0, 1, "fala gara"),
+    ("Obrigado. Falangarra, que horas são?", 1, 1, "falangarra"),
+])
+def test_quase_acha_o_trecho_parecido_e_onde_ele_estava(ouvido, posicao, distancia,
+                                                         trecho) -> None:
+    q = quase(ouvido)
+    assert q == {"position": posicao, "distance": distancia, "heard": trecho}
+
+
+@pytest.mark.parametrize("ouvido", [
+    "Que horas são agora?",
+    "Acabou a manteiga, tem que comprar mais.",
+    "Vamos almoçar daqui a pouco",
+    "",
+])
+def test_conversa_que_nao_lembra_a_frase_nao_deixa_rastro(ouvido) -> None:
+    assert quase(ouvido) is None
+
+
+def test_quase_so_olha_o_comeco_do_enunciado() -> None:
+    """Depois de meia dúzia de palavras já não é tentativa de chamar o robô."""
+    assert quase("eu estava dizendo para ela ontem que fala garra é o nome") is None
+
+
+def test_quase_nunca_devolve_o_resto_do_enunciado() -> None:
+    q = quase("E fala Garra, o número do cartão é 4111 e a senha é segredo")
+    assert q["heard"] == "fala garra"
+    for palavra in ("cartao", "4111", "senha", "segredo", "numero"):
+        assert palavra not in repr(q)
+
+
+@pytest.mark.parametrize("ouvido", [
+    "fala a garra que horas sao",
+    # Em quatro pedaços a frase fecha certinho — e ainda assim não se guarda
+    # quatro palavras: o limite é o que impede o trecho de virar o enunciado.
+    "fa la ga rra que horas sao",
+])
+def test_quase_devolve_no_maximo_uma_palavra_a_mais_que_a_frase(ouvido) -> None:
+    q = quase(ouvido)
+    assert q is not None and len(q["heard"].split()) <= 3
+
+
+def test_frase_curta_nao_tem_quase() -> None:
+    """A três letras de "garra" está metade do dicionário."""
+    assert ativacao.quase(ativacao.tokens("Barra de ferro"), ("garra",)) is None
+
+
+# ─── letra dobrada: o mesmo som, escrito de outro jeito ──────────────────────
+# Medido em 29/09/2026 com a voz do Michel, pelo microfone do robô: "Fala Garra"
+# chegou do Whisper como "Fala Gara". Não é outra palavra, é a mesma com um `r`.
+@pytest.mark.parametrize("ouvido,pedido", [
+    ("Fala Gara, que horas são?", "que horas são?"),
+    ("Falla Garra, que horas são?", "que horas são?"),
+    ("Fala Garrra, liga a luz", "liga a luz"),
+    ("fala gara", ""),
+])
+def test_letra_dobrada_a_mais_ou_a_menos_e_a_mesma_frase(ouvido, pedido) -> None:
+    d = avaliar(ouvido, nova(), 100.0)
+    assert d.aceito is True
+    assert d.texto == pedido
+    assert d.extras == {"wake_match": "approximate"}
+
+
+@pytest.mark.parametrize("ouvido", [
+    "Fala cara, tudo bem?",          # outra consoante
+    "Fala gera, que horas são?",     # outra vogal
+    "Fala para ela que eu já vou",
+    "Fala agora o que você quer",
+    "Fala galera, beleza?",
+    "Falta garra nesse time",
+    "Fala garrafa agora",
+    "Fala gar, que horas são",       # sobrou meia palavra
+])
+def test_dobrar_letra_nao_abre_para_outras_palavras(ouvido) -> None:
+    assert avaliar(ouvido, nova(), 100.0).aceito is False
+
+
+def test_frase_curta_continua_exata_mesmo_com_letra_dobrada() -> None:
+    curta = ativacao.Ativacao(habilitada=True, frase=("garra",))
+    assert avaliar("Gara, que horas são?", nova(), 100.0, ativ=curta).aceito is False
+    assert avaliar("Garra, que horas são?", nova(), 100.0, ativ=curta).aceito is True
+
+
+# ─── segunda escuta: quando vale perguntar de novo ao STT ────────────────────
+# Pela bancada (caixas de som → microfone do robô), 30 vezes "Fala Garra, …":
+# o Whisper acertou a frase em 6. Nas outras saiu "fala gabi", "fala garne",
+# "fala gab", "fala dara"… Dando a frase como dica ele acertou as 30 — mas dica
+# em TUDO faz ruído virar "Fala Garra" (medido antes, e descartado). O meio
+# termo: só se pergunta de novo quando o COMEÇO do enunciado já lembra a frase.
+def merece(texto: str, frase=("fala", "garra")):
+    return ativacao.merece_segunda_escuta(ativacao.tokens(texto), frase)
+
+
+@pytest.mark.parametrize("ouvido", [
+    "Fala Gabi, que horas são?",
+    "Fala garne, que horas são?",
+    "Fala gab o que tem na lista de compras",
+    "Fala dara, quanto é sete vezes oito?",
+    "Pau a garra",
+])
+def test_comeco_parecido_com_a_frase_merece_segunda_escuta(ouvido) -> None:
+    assert merece(ouvido) is not None
+
+
+@pytest.mark.parametrize("ouvido", [
+    "Acabou a manteiga, hein. Tem que comprar mais.",
+    "Que horas são agora?",
+    "A barra de ferro caiu no chão",
+    "Obrigado.",
+    "",
+    # parecido, mas não no começo: o robô não é chamado no meio da frase
+    "E aí, fala gabi, que horas são?",
+    "Eu disse fala garne para ele",
+])
+def test_conversa_comum_nao_e_ouvida_duas_vezes(ouvido) -> None:
+    assert merece(ouvido) is None
+
+
+def test_quem_ja_casou_nao_precisa_de_segunda_escuta() -> None:
+    assert merece("Fala Garra, que horas são?") is None
+    assert merece("Falagarra que horas são") is None
+
+
+def test_frase_curta_nao_tem_segunda_escuta() -> None:
+    assert ativacao.merece_segunda_escuta(ativacao.tokens("Barra de ferro"), ("garra",)) is None
+
+
+# ─── a dica da segunda escuta ────────────────────────────────────────────────
+@pytest.mark.parametrize("configurada,dica", [
+    ("Fala Garra", "Fala Garra"),
+    ("  Fala,   Garra! ", "Fala Garra"),
+    ("Ei Robô", "Ei Robô"),              # com o acento: é o que o Whisper escreveria
+    ("R2 D2", "R2 D2"),
+])
+def test_a_dica_e_a_frase_configurada_so_com_as_palavras(configurada, dica) -> None:
+    ativ = ativacao.Ativacao.de({"wake_phrase_enabled": True, "wake_phrase_text": configurada})
+    assert ativ.dica == dica
+
+
+@pytest.mark.parametrize("texto,confirma", [
+    ("Fala Garra, que horas são?", True),
+    ("fala garra", True),
+    ("Fala agarra, que horas são?", False),     # aproximado não confirma
+    ("Falagarra que horas são", False),
+    ("Fala Gara, que horas são?", False),
+    ("Que horas são, fala Garra?", False),
+    ("", False),
+])
+def test_confirmar_pede_a_frase_exata_no_comeco(texto, confirma) -> None:
+    assert ativacao.confirma(texto, ("fala", "garra")) is confirma

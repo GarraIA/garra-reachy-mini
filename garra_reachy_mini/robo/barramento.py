@@ -19,7 +19,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterator
+from typing import Any
 
 # Eventos que nunca podem ser descartados por fila cheia: se o assinante perder
 # um destes, ele passa a mostrar um robô parado que na verdade está em falha.
@@ -34,6 +34,14 @@ CRITICOS = frozenset(
 
 TAMANHO_FILA_ASSINANTE = 100
 TAMANHO_HISTORICO = 400
+
+# Rotina: o que acontece sozinho, a cada poucos segundos, sem ninguém pedir.
+# Medido no robô em 29/09/2026: de 400 eventos guardados, 358 eram do movimento
+# de ambiente e 40 eram o estado da voz mudando — e a conversa, que é o que se
+# procura depois, saía do histórico em sete minutos. A rotina tem o histórico
+# dela, e só disputa espaço com ela mesma.
+ESTADOS_DE_ROTINA = frozenset({"voice.state", "robot.status", "robot.services"})
+FONTE_DE_ROTINA = "ambiente"
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,15 @@ class Evento:
     action_id: str | None = None
     source: str | None = None
     correlation_id: str | None = None
+    # A ordem em que aconteceu. Não vai para o JSON: o `event_id` já a carrega.
+    seq: int = 0
+
+    @property
+    def rotina(self) -> bool:
+        """Enfeite ou estado que muda sozinho. Falha nunca é rotina."""
+        if self.type in CRITICOS:
+            return False
+        return self.source == FONTE_DE_ROTINA or self.type in ESTADOS_DE_ROTINA
 
     def json(self) -> dict[str, Any]:
         base: dict[str, Any] = {
@@ -124,6 +141,7 @@ class Barramento:
         self._lock = threading.Lock()
         self._assinantes: list[Assinatura] = []
         self._historico: deque[Evento] = deque(maxlen=tamanho_historico)
+        self._rotina: deque[Evento] = deque(maxlen=tamanho_historico)
         self._contador = itertools.count(1)
 
     # ── publicação ──────────────────────────────────────────────────────────
@@ -136,8 +154,10 @@ class Barramento:
         correlation_id: str | None = None,
         **dados: Any,
     ) -> Evento:
+        seq = next(self._contador)
         evento = Evento(
-            event_id=f"evt_{next(self._contador)}_{uuid.uuid4().hex[:8]}",
+            event_id=f"evt_{seq}_{uuid.uuid4().hex[:8]}",
+            seq=seq,
             type=tipo,
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             dados=dados,
@@ -146,7 +166,7 @@ class Barramento:
             correlation_id=correlation_id,
         )
         with self._lock:
-            self._historico.append(evento)
+            (self._rotina if evento.rotina else self._historico).append(evento)
             alvos = list(self._assinantes)
         # Entrega fora do lock: `_entregar` não bloqueia, mas manter o lock curto
         # evita que N assinantes serializem o publicador.
@@ -173,14 +193,21 @@ class Barramento:
 
     # ── histórico ───────────────────────────────────────────────────────────
     def historico(self, n: int = 100, tipos: frozenset[str] | None = None) -> list[dict[str, Any]]:
-        with self._lock:
-            itens: Iterator[Evento] = reversed(self._historico)
-            saida = []
-            for e in itens:
-                if tipos is not None and e.type not in tipos:
-                    continue
-                saida.append(e.json())
-                if len(saida) >= n:
+        """Os `n` eventos mais recentes, na ordem em que aconteceram.
+
+        O que alguém pediu ou disse entra primeiro; a rotina preenche o que
+        sobrar do limite, da mais recente para trás.
+        """
+        def recentes(fonte: deque[Evento], quantos: int) -> list[Evento]:
+            saida: list[Evento] = []
+            for e in reversed(fonte):
+                if len(saida) >= quantos:
                     break
-        saida.reverse()
-        return saida
+                if tipos is None or e.type in tipos:
+                    saida.append(e)
+            return saida
+
+        with self._lock:
+            escolhidos = recentes(self._historico, n)
+            escolhidos += recentes(self._rotina, n - len(escolhidos))
+        return [e.json() for e in sorted(escolhidos, key=lambda e: e.seq)]

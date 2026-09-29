@@ -354,6 +354,13 @@ textarea:focus, input:focus { outline: none; border-color: var(--garra-accent); 
 
 .vazio { color: var(--garra-muted-2); font-size: 0.83rem; padding: 8px 0; }
 
+/* ── o que foi ouvido no lugar da frase ──────────────────────────────────── */
+.perto { margin: 6px 0 10px; font-size: 0.82rem; }
+.perto-titulo { color: var(--garra-muted-2); margin-bottom: 4px; }
+.perto ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.perto .t { color: var(--garra-muted-2); }
+#conversa-mudo-aviso { margin-bottom: 10px; }
+
 /* ── caderno ─────────────────────────────────────────────────────────────── */
 #caderno-listas { display: grid; gap: 8px; }
 .caderno-lista {

@@ -80,6 +80,9 @@ class ContextoWeb:
     # Abre uma sessão limpa no gateway. Registrado pelo loop de voz, porque é
     # ele que tem o cérebro; sem isto, a retomada de sessão não tem escape.
     nova_sessao: Callable[[], Awaitable[str | None]] | None = None
+    # O que o detector de fala está medindo: piso de ruído, limiares e
+    # contagens. Só números. `None` quando não há laço de voz de pé.
+    detector: Callable[[], dict[str, Any] | None] | None = None
     dir_estatico: Path | None = None
     iniciado_em: float = field(default_factory=time.monotonic)
 
@@ -198,6 +201,17 @@ def montar(app: FastAPI, ctx: ContextoWeb) -> None:
     _montar_painel(app, ctx)
 
 
+def _medida_do_detector(ctx: ContextoWeb) -> dict[str, Any] | None:
+    """A medida do detector, ou `None`. O laço de voz sobe e desce sozinho;
+    pegá-lo no meio de uma troca não pode custar o status inteiro."""
+    if ctx.detector is None:
+        return None
+    try:
+        return ctx.detector()
+    except Exception:       # noqa: BLE001
+        return None
+
+
 # ─── rotas do robô ───────────────────────────────────────────────────────────
 def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
     r = APIRouter(prefix="/api/robot", tags=["robot"])
@@ -209,7 +223,8 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         dados["camera"] = ctx.hub.status()
         dados["uptime_s"] = round(time.monotonic() - ctx.iniciado_em, 1)
         dados.update(ctx.servicos.json())
-        dados["voice"] = {"tts_disponivel": ctx.falar is not None}
+        dados["voice"] = {"tts_disponivel": ctx.falar is not None,
+                          "detector": _medida_do_detector(ctx)}
         # Descritores abertos AGORA. O monitor de fora consulta esta rota a
         # cada poucos segundos, então a série fica gravada junto com cada
         # captura de falha — o que faltou quando o app morreu com -5 e só
@@ -450,7 +465,7 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         return {"enabled": bool(conf["ambient_context_enabled"]
                                 and conf["wake_phrase_enabled"]),
                 "window_s": conf["ambient_context_window_s"],
-                **ac.memoria.medida()}
+                **ac.memoria.medida(agora=time.monotonic())}
 
     @r.delete("/ambient-context")
     async def ambiente_esquecer() -> dict[str, Any]:

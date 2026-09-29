@@ -102,6 +102,17 @@ function pintarServicos(dados) {
   }).join('');
 }
 
+// O que o detector de fala está medindo. Ruído alto com limiar que o
+// acompanha é normal; o que se quer ver aqui é o detector parado (sem laço de
+// voz) ou um limiar fixo, que não acompanha nada.
+function microfone(d) {
+  if (!d) return [t('lista.microfone'), t('lista.microfone_parado'), false];
+  const n = (v) => Number(v).toFixed(3).replace('.', ',');
+  const texto = t(d.fixed_threshold ? 'lista.microfone_fixo' : 'lista.microfone_val',
+                  { piso: n(d.floor), abre: n(d.open_threshold) });
+  return [t('lista.microfone'), texto, !d.fixed_threshold];
+}
+
 function pintarStatus(s) {
   estado.status = s;
   pintarServicos(s);
@@ -141,6 +152,7 @@ function pintarStatus(s) {
     [t('lista.movimento'), s.current_action ? s.current_action.action : t('lista.nenhum'), !!s.current_action],
     [t('lista.fila'), t('lista.fila_val', { n: s.queued }), s.queued === 0],
     [t('lista.voz'), s.voice?.tts_disponivel ? t('status.disponivel') : t('status.indisponivel'), s.voice?.tts_disponivel],
+    microfone(s.voice?.detector),
     [t('lista.chat'), s.chat?.agent_id || '—', !!s.chat?.session_id],
     [t('lista.latencia'), `${s.latency_ms} ms`, s.latency_ms < 300],
     [t('lista.erros'), String((s.recent_errors || []).length), (s.recent_errors || []).length === 0],
@@ -224,6 +236,9 @@ function tratarEvento(e) {
     case 'voice.context.attached':
     case 'voice.wake.rejected':
       carregarContexto();
+      break;
+    case 'voice.wake.near_miss':
+      anotarPerto(e);
       break;
     case 'voice.state':
       $('p-chat').textContent = { listening: 'ouvindo', thinking: 'pensando', speaking: 'falando', idle: '—' }[e.state] || e.state;
@@ -652,7 +667,12 @@ function pintarConversa(d) {
        : t(`conversa.${c.mode || 'fast'}_curto`));
   $('conversa-progresso-ms').disabled = c.spoken_progress_updates === false;
   // Ativação: independente dos dois mestres acima.
+  $('conversa-mudo-aviso').hidden = c.speech_output_enabled !== false;
   $('conversa-wake').checked = c.wake_phrase_enabled === true;
+  // A segunda escuta nasce ligada; o diagnóstico, desligado.
+  $('conversa-wake-conferir').checked = c.wake_second_listen_enabled !== false;
+  $('conversa-wake-diagnostico').checked = c.wake_diagnostics_enabled === true;
+  pintarPerto();
   $('conversa-wake-texto').value = c.wake_phrase_text ?? 'Fala Garra';
   const jan = c.wake_phrase_window_s ?? 15;
   const teto = c.wake_phrase_session_max_s ?? 90;
@@ -670,6 +690,36 @@ function pintarConversa(d) {
   sincronizarMestre();
   sincronizarWake();
   sincronizarContexto();
+}
+
+// O que o robô ouviu no lugar da frase — só o trecho parecido, que é tudo o
+// que o evento traz. Fica na página e some ao recarregar: não é histórico.
+const PERTO_MAX = 5;
+const perto = [];
+
+function anotarPerto(e) {
+  perto.unshift({ heard: String(e.heard || ''), second_listen: String(e.second_listen || 'not_tried'),
+                  quando: new Date() });
+  perto.length = Math.min(perto.length, PERTO_MAX);
+  pintarPerto();
+}
+
+function pintarPerto() {
+  const caixa = $('conversa-wake-perto');
+  const ligado = $('conversa-wake-diagnostico').checked;
+  caixa.hidden = !ligado;
+  if (!ligado) return;
+  const linhas = perto.map((p) => {
+    const hora = p.quando.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // Só os quatro resultados que o robô sabe dar: o valor veio de um evento.
+    const qual = ['confirmed', 'rejected', 'failed'].includes(p.second_listen)
+      ? p.second_listen : 'not_tried';
+    const resultado = t(`conversa.perto_${qual}`);
+    return `<li><span class="t">${esc(hora)}</span> <b>“${esc(p.heard)}”</b> — ${esc(resultado)}</li>`;
+  });
+  caixa.innerHTML = `<div class="perto-titulo">${esc(t('conversa.perto_titulo'))}</div>`
+    + (linhas.length ? '<ul>' + linhas.join('') + '</ul>'
+       : `<div class="vazio">${esc(t('conversa.perto_vazio'))}</div>`);
 }
 
 // Escuta desligada (ou frase de ativação desligada): a janela e o botão de
@@ -924,6 +974,8 @@ function ligar() {
     wake_phrase_text: $('conversa-wake-texto').value.trim() || undefined,
     wake_phrase_window_s: Number($('conversa-wake-janela').value),
     wake_phrase_session_max_s: Number($('conversa-wake-teto').value),
+    wake_second_listen_enabled: $('conversa-wake-conferir').checked,
+    wake_diagnostics_enabled: $('conversa-wake-diagnostico').checked,
     ambient_context_enabled: $('conversa-contexto').checked,
     ambient_context_window_s: Number($('conversa-contexto-janela').value),
     notebook_enabled: $('conversa-caderno').checked,
@@ -942,6 +994,9 @@ function ligar() {
     sincronizarContexto();
   });
   $('conversa-contexto').addEventListener('change', sincronizarContexto);
+  $('conversa-wake-diagnostico').addEventListener('change', pintarPerto);
+  $('conversa-saida').addEventListener('change', (e) =>
+    $('conversa-mudo-aviso').hidden = e.target.checked);
   $('conversa-contexto-janela').addEventListener('input', (e) =>
     $('v-conversa-contexto-janela').textContent = `${e.target.value} s`);
   $('btn-contexto-esquecer').addEventListener('click', async () => {

@@ -197,6 +197,10 @@
          decide se o alto-falante toca; o de baixo, se o robô fala sem ser
          perguntado. Desligar o de baixo NÃO cala a resposta final — foi o
          que sempre valeu, e mudar isso emudeceria robôs no upgrade. -->
+    <!-- O robô mudo tem de gritar. Em 29/09/2026 ele passou a tarde sem
+         responder por causa de UMA caixa desmarcada entre quinze. -->
+    <div class="aviso-caixa" id="conversa-mudo-aviso" hidden
+         data-i18n="conversa.mudo_aviso"></div>
     <label class="caixa" id="linha-conversa-saida">
       <input type="checkbox" id="conversa-saida">
       <span data-i18n="conversa.saida"></span>
@@ -247,7 +251,6 @@
         <span data-i18n="conversa.progresso"></span>
       </label>
     </div>
-    <div class="linha" style="margin-top:10px">
     <!-- Frase de ativação. Fora dos dois mestres de propósito: ela governa o
          que o robô ESCUTA, e continua valendo com o alto-falante desligado. -->
     <hr class="divisor">
@@ -271,6 +274,19 @@
         <b id="v-conversa-wake-teto">—</b></label>
       <input type="range" id="conversa-wake-teto" min="15" max="600" step="5">
     </div>
+    <!-- Segunda escuta e diagnóstico. Pelo microfone do robô o STT erra a
+         frase mais do que acerta; a primeira conserta, o segundo mostra. -->
+    <label class="caixa" id="linha-conversa-wake-conferir" data-conversa-wake-sub="1">
+      <input type="checkbox" id="conversa-wake-conferir">
+      <span data-i18n="conversa.wake_conferir"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.wake_conferir_dica"></div>
+    <label class="caixa" id="linha-conversa-wake-diagnostico" data-conversa-wake-sub="1">
+      <input type="checkbox" id="conversa-wake-diagnostico">
+      <span data-i18n="conversa.wake_diagnostico"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.wake_diagnostico_dica"></div>
+    <div class="perto" id="conversa-wake-perto" hidden></div>
     <!-- Escuta de contexto. Subordinada à frase de ativação: sem a frase toda
          fala já é um turno, e não existe "o que se falava antes". A dica diz
          para onde a conversa vai — este interruptor é o que a tira de casa. -->
@@ -295,6 +311,10 @@
       <span data-i18n="conversa.caderno"></span>
     </label>
     <div class="dica" data-i18n="conversa.caderno_dica"></div>
+    <!-- A linha do botão abre AQUI. Ela abria antes da frase de ativação e
+         engolia tudo até o fim: o divisor e a caixa do caderno saíam na mesma
+         linha do botão de esquecer. -->
+    <div class="linha" style="margin-top:10px">
     <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
 
       <span class="pill" id="p-conversa">—</span>

@@ -65,11 +65,28 @@ class MemoriaAmbiente:
             return (f"MemoriaAmbiente({len(self._falas)} falas, {total} caracteres, "
                     f"janela {self.janela_s:.0f} s)")
 
-    def medida(self) -> dict[str, int]:
-        """Quanto há guardado — para o painel, que não pode ver o quê."""
+    def medida(self, agora: float | None = None) -> dict[str, int]:
+        """Quanto há guardado — para o painel, que não pode ver o quê.
+
+        Com `agora`, o que já saiu da janela é esquecido antes de contar.
+        """
         with self._trava:
+            if agora is not None:
+                self._podar(float(agora))
             return {"utterances": len(self._falas),
                     "chars": sum(len(f.texto) for f in self._falas)}
+
+    def podar(self, agora: float) -> int:
+        """Esquece o que saiu da janela e diz quantas falas foram.
+
+        A janela é uma promessa sobre o que fica em memória, não só sobre o que
+        é enviado. Sem isto, com a sala quieta o que foi ouvido ficava guardado
+        até a próxima fala — que podia levar horas.
+        """
+        with self._trava:
+            antes = len(self._falas)
+            self._podar(float(agora))
+            return antes - len(self._falas)
 
     def anotar(self, texto: str, quando: float) -> None:
         limpo = re.sub(r"\s+", " ", texto or "").strip()

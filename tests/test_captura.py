@@ -16,6 +16,7 @@ import pathlib
 import numpy as np
 
 from garra_reachy_mini.config import FIM_DE_FALA_S, PRE_ROLL_S
+from garra_reachy_mini.segmentador import Segmentador
 from garra_reachy_mini.voz import PreRoll
 
 SR = 16000
@@ -77,7 +78,7 @@ def _fala_com_ataque_suave() -> np.ndarray:
 
 
 def _capturar(sinal: np.ndarray, limiar: float, anel: PreRoll | None) -> np.ndarray:
-    """Reproduz a regra do `_laco_voz`: RMS por bloco decide abrir e fechar."""
+    """A regra que o `_laco_voz` tinha: RMS por bloco decide abrir e fechar."""
     buffer: list[np.ndarray] = []
     em_fala = False
     silencio = 0.0
@@ -130,13 +131,30 @@ def test_o_pre_roll_nao_arrasta_a_frase_anterior():
 LACO = pathlib.Path(__file__).resolve().parents[1] / "garra_reachy_mini" / "main.py"
 
 
-def test_o_laco_de_voz_semeia_o_buffer_com_o_pre_roll():
-    """Um teste de unidade do anel não prova que o laço o usa. Este prova."""
+def _pelo_detector(sinal: np.ndarray, limiar: float) -> np.ndarray:
+    """O mesmo sinal, agora por quem o laço usa de verdade."""
+    seg = Segmentador(SR, limiar_fixo=limiar)
+    for i, bloco in enumerate(_blocos(sinal)):
+        trecho = seg.bloco(bloco, (i + 1) * BLOCO / SR)
+        if trecho is not None:
+            return trecho.audio
+    return np.empty(0, np.float32)
+
+
+def test_o_detector_do_laco_entrega_o_ataque_inteiro():
+    """A regra saiu de `_laco_voz` para `segmentador.py`. O que ela garantia
+    tem de ter ido junto."""
+    calado = np.full(int(1.2 * SR), 0.001, np.float32)
+    capturado = _pelo_detector(np.concatenate([_fala_com_ataque_suave(), calado]), 0.10)
+    assert capturado.size > int(0.62 * SR)
+    assert float(np.sqrt(np.mean(capturado[:BLOCO] ** 2))) < 0.10
+
+
+def test_o_laco_de_voz_entrega_o_microfone_ao_detector():
+    """Um teste de unidade do detector não prova que o laço o usa. Este prova."""
     fonte = LACO.read_text(encoding="utf-8")
-    assert "pre_roll = PreRoll(" in fonte
-    # A semeadura tem de vir logo depois do `buffer.clear()` da transição.
-    corte = fonte[fonte.index("if rms >= limiar:"):]
-    corte = corte[:corte.index("elif em_fala:")]
-    assert corte.index("buffer.clear()") < corte.index("pre_roll.drenar()")
-    # E o silêncio precisa alimentar o anel, senão ele nunca tem o que entregar.
-    assert "pre_roll.guardar(mono)" in fonte
+    assert "detector = Segmentador(" in fonte
+    assert "detector.bloco(mono, agora)" in fonte
+    assert "detector.sem_audio(agora)" in fonte
+    # E nenhum limiar próprio no laço: duas regras divergiriam com o tempo.
+    assert "rms >= limiar" not in fonte

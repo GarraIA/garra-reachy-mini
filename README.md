@@ -175,6 +175,32 @@ in `caderno.json` next to the app's settings, show up in the panel's Notebook
 card, and can be deleted there item by item. The panel is where you check what
 was actually written down.
 
+### When the robot does not hear its name (1.4.1)
+
+Speech recognition through the robot's microphone gets the activation phrase
+wrong more often than it gets it right — "Fala Garra" comes back as "fala
+gabi", "fala garne", "fala gara". Measured with phrases played through a PC's
+speakers into the robot: 6 right out of 30. Three things deal with it:
+
+- **Doubled letters are the same word.** "Gara" and "Garra" both activate;
+  "fala cara" and "falta garra" still do not.
+- **Double-check** (on by default). When what was heard *begins* with something
+  within three letters of the phrase, the robot sends the same audio to the
+  voice server once more, telling it which phrase to expect, and answers only
+  if the phrase then comes out exact. Same 30 phrases: 30 right. The phrase is
+  never given as a hint to *every* transcription — that makes noise turn into
+  a call.
+- **Show what was heard instead of the phrase** (off by default). The panel
+  lists the snippet that resembled the phrase — two or three words, never the
+  rest of what was said — and what the double-check made of it. It is there to
+  answer "why didn't it answer me?".
+
+The speech detector also follows the room now. It used to take one noise
+measurement at start-up and keep it; the audio board has automatic gain, so the
+noise floor moves by itself, and a floor above that fixed threshold left the
+robot listening to three minutes of nothing as if it were one sentence. The
+status list in the panel shows what the microphone is measuring.
+
 ### Assistant identity (requires a Garra gateway)
 
 The assistant's display name and personality live in the **gateway's**
@@ -284,6 +310,13 @@ advice applies to the robot as a whole, not just to this app.
   keeps it in the session history, and to the model behind it. On the robot
   that text exists only in memory. With the switch off, which is the default,
   nothing said without the activation phrase leaves the robot.
+- **With "Show what was heard instead of the phrase" on, a snippet of what was
+  said appears in the panel.** Only the two or three words that resembled the
+  activation phrase, only in events on your local network, never on disk. It is
+  the one place where something said *without* the phrase is shown. Off by
+  default.
+- **The double-check sends the same audio twice** to the speech server you run.
+  Nothing new leaves the house.
 - **With "Notebook" on, what you ask the robot to write down is stored** in
   `~/.config/garra_reachy_mini/caderno.json` until you delete it, and is sent
   to the model with every request so it can answer questions about it.
@@ -346,6 +379,9 @@ so nothing can quietly pretend a movement happened.
 | App does not stop | It gets `SIGINT` and 20 seconds before `SIGKILL`. If it is stuck, the daemon kills the process tree. |
 | Robot no longer says "let me think" | That is the 1.1.0 default: silent while processing. Re-enable the phrases in the panel's conversation card. |
 | Identity card says it needs Garra | Assistant name and personality live in the gateway's config; without a reachable gateway they cannot be read or written — nothing is cached or queued. |
+| Robot hears but never answers aloud | "Speak responses" is unticked in the Conversation card — since 1.4.1 the card opens with a warning when it is. |
+| Robot ignores the activation phrase | Turn on "Show what was heard instead of the phrase" and say it again: the panel shows what the transcription made of it. Keep "Double-check" on. If it is heard as something else entirely, pick a phrase made of common words. |
+| Robot deaf for minutes at a time | Fixed in 1.4.1: the speech detector used a noise threshold measured once at start-up. The status list now shows the noise floor it is following. |
 | Beginning of sentences was cut | Fixed in 1.1.0 with an audio pre-roll. If it still happens, check microphone levels — a very high noise floor shrinks what the pre-roll can recover. |
 
 **Upgrading from 1.0.x:** your stored settings are preserved. The holding

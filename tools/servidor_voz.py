@@ -5,6 +5,7 @@ Roda na RTX 4090 e atende a ponte do robô em http://127.0.0.1:8123.
 Endpoints:
     GET  /saude                     -> estado dos modelos
     POST /transcrever?sr=16000      -> corpo: float32 mono cru; retorna {"texto": ...}
+         &dica=fala%20garra         -> opcional: a frase de ativação, para a segunda escuta
     POST /falar                     -> json {"texto": ..., "sr": 16000}; retorna float32 mono cru
 
 Para o gateway do Garra, que só sabe pedir voz no dialeto da OpenAI:
@@ -24,6 +25,7 @@ import io
 import ipaddress
 import logging
 import os
+import re
 import time
 import wave
 
@@ -136,10 +138,20 @@ def saude():
     }
 
 
+# A dica é a frase de chamar o robô: poucas palavras, letras e números. Vai para
+# dentro do decodificador, então o que não tem cara de frase é recusado — não
+# limpo. Quem limpa entrada acaba decidindo o que ela queria dizer.
+DICA_MAX = 60
+_DICA = re.compile(r"[^\W_]+(?: [^\W_]+)*")
+
+
 @app.post("/transcrever")
-async def transcrever(request: Request, sr: int = Query(default=16000)):
+async def transcrever(request: Request, sr: int = Query(default=16000),
+                      dica: str = Query(default="")):
     if not autorizado(request):
         return NEGADO
+    if dica and (len(dica) > DICA_MAX or not _DICA.fullmatch(dica)):
+        return JSONResponse({"erro": "dica inválida"}, status_code=400)
     corpo = await request.body()
     audio = np.frombuffer(corpo, dtype=np.float32)
     if audio.size < sr // 10:
@@ -150,12 +162,19 @@ async def transcrever(request: Request, sr: int = Query(default=16000)):
 
     global ultima_transcricao_em, ultima_transcricao_tam
     t0 = time.time()
-    segmentos, _ = stt.transcribe(audio, language="pt", vad_filter=True, beam_size=2)
+    # Com a dica, o Whisper ouve sabendo qual é a frase de chamar o robô. Só
+    # quem chama decide quando isso vale: em tudo, a dica faz silêncio e ruído
+    # virarem a frase (medido em 29/09/2026). O robô só a manda quando o começo
+    # do que ouviu já lembrava a frase.
+    extra = {"hotwords": dica} if dica else {}
+    segmentos, _ = stt.transcribe(audio, language="pt", vad_filter=True, beam_size=2,
+                                  **extra)
     texto = " ".join(s.text for s in segmentos).strip()
     ultima_transcricao_em, ultima_transcricao_tam = time.time(), len(texto)
     # O texto vai só para DEBUG. Em INFO este log já acumulou conversa de casa,
     # inclusive de crianças, num arquivo que ninguém lembrava que existia.
-    log.info("STT %.2fs (%d caracteres)", time.time() - t0, len(texto))
+    log.info("STT %.2fs (%d caracteres%s)", time.time() - t0, len(texto),
+             ", com dica" if dica else "")
     log.debug("STT texto: %r", texto)
     return JSONResponse({"texto": texto})
 

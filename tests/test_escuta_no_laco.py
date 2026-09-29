@@ -115,9 +115,10 @@ class Cena:
     """O app montado à mão, com o laço de voz rodando numa thread."""
 
     def __init__(self, backend, pasta, conversa: dict, roteiro: list[str],
-                 respostas: list[str]) -> None:
+                 respostas: list[str], mic=None, voz=None) -> None:
         armazenamento.salvar_config({"conversation": conversa})
-        self.mic, self.voz, self.cerebro = Microfone(), Voz(roteiro), Cerebro(respostas)
+        self.mic, self.voz = mic or Microfone(), voz or Voz(roteiro)
+        self.cerebro = Cerebro(respostas)
         self.ctrl = ControladorRobo(backend, semente=1, dir_capturas=pasta)
         self.ctrl.iniciar()
         app = GarraReachyMini.__new__(GarraReachyMini)

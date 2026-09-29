@@ -56,6 +56,11 @@ class Acompanhamento:
         self.memoria.anotar(texto, capturado_em)
         return len(self.memoria) > antes
 
+    def podar(self, agora: float) -> int:
+        """Esquece o que já saiu da janela. Para o laço chamar enquanto a sala
+        está quieta; o relógio é o mesmo de `ouviu` e `montar`."""
+        return self.memoria.podar(agora)
+
     def esquecer(self) -> int:
         """Esquece agora o que foi ouvido. Devolve quantas falas havia."""
         quantas = len(self.memoria)

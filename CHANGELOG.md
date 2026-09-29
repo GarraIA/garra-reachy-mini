@@ -1,5 +1,89 @@
 # Changelog
 
+## 1.4.1 — 2026-09-29
+
+O robô tinha parado de responder. Eram quatro motivos ao mesmo tempo, e nenhum
+aparecia na tela. Tudo aqui foi medido no robô, com frases tocadas pelas caixas
+de som de um PC e ouvidas pelo microfone dele — o conteúdo do que a sala dizia
+nunca foi olhado, só duração, energia e o trecho parecido com a frase.
+
+### Fixed
+
+- **O detector de fala ficava preso no ruído, e o robô, surdo.** Chegou ao
+  servidor de voz um "trecho de fala" de **182 segundos** sem uma palavra
+  dentro. O limiar era um número só, medido em 1,2 s na partida (0,026), e o
+  ruído de fundo do microfone ia de 0,007 a 0,045 sozinho: a placa de áudio tem
+  ganho automático, e depois de alguém falar baixo ela amplifica tudo. Com ruído
+  acima do limiar o detector abria e não fechava — a duração máxima só era
+  conferida nos blocos *abaixo* do limiar, os que não chegavam.
+
+  O detector saiu de dentro do laço de voz (`segmentador.py`) e agora:
+  acompanha o ruído (vale a razão entre o som e o piso, que o ganho automático
+  não altera); mede o piso pelo décimo percentil dos últimos 3 s, para fala
+  comprida não virar "ruído"; abre com 4× o piso e continua com 2,5×, para não
+  perder o fim da frase dito mais baixo; e a duração máxima vale sempre. Estalo
+  (menos de 60 ms) não abre, e trecho com menos de 0,2 s de som não vai para a
+  transcrição. Com os 182 s medidos, a regra antiga dá um trecho de três
+  minutos; a nova, no máximo um de 3 s.
+
+- **A frase de ativação saía errada da transcrição.** Pelo microfone do robô,
+  de 30 "Fala Garra, …" o Whisper escreveu a frase certa em 6. Nas outras:
+  "fala gabi", "fala garne", "fala gab", "fala dara", "pau a garra". Com a voz
+  do Michel saiu "Fala Gara". Duas mudanças:
+
+  - *Letra dobrada é a mesma palavra.* "Gara" e "Garra" são o mesmo som escrito
+    de dois jeitos. "Fala cara", "fala gera", "falta garra" e "fala garrafa"
+    continuam não ativando.
+  - *Segunda escuta.* Quando o **começo** do que foi ouvido lembra a frase (até
+    três letras de diferença), o robô manda o mesmo áudio ao servidor de voz de
+    novo, dizendo qual é a frase, e só responde se aí ela sair exata. Nas mesmas
+    30 frases, com a dica: 30. Nasce ligada (`wake_second_listen_enabled`) e
+    tem interruptor no painel. O áudio vai para o mesmo servidor de voz, uma
+    segunda vez; nada novo sai de casa.
+
+- **O que foi ouvido ficava em memória além da janela.** A escuta de contexto
+  só esquecia ao anotar uma fala nova ou ao ser colhida. Com a sala quieta, o
+  texto ficava guardado — e contado no painel — por horas. Agora o laço de voz
+  esquece pelo relógio, e o painel conta só o que está dentro da janela.
+
+- **O histórico de eventos era engolido pelo enfeite.** De 400 eventos
+  guardados, 358 eram do movimento de ambiente e 40 do estado da voz; a
+  conversa saía do histórico em sete minutos. A rotina passou a ter um
+  histórico só dela. Falha nunca é rotina.
+
+### Added
+
+- **Aviso de robô sem voz.** Com "Falar respostas" desmarcado, o cartão da
+  conversa abre com um aviso dizendo isso e o que marcar. O robô passou uma
+  tarde mudo por causa de uma caixa entre quinze.
+- **Diagnóstico da frase** (`wake_diagnostics_enabled`, desligado por padrão).
+  Evento `voice.wake.near_miss` com o trecho que pareceu a frase (`heard`), onde
+  ele estava (`position`), a quantas letras da frase (`distance`) e o resultado
+  da segunda escuta (`second_listen`: `confirmed`, `rejected`, `failed`,
+  `not_tried`). Só o trecho — duas ou três palavras —, nunca o resto do
+  enunciado. O painel mostra os cinco últimos, e só na página aberta. É o único
+  lugar em que algo dito sem a frase aparece; `voice.wake.rejected` continua
+  sem conteúdo nenhum.
+- `voice.wake.activated` ganhou `match: "second_listen"`.
+- **O microfone no status.** `GET /api/robot/status` traz `voice.detector`
+  (piso de ruído, limiares, contagens), e o painel mostra "ruído 0,007 · abre
+  em 0,028". Só números.
+- Servidor de voz: `POST /transcrever?dica=Fala%20Garra` repassa a frase ao
+  Whisper como `hotwords`. Dica que não tem cara de frase é recusada (400), não
+  limpa. Sem o parâmetro nada muda; servidor antigo ignora o parâmetro e o app
+  novo segue funcionando, sem a segunda escuta.
+
+### Medido e não adotado
+
+- **Desligar o ganho automático da placa de áudio.** Com ele desligado e ganho
+  fixo, a frase saiu certa em 1 de 12 — não é ele que estraga a transcrição.
+- **A frase como dica em toda transcrição.** Sem o filtro do "começo parecido",
+  `hotwords` transformou "Fala da guerra que passou no jornal" em chamado, e
+  `initial_prompt` fez o mesmo com "Fala, cara, tudo bem com você?" (1 de 16
+  cada). Com o filtro, nas mesmas 16 frases: nenhum.
+- **O gesto das antenas como causa dos trechos vazios.** Doze gestos, um trecho
+  aberto. Não é ele.
+
 ## 1.4.0 — 2026-09-29
 
 O robô passa a poder ouvir a conversa da sala e a guardar o que lhe pedem para

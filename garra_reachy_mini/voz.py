@@ -101,9 +101,15 @@ class VozClient:
             stop_event.wait(2.0)
         return False
 
-    def transcrever(self, audio: np.ndarray, sr: int) -> str:
+    def transcrever(self, audio: np.ndarray, sr: int, dica: str | None = None) -> str:
+        """`dica` é a frase de ativação, para a segunda escuta (ver
+        `ativacao.merece_segunda_escuta`). Um servidor de voz antigo ignora o
+        parâmetro e devolve a mesma transcrição — que é recusada de novo."""
+        params: dict[str, int | str] = {"sr": sr}
+        if dica:
+            params["dica"] = dica
         r = requests.post(
-            f"{self.base}/transcrever", params={"sr": sr},
+            f"{self.base}/transcrever", params=params,
             data=audio.astype(np.float32).tobytes(), timeout=60,
             headers=self._cab,
         )

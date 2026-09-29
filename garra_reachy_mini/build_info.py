@@ -60,6 +60,13 @@ CAPACIDADES: dict[str, bool] = {
     "ambient_context": True,
     # Caderno (`notebook_enabled`, GET/DELETE /api/robot/notebook).
     "notebook": True,
+    # Segunda escuta da frase de ativação (`wake_second_listen_enabled`) e
+    # diagnóstico (`wake_diagnostics_enabled`, evento `voice.wake.near_miss`).
+    "wake_second_listen": True,
+    "wake_diagnostics": True,
+    # `voice.detector` no status: o detector de fala acompanha o ruído e diz o
+    # que está medindo.
+    "voice_detector_status": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

@@ -87,6 +87,16 @@ PADRAO: dict[str, Any] = {
     # janela de inatividade: é o que impede uma sala barulhenta de manter o
     # robô escutando indefinidamente.
     "wake_phrase_session_max_s": 90,
+    # Segunda escuta: quando o começo do enunciado LEMBRA a frase sem ser ela
+    # ("fala gabi"), o robô pede a transcrição de novo dizendo qual é a frase.
+    # Nasce ligada porque não é recurso novo, é o conserto da frase de
+    # ativação: pelo microfone do robô o STT errava a frase na maioria das
+    # vezes. O áudio vai para o mesmo servidor de voz, uma segunda vez.
+    "wake_second_listen_enabled": True,
+    # Diagnóstico: eventos `voice.wake.near_miss` com o trecho que pareceu a
+    # frase ("fala gabi"), e só ele. Nasce desligado — é o único lugar em que
+    # algo dito sem a frase aparece num evento.
+    "wake_diagnostics_enabled": False,
     # ── escuta de contexto ───────────────────────────────────────────────────
     # Com a frase de ativação ligada, o que é dito sem ela é recusado e some.
     # Ligado, isto muda: o TEXTO do que foi ouvido fica em memória pela janela
@@ -119,6 +129,7 @@ PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": False}
 BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
              "spoken_acknowledgements_enabled", "spoken_progress_updates",
              "announce_tool_usage", "wake_phrase_enabled",
+             "wake_second_listen_enabled", "wake_diagnostics_enabled",
              "ambient_context_enabled", "notebook_enabled")
 
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é

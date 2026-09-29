@@ -157,3 +157,60 @@ def test_anotar_e_colher_de_threads_diferentes_nao_perde_nem_duplica() -> None:
     [t.join() for t in ts]
     colhidas.extend(m.colher(101.0))
     assert sorted(f.texto for f in colhidas) == sorted(f"f{i}" for i in range(2000))
+
+
+# ─── a janela vale mesmo quando ninguém fala mais nada ───────────────────────
+# Visto no robô em 29/09/2026: a poda só acontecia ao anotar ou ao colher. Se a
+# sala ficasse quieta, o que foi ouvido continuava em memória — e o painel
+# continuava contando — muito além dos dois minutos prometidos.
+def test_podar_esquece_o_que_saiu_da_janela_sem_fala_nova() -> None:
+    m = nova(janela_s=120.0)
+    m.anotar("Acabou a manteiga.", 0.0)
+    m.anotar("Tem que comprar mais.", 100.0)
+    assert m.podar(121.0) == 1
+    assert len(m) == 1
+    assert m.podar(500.0) == 1
+    assert len(m) == 0
+    assert m.colher(500.0) == []
+
+
+def test_podar_dentro_da_janela_nao_perde_nada() -> None:
+    m = nova(janela_s=120.0)
+    m.anotar("Acabou a manteiga.", 0.0)
+    assert m.podar(119.0) == 0
+    assert [f.texto for f in m.colher(119.5)] == ["Acabou a manteiga."]
+
+
+def test_a_medida_com_relogio_nao_conta_o_que_ja_venceu() -> None:
+    m = nova(janela_s=120.0)
+    m.anotar("Acabou a manteiga.", 0.0)
+    assert m.medida(agora=60.0) == {"utterances": 1, "chars": len("Acabou a manteiga.")}
+    assert m.medida(agora=200.0) == {"utterances": 0, "chars": 0}
+    assert len(m) == 0, "medir com relógio também esquece: o texto vencido sai da memória"
+
+
+def test_o_acompanhamento_poda_pelo_mesmo_relogio_do_laco() -> None:
+    from garra_reachy_mini.acompanhamento import Acompanhamento
+    from garra_reachy_mini.robo.barramento import Barramento
+    ac = Acompanhamento(Barramento())
+    conversa = {"wake_phrase_enabled": True, "ambient_context_enabled": True,
+                "ambient_context_window_s": 60}
+    assert ac.ouviu("Acabou a manteiga.", 10.0, conversa)
+    assert ac.podar(50.0) == 0 and len(ac.memoria) == 1
+    assert ac.podar(80.0) == 1 and len(ac.memoria) == 0
+
+
+def test_o_laco_de_voz_poda_enquanto_a_sala_esta_quieta() -> None:
+    import pathlib
+    fonte = (pathlib.Path(__file__).resolve().parents[1]
+             / "garra_reachy_mini" / "main.py").read_text(encoding="utf-8")
+    laco = fonte[fonte.index("while not stop_event.is_set():\n                mono = ler_mono()"):]
+    assert "self.acompanhamento.podar(time.monotonic())" in laco[:laco.index("finally:")]
+
+
+def test_a_rota_do_painel_mede_com_o_relogio() -> None:
+    import pathlib
+    api = (pathlib.Path(__file__).resolve().parents[1]
+           / "garra_reachy_mini" / "web" / "api.py").read_text(encoding="utf-8")
+    rota = api[api.index('@r.get("/ambient-context")'):api.index('@r.delete("/ambient-context")')]
+    assert "ac.memoria.medida(agora=time.monotonic())" in rota

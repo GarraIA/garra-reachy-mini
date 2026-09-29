@@ -21,6 +21,7 @@ Portas que ele sobe:
 """
 
 import asyncio
+import dataclasses
 import random
 import threading
 import time
@@ -41,8 +42,8 @@ from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
                       RespostaCerebro)
 from .cerebro import sondar as cerebro_sondar
 from . import conversa
-from .config import (FALA_MAXIMA_S, FALA_MINIMA_S, FIM_DE_FALA_S, PRE_ROLL_S,
-                     FRASES_ESPERA, FRASES_PROGRESSO, SAUDACAO, Config)
+from .config import (FALA_MINIMA_S, FRASES_ESPERA, FRASES_PROGRESSO, SAUDACAO,
+                     Config)
 from .eventos import FilaEventos
 from .robo import intencoes
 from .robo.acoes import ControladorRobo
@@ -50,8 +51,9 @@ from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from . import servicos as servicos_mod
+from .segmentador import Segmentador
 from .servicos import Servicos
-from .voz import PreRoll, VozClient, frases, limpar_para_voz
+from .voz import VozClient, frases, limpar_para_voz
 from .web import (ContextoWeb, FrameHub, PonteChat, montar, preparar,
                   resolver_politica)
 
@@ -385,6 +387,7 @@ class GarraReachyMini(ReachyMiniApp):
                 falar=self._falar_async,
                 calar=self._calar_agora,
                 nova_sessao=self._nova_sessao_async,
+                detector=self.medida_do_detector,
                 dir_estatico=Path(__file__).resolve().parent / "static",
             ),
         )
@@ -404,6 +407,12 @@ class GarraReachyMini(ReachyMiniApp):
             raise RuntimeError("a voz ainda não está pronta")
         r = await asyncio.to_thread(self._falar_texto, texto, False)
         return r.value if isinstance(r, ResultadoFala) else ResultadoFala.FALADA.value
+
+    def medida_do_detector(self) -> dict | None:
+        """O que o detector de fala está medindo agora, ou `None` sem laço de
+        voz de pé. Só números: piso de ruído, limiares e contagens."""
+        detector = getattr(self, "_detector", None)
+        return detector.medida() if detector is not None else None
 
     def _calar_agora(self, motivo: str = "painel") -> None:
         """Corta a fala em curso. Chamado pelo botão de parada do painel."""
@@ -757,6 +766,45 @@ class GarraReachyMini(ReachyMiniApp):
                           and intencoes.reconhecer(texto).acao == "stop")
             veredicto = ativacao.avaliar(texto, capturado_em, sessao_ativacao,
                                        ativ, time.monotonic(), e_stop=e_stop)
+            # ── segunda escuta ────────────────────────────────────────────
+            # Pelo microfone do robô o STT erra a frase mais do que acerta:
+            # "fala gabi", "fala garne". Quando o COMEÇO do que ele ouviu lembra
+            # a frase, vale perguntar de novo dizendo qual é. Só nesse caso: a
+            # frase dada como dica em tudo faz ruído virar chamado.
+            perto, conferencia = None, "not_tried"
+            if not veredicto.aceito and veredicto.motivo == "wake_phrase_required":
+                preferencias = conversa.normalizar(conf_wake.conversa)
+                ouvido = ativacao.tokens(texto)
+                if preferencias["wake_diagnostics_enabled"]:
+                    perto = ativacao.quase(ouvido, ativ.frase)
+                if (preferencias["wake_second_listen_enabled"] and ativ.dica
+                        and ativacao.merece_segunda_escuta(ouvido, ativ.frase)):
+                    try:
+                        de_novo = voz.transcrever(audio, sr_in, dica=ativ.dica)
+                    except Exception:
+                        # Não conta em `_falhas_voz`: a primeira escuta deste
+                        # mesmo áudio acabou de dar certo.
+                        conferencia = "failed"
+                        log.warning("A segunda escuta falhou; o enunciado segue recusado.",
+                                    exc_info=True)
+                    else:
+                        conferencia = "rejected"
+                        if ativacao.confirma(de_novo, ativ.frase):
+                            segundo = ativacao.avaliar(
+                                de_novo, capturado_em, sessao_ativacao, ativ,
+                                time.monotonic())
+                            if segundo.aceito:
+                                conferencia = "confirmed"
+                                texto = de_novo
+                                veredicto = dataclasses.replace(
+                                    segundo, extras={"wake_match": "second_listen"})
+                if perto is not None:
+                    # O único evento que carrega algo do que foi dito sem a
+                    # frase — e carrega só o trecho que pareceu a frase.
+                    controlador.eventos.publicar(
+                        "voice.wake.near_miss", heard=perto["heard"],
+                        position=perto["position"], distance=perto["distance"],
+                        second_listen=conferencia)
             if not veredicto.aceito:
                 # Recusada por falta da frase: é conversa da sala. Com a escuta
                 # de contexto ligada ela fica em MEMÓRIA, para acompanhar o
@@ -1030,7 +1078,11 @@ class GarraReachyMini(ReachyMiniApp):
                      "(fala automática %s).", len(esperas), len(progressos),
                      "ligada" if politica_inicial.fala_automatica else "DESLIGADA")
 
-            # Calibra o ruído ambiente por ~1,2s (ou usa limiar fixo)
+            # Calibra o ruído ambiente por ~1,2 s — só como ponto de partida: o
+            # detector segue medindo enquanto escuta. Um número tirado na
+            # partida e nunca mais revisto foi o que deixou o robô surdo (ver
+            # `segmentador.py`).
+            ambiente = None
             if cfg.limiar is None:
                 amostras = []
                 fim = time.time() + 1.2
@@ -1040,10 +1092,11 @@ class GarraReachyMini(ReachyMiniApp):
                         amostras.append(float(np.sqrt(np.mean(m ** 2))))
                     time.sleep(0.03)
                 ambiente = float(np.median(amostras)) if amostras else 0.003
-                limiar = max(0.006, ambiente * 4.0)
-            else:
-                limiar = cfg.limiar
-            log.info("Limiar de voz: %.4f. Pode falar com o robô!", limiar)
+            detector = Segmentador(sr_in, piso_inicial=ambiente, limiar_fixo=cfg.limiar)
+            self._detector = detector
+            log.info("Limiar de voz: %.4f (%s). Pode falar com o robô!",
+                     detector.limiar_abre,
+                     "fixo" if cfg.limiar is not None else "acompanha o ruído")
 
             # A saudação sai sem pergunta nenhuma, uma vez, quando o loop sobe:
             # é fala automática como qualquer outra, e obedece ao mesmo mestre.
@@ -1058,12 +1111,6 @@ class GarraReachyMini(ReachyMiniApp):
                     audio_enqueued=False)
                 log.info("Saudação de arranque desligada; nenhum áudio tocado.")
 
-            buffer: list[np.ndarray] = []
-            # O que veio antes do limiar. Sem ele o começo da primeira palavra
-            # não chega ao STT — ver `voz.PreRoll`.
-            pre_roll = PreRoll(int(PRE_ROLL_S * sr_in))
-            em_fala = False
-            ultimo_som = 0.0
             ultima_conferida = time.time()
 
             while not stop_event.is_set():
@@ -1071,13 +1118,13 @@ class GarraReachyMini(ReachyMiniApp):
                 agora = time.time()
 
                 if mono.size == 0:
-                    if em_fala and (agora - ultimo_som) > FIM_DE_FALA_S:
-                        em_fala = False
-                        audio = np.concatenate(buffer) if buffer else np.empty(0, np.float32)
-                        buffer.clear()
-                        pre_roll.limpar()
-                        processar(audio, esperas)
-                    elif not em_fala:
+                    trecho = detector.sem_audio(agora)
+                    if trecho is not None:
+                        processar(trecho.audio, esperas)
+                    elif not detector.em_fala:
+                        # O que foi ouvido há mais tempo que a janela sai da
+                        # memória agora, e não na próxima fala.
+                        self.acompanhamento.podar(time.monotonic())
                         # Silêncio de verdade: hora de falar notificações pendentes
                         evento = fila.proximo()
                         if evento is not None:
@@ -1091,27 +1138,12 @@ class GarraReachyMini(ReachyMiniApp):
                     stop_event.wait(0.015)
                     continue
 
-                rms = float(np.sqrt(np.mean(mono ** 2)))
-                if rms >= limiar:
-                    if not em_fala:
-                        em_fala = True
-                        buffer.clear()
-                        # O ataque da palavra está aqui, não no bloco que
-                        # acabou de passar do limiar.
-                        buffer.extend(pre_roll.drenar())
-                    ultimo_som = agora
-                    buffer.append(mono)
-                elif em_fala:
-                    buffer.append(mono)
-                    dur = sum(len(b) for b in buffer) / sr_in
-                    if (agora - ultimo_som) > FIM_DE_FALA_S or dur > FALA_MAXIMA_S:
-                        em_fala = False
-                        audio = np.concatenate(buffer)
-                        buffer.clear()
-                        pre_roll.limpar()
-                        processar(audio, esperas)
-                else:
-                    pre_roll.guardar(mono)
+                # Onde a fala começa e termina é com o detector: ele guarda o
+                # ataque da palavra, acompanha o ruído e nunca passa da duração
+                # máxima.
+                trecho = detector.bloco(mono, agora)
+                if trecho is not None:
+                    processar(trecho.audio, esperas)
 
                 if self._acordar.is_set():
                     # Configuração nova. Voltar ao supervisor é o caminho mais
@@ -1125,7 +1157,7 @@ class GarraReachyMini(ReachyMiniApp):
                     self._acordar.clear()
                     log.info("Configuração mudou; reavaliando os serviços.")
                     return
-                if time.time() - ultima_conferida > RECONFERIR_CEREBRO_S and not em_fala:
+                if time.time() - ultima_conferida > RECONFERIR_CEREBRO_S and not detector.em_fala:
                     ultima_conferida = time.time()
                     # A câmera junto: o status dela mentia depois de perder a
                     # corrida do arranque, e mentira de status é o defeito que
@@ -1160,6 +1192,7 @@ class GarraReachyMini(ReachyMiniApp):
             fim_do_ciclo.set()
             poll.join(timeout=2.0)
             cerebro.fechar()
+            self._detector = None
             self._falar_texto = None
             self._calar = None
             self._trocar_sessao = None

@@ -103,7 +103,7 @@ FONTE = (pathlib.Path(__file__).resolve().parents[1]
 
 def test_o_laco_periodico_remarca_a_camera():
     """Um teste de unidade não prova que alguém chama. Este prova."""
-    trecho = FONTE[FONTE.index("RECONFERIR_CEREBRO_S and not em_fala"):]
+    trecho = FONTE[FONTE.index("RECONFERIR_CEREBRO_S and not detector.em_fala"):]
     trecho = trecho[:trecho.index("if not voz.pronto(")]
     assert "marcar_camera(self.servicos, self.hub)" in trecho
 

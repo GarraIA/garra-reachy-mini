@@ -9,6 +9,7 @@ alto-falante.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -263,10 +264,21 @@ def test_o_painel_manda_esquecer_o_que_foi_ouvido(painel) -> None:
 def test_o_estado_da_escuta_diz_quanto_e_nao_o_que(painel) -> None:
     ligar(painel, wake_phrase_enabled=True, ambient_context_enabled=True)
     conf = painel.get("/api/robot/conversation").json()["conversation"]
-    painel.ac.ouviu("segredo de família", 100.0, conf)
+    # O relógio é o do laço de voz (`time.monotonic()`): a rota conta só o que
+    # ainda está dentro da janela.
+    painel.ac.ouviu("segredo de família", time.monotonic(), conf)
     d = painel.get("/api/robot/ambient-context").json()
     assert d == {"enabled": True, "window_s": 120, "utterances": 1,
                  "chars": len("segredo de família")}
+
+
+def test_o_estado_da_escuta_nao_conta_o_que_ja_venceu(painel) -> None:
+    ligar(painel, wake_phrase_enabled=True, ambient_context_enabled=True)
+    conf = painel.get("/api/robot/conversation").json()["conversation"]
+    painel.ac.ouviu("segredo de família", time.monotonic() - 121.0, conf)
+    d = painel.get("/api/robot/ambient-context").json()
+    assert (d["utterances"], d["chars"]) == (0, 0)
+    assert len(painel.ac.memoria) == 0
 
 
 # ─── o que este build anuncia ────────────────────────────────────────────────

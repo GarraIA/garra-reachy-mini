@@ -25,6 +25,7 @@ Nada neste módulo faz I/O, e por isso ele é inteiramente testável sem robô.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -74,6 +75,10 @@ class Ativacao:
     frase: tuple[str, ...] = ()
     janela_s: float = 15.0
     sessao_max_s: float = 90.0
+    # A frase como foi escrita na configuração, só com as palavras. É o que a
+    # segunda escuta entrega ao STT — com caixa e acento, porque é assim que
+    # ele a escreveria. Não entra em `assinatura`: `frase` já entra.
+    dica: str = ""
 
     @classmethod
     def de(cls, conf: dict[str, Any]) -> "Ativacao":
@@ -84,6 +89,7 @@ class Ativacao:
             frase=tuple(tokens(c["wake_phrase_text"])),
             janela_s=float(c["wake_phrase_window_s"]),
             sessao_max_s=float(c["wake_phrase_session_max_s"]),
+            dica=" ".join(re.findall(r"[^\W_]+", str(c["wake_phrase_text"]))),
         )
 
     @property
@@ -202,6 +208,22 @@ def _erro_de_borda(colado: str, alvo: str, emendas: tuple[int, ...]) -> bool:
     return False
 
 
+def _sem_dobras(palavra: str) -> str:
+    """`"garra"` e `"gara"` são a mesma palavra para quem só ouviu.
+
+    Medido em 29/09/2026 com a voz do Michel pelo microfone do robô: "Fala
+    Garra" voltou do Whisper como "Fala Gara". Letra dobrada é grafia, não som
+    — e, ao contrário de "uma letra qualquer", não transforma a frase em outra
+    frase de verdade: "falta garra", "fala cara" e "fala garrafa" continuam
+    sendo o que são.
+    """
+    saida: list[str] = []
+    for letra in palavra:
+        if not saida or saida[-1] != letra:
+            saida.append(letra)
+    return "".join(saida)
+
+
 def _casar(ouvido: list[str], frase: tuple[str, ...]) -> tuple[int, str]:
     """Quantos tokens iniciais de `ouvido` são a frase, e como casaram.
 
@@ -219,6 +241,9 @@ def _casar(ouvido: list[str], frase: tuple[str, ...]) -> tuple[int, str]:
     alvo = "".join(frase)
     if len(alvo) < TOLERANCIA_MIN_LETRAS:
         return 0, ""
+    if (tuple(_sem_dobras(p) for p in ouvido[:n])
+            == tuple(_sem_dobras(p) for p in frase)):
+        return n, "approximate"
     emendas, corrido = [], 0
     for palavra in frase[:-1]:
         corrido += len(palavra)
@@ -231,6 +256,94 @@ def _casar(ouvido: list[str], frase: tuple[str, ...]) -> tuple[int, str]:
         if _erro_de_borda(colado, alvo, tuple(emendas)):
             return k, "approximate"
     return 0, ""
+
+
+# ─── diagnóstico ─────────────────────────────────────────────────────────────
+# Até quantas palavras antes da frase ainda contam como "começo do enunciado".
+# Mais que isso já não é alguém tentando chamar o robô.
+QUASE_MAX_INICIO = 4
+QUASE_MAX_DISTANCIA = 3
+
+
+def _distancia(a: str, b: str, teto: int) -> int:
+    """Distância de edição, ou `teto + 1` quando já passou do teto."""
+    if abs(len(a) - len(b)) > teto:
+        return teto + 1
+    anterior = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        atual = [i]
+        for j, cb in enumerate(b, start=1):
+            atual.append(min(anterior[j] + 1, atual[j - 1] + 1,
+                             anterior[j - 1] + (ca != cb)))
+        if min(atual) > teto:
+            return teto + 1
+        anterior = atual
+    return min(anterior[-1], teto + 1)
+
+
+def quase(ouvido: list[str], frase: tuple[str, ...]) -> dict[str, Any] | None:
+    """O trecho do começo do enunciado que mais se parece com a frase.
+
+    Serve a um enunciado RECUSADO, para responder "o que o robô ouviu no lugar
+    da frase?" — a pergunta que o evento de rejeição, sem texto de propósito,
+    não deixava responder. Medido com som de verdade em 29/09/2026: a frase
+    chegava com uma palavra a mais na frente, e não havia como ver isso.
+
+    Devolve SÓ o trecho parecido (as palavras da frase, no máximo uma a mais),
+    a posição dele e a distância. O resto do enunciado não entra: quem fala
+    perto do robô não estava ditando para um registro.
+    """
+    n = len(frase)
+    alvo = "".join(frase)
+    if not n or len(alvo) < TOLERANCIA_MIN_LETRAS:
+        return None
+    melhor: tuple[int, int, int, int] | None = None   # distância, posição, |k-n|, k
+    for i in range(min(QUASE_MAX_INICIO, len(ouvido)) + 1):
+        for k in range(max(1, n - 1), n + 2):
+            if i + k > len(ouvido):
+                continue
+            d = _distancia("".join(ouvido[i:i + k]), alvo, QUASE_MAX_DISTANCIA)
+            candidato = (d, i, abs(k - n), k)
+            if d <= QUASE_MAX_DISTANCIA and (melhor is None or candidato < melhor):
+                melhor = candidato
+    if melhor is None:
+        return None
+    d, i, _, k = melhor
+    return {"position": i, "distance": d, "heard": " ".join(ouvido[i:i + k])}
+
+
+def confirma(texto: str, frase: tuple[str, ...]) -> bool:
+    """A segunda escuta trouxe a frase, inteira e no começo?
+
+    Só o casamento exato vale aqui. A dica empurra o STT para a frase; se nem
+    assim ela saiu inteira, não foi dita. E é função pura de propósito: decidir
+    isto por `avaliar` abriria a sessão como efeito colateral de uma conferência
+    que ainda podia dar em nada.
+    """
+    return bool(frase) and _casar(tokens(texto), frase) == (len(frase), "exact")
+
+
+def merece_segunda_escuta(ouvido: list[str],
+                          frase: tuple[str, ...]) -> dict[str, Any] | None:
+    """O enunciado foi recusado, mas COMEÇA com algo que lembra a frase?
+
+    Então vale pedir ao STT que ouça de novo, desta vez sabendo qual é a frase.
+    Pela bancada (caixas de som → microfone do robô), de 30 "Fala Garra, …" o
+    Whisper acertou a frase em 6; nas outras saiu "fala gabi", "fala garne",
+    "fala gab"… Com a frase dada como dica, acertou as 30.
+
+    A dica não vai em tudo porque, em tudo, ela faz silêncio e ruído virarem
+    "Fala Garra" — medido e descartado no 1.3.3. Aqui ela só entra quando
+    alguém já disse, no começo do enunciado, algo a três letras da frase.
+
+    Devolve o trecho parecido (o mesmo de `quase`), ou `None`.
+    """
+    if _casar(ouvido, frase)[0]:
+        return None
+    perto = quase(ouvido, frase)
+    if perto is None or perto["position"] != 0:
+        return None
+    return perto
 
 
 def avaliar(texto: str, capturado_em: float, sessao: Sessao, ativacao: Ativacao,
