@@ -8,6 +8,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/Documents/Projetos/Reachy-Mini-Control/garra_reachy_mini
 Environment=PYTHONUNBUFFERED=1
+# Opcional, do dono: GARRA_PONTE_MODELO=<modelo da voz no gateway>.
+# O `-` faz a falta do arquivo não ser erro.
+EnvironmentFile=-%h/.config/garra-reachy/companion.env
 # Sem GPU e sem `ReachyMini`: este processo só fala HTTP e chama
 # `systemctl --user`. O dono do robô continua sendo o app instalado nele.
 ExecStart=%h/Documents/Projetos/Reachy-Mini-Control/reachy_mini_env/bin/python -m companion

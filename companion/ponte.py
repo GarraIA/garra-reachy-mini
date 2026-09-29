@@ -11,13 +11,19 @@ Medi antes de fazer, e não dá:
 Somando os dois, `--host 0.0.0.0` entregaria execução de comando na máquina do
 dono a qualquer aparelho da rede. Um bug de configuração vira um shell remoto.
 
-Então esta ponte expõe na LAN só o mínimo, e com três travas:
+Então esta ponte expõe na LAN só o mínimo, e com cinco travas:
 
   1. **allowlist de rotas** — as quatro que o app do robô usa, e mais nada;
   2. **token obrigatório** — o mesmo `GARRA_VOZ_TOKEN` já gravado no robô;
   3. **`agent_id` forçado** para `reachy_voice` — mesmo que o robô peça outro,
-     ou não peça nenhum. É o que impede a ponte de alcançar o agente padrão,
-     que é o que tem `bash`.
+     ou não peça nenhum;
+  4. **modo restrito forçado** (`modo.NOME`) em toda sessão, e conferido a cada
+     mensagem. É esta que vale no gateway público: lá a lista de ferramentas do
+     agente não é aplicada no REST, e sessão sem modo não tem política nenhuma.
+     Sessão fora do modo responde 404 — o app do robô abre outra sozinho;
+  5. **corpo reescrito** — de uma mensagem só atravessa o `content`, e nunca um
+     que comece com `/`: o gateway executa `/mode code` vindo no texto, e isso
+     tira a sessão do modo restrito (medido no 0.4.7).
 
 O gateway continua intocado: nem recompilado, nem reiniciado, nem exposto.
 """
@@ -26,13 +32,15 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
+import os
 import re
 import time
 
 import httpx
 
-from . import agente
+from . import agente, modo
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -41,6 +49,22 @@ log = logging.getLogger("companion.ponte")
 PORTA = 8126
 AGENTE = "reachy_voice"
 GATEWAY = "http://127.0.0.1:3888"
+
+# Modelo da voz, decidido no desktop. O gateway aceita `model` por mensagem, e
+# é o dono — não o robô, nem quem tiver o token — que escolhe o que roda na
+# conta dele. Vazio = o modelo padrão do gateway.
+_MODELO_VALIDO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{2,119}")
+
+
+def modelo_configurado(ambiente: dict | None = None) -> str | None:
+    bruto = ((os.environ if ambiente is None else ambiente)
+             .get("GARRA_PONTE_MODELO") or "").strip()
+    if not bruto:
+        return None
+    if not _MODELO_VALIDO.fullmatch(bruto):
+        log.warning("GARRA_PONTE_MODELO inválido — ignorado")
+        return None
+    return bruto
 
 # `GET /ping` é a sonda de saúde do app do robô, e ela chega SEM `Authorization`
 # (`cerebro.sondar()` usa um `requests.get` pelado). Contra a allowlist isso dava
@@ -113,6 +137,15 @@ ROTAS = (
     ("DELETE", re.compile(r"/api/sessions/[0-9a-fA-F-]{36}")),
 )
 
+# As duas rotas que leem ou escrevem numa sessão, e por isso exigem que ela
+# esteja no modo restrito. Encerrar (`DELETE`) não exige: fechar é sempre bom.
+_NA_SESSAO = re.compile(r"/api/sessions/([0-9a-fA-F-]{36})/(?:messages|history)")
+_UUID = re.compile(r"[0-9a-fA-F-]{36}")
+
+# Conferir o modo é uma leitura em loopback; se demora, o gateway está mal e a
+# resposta certa é não encaminhar.
+MODO_TIMEOUT_S = 3.0
+
 app = FastAPI(title="Garra Reachy — ponte do robô", docs_url=None, redoc_url=None)
 _cliente: httpx.AsyncClient | None = None
 
@@ -125,6 +158,41 @@ def _autorizado(request: Request, token: str) -> bool:
     cab = request.headers.get("authorization") or ""
     enviado = cab[7:] if cab.lower().startswith("bearer ") else ""
     return bool(enviado) and hmac.compare_digest(enviado, token)
+
+
+def _erro(codigo: str, status: int) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": {"code": codigo}}, status_code=status)
+
+
+def _garantir_modo(chave_gateway: str | None) -> str:
+    """Cria ou conserta o modo restrito no gateway. Síncrono: roda em thread."""
+    cabecalhos = {"Authorization": f"Bearer {chave_gateway}"} if chave_gateway else {}
+    with httpx.Client(base_url=GATEWAY, headers=cabecalhos, timeout=10.0) as c:
+        return modo.garantir(c)
+
+
+def _corpo_da_mensagem(bruto: bytes) -> bytes | JSONResponse:
+    """O que de uma mensagem atravessa: o `content`, e o agente que a ponte põe.
+
+    O `model` do cliente é descartado: escolheria modelo — e custo — na conta
+    do dono. O que vai é o que o dono configurou no desktop, se configurou.
+    `working_dir` e o resto não têm o que fazer aqui.
+    """
+    try:
+        dados = json.loads(bruto or b"null")
+    except ValueError:
+        return JSONResponse({"erro": "corpo inválido"}, status_code=400)
+    texto = dados.get("content") if isinstance(dados, dict) else None
+    if not isinstance(texto, str) or not texto.strip():
+        return JSONResponse({"erro": "corpo inválido"}, status_code=400)
+    # O gateway apara o texto antes de procurar a barra; a ponte apara igual.
+    if texto.strip().startswith("/"):
+        return _erro("slash_command_refused", 400)
+    corpo = {"content": texto, "agent_id": AGENTE}
+    modelo = modelo_configurado()
+    if modelo:
+        corpo["model"] = modelo
+    return json.dumps(corpo).encode()
 
 
 def _ping_liberado(agora: float | None = None) -> bool:
@@ -294,32 +362,83 @@ def montar(token: str, chave_gateway: str | None) -> FastAPI:
         if not _autorizado(request, token):
             return JSONResponse({"erro": "token inválido"}, status_code=401)
 
-        corpo = await request.body()
-        # Força o agente. Sem isto o robô — ou qualquer um com o token — poderia
-        # pedir o agente padrão do gateway, que tem `bash`.
-        if corpo and request.method == "POST":
-            try:
-                import json
-
-                dados = json.loads(corpo)
-                if isinstance(dados, dict):
-                    dados["agent_id"] = AGENTE
-                    corpo = json.dumps(dados).encode()
-            except ValueError:
-                return JSONResponse({"erro": "corpo inválido"}, status_code=400)
-
         if _cliente is None:
             _cliente = httpx.AsyncClient(base_url=GATEWAY, timeout=180.0)
         cabecalhos = {"Content-Type": "application/json"}
         if chave_gateway:
             cabecalhos["Authorization"] = f"Bearer {chave_gateway}"
+
+        criando = request.method == "POST" and alvo == "/api/sessions"
+        corpo: bytes | None = None
+        if criando:
+            # O corpo é da ponte. O que o cliente mandou — `mode`, `working_dir`,
+            # outro agente, ou nada — não entra.
+            corpo = json.dumps({"agent_id": AGENTE, "mode": modo.NOME}).encode()
+        elif request.method == "POST":
+            reescrito = _corpo_da_mensagem(await request.body())
+            if isinstance(reescrito, JSONResponse):
+                return reescrito
+            corpo = reescrito
+
+        na_sessao = _NA_SESSAO.fullmatch(alvo)
+        if na_sessao:
+            # Toda vez, e não só na criação: o modo de uma sessão muda por fora
+            # da ponte, e a sessão que o app retoma do `estado.json` pode ser de
+            # antes desta trava existir.
+            try:
+                m = await _cliente.get(
+                    "/api/mode/current", timeout=MODO_TIMEOUT_S,
+                    headers={**cabecalhos, "X-Session-Id": na_sessao.group(1)})
+                atual = m.json().get("mode") if m.status_code == 200 else None
+                conferido = m.status_code == 200
+            except (httpx.HTTPError, ValueError, AttributeError):
+                conferido, atual = False, None
+            if not conferido:
+                return _erro("gateway_unreachable", 502)
+            if atual != modo.NOME:
+                # Só o começo do id: basta para achar quem insiste, e o log não
+                # vira um lugar de onde se copia uma sessão inteira.
+                log.warning("ponte recusou sessão %s… fora do modo restrito "
+                            "(modo=%r)", na_sessao.group(1)[:8], atual)
+                return _erro("session_not_restricted", 404)
+
+        # Query string só em leitura: num POST ela seria mais um corpo por onde
+        # o cliente fala com o gateway sem passar pela reescrita acima.
+        params = dict(request.query_params) if request.method == "GET" else None
         try:
-            r = await _cliente.request(request.method, alvo, content=corpo or None,
-                                       headers=cabecalhos,
-                                       params=dict(request.query_params))
+            r = await _cliente.request(request.method, alvo, content=corpo,
+                                       headers=cabecalhos, params=params)
+            if criando and r.status_code == 400:
+                # O gateway não conhece o modo: banco novo, ou modo apagado com
+                # o companion no ar. Recria e tenta uma vez — se continuar 400,
+                # o 400 atravessa e o robô fica sem cérebro, que é o lado certo
+                # para errar.
+                if await asyncio.to_thread(_garantir_modo, chave_gateway) != "indisponivel":
+                    r = await _cliente.request(request.method, alvo, content=corpo,
+                                               headers=cabecalhos)
         except httpx.HTTPError as e:
             return JSONResponse({"erro": f"gateway indisponível: {type(e).__name__}"},
                                 status_code=502)
+
+        if criando and r.is_success:
+            # Gateway que ignora `mode` responde 201 e cria sessão sem política
+            # nenhuma. Só vale a sessão que o gateway CONFIRMA estar no modo.
+            try:
+                criada = r.json()
+            except ValueError:
+                criada = None
+            if not isinstance(criada, dict) or criada.get("mode") != modo.NOME:
+                sid = criada.get("session_id") if isinstance(criada, dict) else None
+                if isinstance(sid, str) and _UUID.fullmatch(sid):
+                    try:
+                        await _cliente.request("DELETE", f"/api/sessions/{sid}",
+                                               headers=cabecalhos)
+                    except httpx.HTTPError:
+                        pass
+                log.error("gateway criou sessão fora do modo `%s`; encerrada",
+                          modo.NOME)
+                return _erro("restricted_mode_not_enforced", 502)
+
         return Response(content=r.content, status_code=r.status_code,
                         media_type=r.headers.get("content-type", "application/json"))
 

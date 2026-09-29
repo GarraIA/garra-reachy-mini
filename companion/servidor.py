@@ -17,7 +17,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import agente, agente_teste, ponte, reachy, seguranca, unidade, voz
+from . import agente, agente_teste, modo, ponte, reachy, seguranca, unidade, voz
 
 HOST = "127.0.0.1"
 PORTA = 8125
@@ -355,7 +355,12 @@ def main() -> int:
     #   0.0.0.0:8126    ponte do robô — quatro rotas, com token e agente fixo.
     # Ver companion/ponte.py para por que a alternativa (abrir a :3888) não é
     # aceitável.
-    lan = ponte.montar(token, _conferir_chave_do_gateway())
+    chave = _conferir_chave_do_gateway()
+    # O modo restrito é a trava da ponte no gateway público; sem ele o gateway
+    # recusa a sessão (400) e o robô fica sem cérebro — falha fechada.
+    log.info("modo restrito da voz (%s): %s", modo.NOME,
+             ponte._garantir_modo(chave))
+    lan = ponte.montar(token, chave)
     cfg = uvicorn.Config(lan, host="0.0.0.0", port=ponte.PORTA, log_level="warning")
     threading.Thread(target=uvicorn.Server(cfg).run, daemon=True,
                      name="ponte-robo").start()

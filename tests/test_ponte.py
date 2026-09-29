@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from companion import ponte, reachy
+from companion import modo, ponte, reachy
 
 TOKEN = "token-de-teste-nao-e-segredo"
 SESSAO = "123e4567-e89b-12d3-a456-426614174000"
@@ -28,6 +28,10 @@ class GatewayFalso:
         self.chamadas.append(("GET", caminho, kw))
         if self.erro:
             raise httpx.ConnectError("recusada")
+        if caminho == "/api/mode/current":
+            # A sessão dos testes daqui está no modo restrito; os casos em
+            # que não está moram em test_ponte_modo.py.
+            return httpx.Response(200, json={"mode": modo.NOME})
         return httpx.Response(self.ping_status, content=b"pong")
 
     async def request(self, metodo, caminho, **kw):
