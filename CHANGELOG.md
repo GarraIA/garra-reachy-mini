@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.3 — 2026-09-29
+
+A frase de ativação passou a perdoar os erros que o reconhecimento de fala
+comete nela. Medido com o Whisper do servidor de voz, voz sintética, áudio limpo
+e com ruído: 132 tentativas com a frase, 105 frases sem ela.
+
+### Fixed
+
+- **"Fala Garra" era recusada em um quarto das vezes.** O casamento era exato,
+  token a token, e de 132 tentativas reconheceu 100. As outras chegaram como
+  "Falagarra", "Falangarra", "Fala, agarra", "Fala a garra", "Palagarra" e "Bala
+  Garra" — e quem falou só viu o robô ignorar. A comparação agora tolera os três
+  erros de borda: as palavras fundidas, uma letra nascida na emenda entre elas e
+  o primeiro som do enunciado trocado. Na mesma medida: 120 de 132.
+
+  Não é "uma letra, onde for". Essa versão foi medida antes e descartada: ativou
+  o robô com "Falta garra nesse time". Nas 105 frases sem a ativação — entre
+  elas "fala garrafa agora", "falta garra nesse time" e "cadê a minha jarra" — a
+  regra final não ativou nenhuma.
+
+  Frase de ativação com menos de oito letras continua exata: com o primeiro som
+  trocado, "garra" é barra, jarra e farra. O texto que segue ao modelo continua
+  sendo o original, sem a frase e sem perder a primeira palavra do pedido.
+
+### Added
+
+- O evento `voice.wake.activated` leva `match` (`exact` ou `approximate`). É o
+  que permite saber, no robô, quanto a tolerância está trabalhando. Não carrega
+  nada do que foi dito.
+
+### Medido e não adotado
+
+- **Dar a frase como dica ao Whisper** (`hotwords` ou `initial_prompt`). Com a
+  dica, silêncio e ruído viram "Fala Garra", e "Cadê a minha jarra?" com ruído
+  também. Seria trocar um robô que às vezes não ouve por um que se ativa sozinho.
+
 ## 1.3.2 — 2026-09-29
 
 Compatibilidade com o gateway público do Garra (0.4.x) e três defeitos vistos em
