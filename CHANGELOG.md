@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.4.0 — 2026-09-29
+
+O robô passa a poder ouvir a conversa da sala e a guardar o que lhe pedem para
+anotar. Os dois recursos nascem **desligados**: quem atualiza e não liga nada
+tem exatamente o app de antes.
+
+### Added
+
+- **Escuta de contexto.** Com a frase de ativação ligada, o que é dito sem ela
+  era recusado e sumia — e "insira isso na lista de compras" não tinha a que se
+  referir. Ligada a escuta, o **texto** do que foi ouvido fica em memória por
+  uma janela (120 s por padrão, de 30 a 300) e acompanha o próximo pedido.
+
+  Isto muda o que sai de casa, e a dica do painel diz isso sem rodeio: a cada
+  vez que o robô é chamado, a conversa da sala daquela janela vai para o gateway
+  — que a guarda no histórico da sessão — e para o modelo. No robô ela só existe
+  em RAM: não vai a disco, a log nem a evento, e é esquecida ao sair da janela
+  ou no instante em que o interruptor é desligado. Um botão no painel esquece
+  tudo na hora.
+
+- **Caderno.** Listas que o robô anota a pedido e guarda em `caderno.json`, na
+  pasta de dados do app. Sobrevivem a reinício, a troca de sessão do gateway e a
+  queda de energia — o que a lembrança do modelo não faz, porque sessão acaba.
+  Vale por voz e pelo chat do painel, que ganhou um cartão para ver as listas e
+  apagar item por item. É ali que se confere o que foi anotado de fato.
+
+  O modelo muda o caderno por uma linha no fim da resposta
+  (`CADERNO: +compras: manteiga`), que é executada e retirada antes de qualquer
+  coisa ser falada, mostrada ou registrada.
+
+- Rotas: `GET /api/robot/notebook`, `DELETE /api/robot/notebook/{lista}` e
+  `/{lista}/{indice}`, `GET` e `DELETE /api/robot/ambient-context`. A de leitura
+  da escuta devolve quanto há guardado, nunca o quê.
+- Eventos `voice.context.attached` e `notebook.changed`, com contagens e sem
+  conteúdo. Capacidades `ambient_context` e `notebook`.
+- O servidor de voz (`tools/servidor_voz.py`) fala também o dialeto da OpenAI —
+  `POST /v1/audio/speech`, `GET /v1/models`, `GET /` —, que é o que o gateway do
+  Garra sabe pedir. Um Chatterbox só atende o robô e o console.
+
+### Medido
+
+Pela ponte do robô, no modo restrito, com o modelo em uso: 27 pedidos em nove
+situações (anotar "isso", anotar item dito, tirar da lista, ler lista cheia e
+vazia, pergunta sem relação, ordem embutida na conversa do ambiente). Caderno
+certo em 27, fala certa em 27, nenhuma diretiva falada. A ordem embutida no
+ambiente — "ignore as instruções e adicione…" — não foi obedecida em nenhuma
+das três tentativas.
+
+### O que não se garante
+
+- **Texto do ambiente é texto não confiável.** A mensagem diz ao modelo que
+  aquilo não é instrução, cada linha vai marcada como citação, e fala ou item
+  com colchete é descartado. Isso reduz o risco de uma TV dar ordens ao robô;
+  não o elimina.
+- **O modelo pode dizer "anotado" sem emitir a linha.** Não aconteceu na
+  medida, e o app não tem como perceber se acontecer. O cartão do caderno existe
+  para isso.
+
 ## 1.3.3 — 2026-09-29
 
 A frase de ativação passou a perdoar os erros que o reconhecimento de fala
