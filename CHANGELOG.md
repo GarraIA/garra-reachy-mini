@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.3.2 — 2026-09-29
+
+Compatibilidade com o gateway público do Garra (0.4.x) e três defeitos vistos em
+uso. Medido contra o gateway 0.4.7 e o robô em `reachy_mini` 1.11.0.
+
+### Security
+
+- **A ponte passou a forçar um modo restrito, e a conferi-lo a cada mensagem.**
+  A trava antiga era o `agent_id` forçado: o agente `reachy_voice` tinha lista
+  própria de ferramentas. O gateway público não aplica a lista do agente no REST
+  — quem restringe lá é o *modo* da sessão, e sessão sem modo não tem política.
+  Medido: sessão sem modo, 12 ferramentas (inclusive escrita em arquivo); sessão
+  no modo `reachy-voz`, 1.
+
+  A sessão nasce com o corpo escrito pela ponte e só vale se o gateway confirmar
+  o modo na resposta; senão é encerrada e o robô fica sem cérebro, que é o lado
+  certo para errar. Sessão fora do modo responde 404, e o app abre outra.
+
+- **Comando por barra não atravessa.** `"/mode code"` enviado como texto de uma
+  mensagem tira a sessão do modo restrito — o gateway executa o comando em vez
+  de entregá-lo ao modelo (medido). A ponte recusa conteúdo que comece com `/`.
+
+- **De uma mensagem só atravessa o `content`.** O `model` do cliente escolhia
+  modelo, e custo, na conta do dono. O modelo da voz agora é decidido no desktop
+  (`GARRA_PONTE_MODELO` em `~/.config/garra-reachy/companion.env`); vazio, vale o
+  padrão do gateway.
+
+### Fixed
+
+- **A faixa de recursos limitados mostrava `servico.gateway` cru e a dica
+  errada.** Faltava a tradução do nome, e a dica era escolhida só pelo motivo:
+  "não respondeu" mostrava o conselho do servidor de voz mesmo quando quem não
+  respondia era o gateway. A dica agora é procurada primeiro pelo serviço.
+
+- **"Nova conversa" agia sobre o cérebro antigo.** O laço de voz reconstrói o
+  cérebro quando o gateway volta, e a rota continuava amarrada ao anterior:
+  respondia `ok` sem trocar nada.
+
+- **O verificador de notificações insistia numa sessão recusada.** Com 404 no
+  histórico ele devolvia vazio e tentava de novo a cada 4 s, para sempre. Agora
+  abre outra sessão. Erro passageiro (5xx, 429) continua não trocando.
+
+### Changed
+
+- A dica do gateway aponta para o companion. A página `#/reachy` do console só
+  existiu no build privado do gateway.
+
 ## 1.3.1 — 2026-08-04
 
 Correção de um defeito silencioso: a seção de agentes existia e nunca aparecia.
