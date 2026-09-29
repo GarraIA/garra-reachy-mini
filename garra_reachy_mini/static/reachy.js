@@ -699,6 +699,7 @@ const perto = [];
 
 function anotarPerto(e) {
   perto.unshift({ heard: String(e.heard || ''), second_listen: String(e.second_listen || 'not_tried'),
+                  confidence: Number.isFinite(e.confidence) ? Number(e.confidence) : null,
                   quando: new Date() });
   perto.length = Math.min(perto.length, PERTO_MAX);
   pintarPerto();
@@ -711,11 +712,14 @@ function pintarPerto() {
   if (!ligado) return;
   const linhas = perto.map((p) => {
     const hora = p.quando.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    // Só os quatro resultados que o robô sabe dar: o valor veio de um evento.
-    const qual = ['confirmed', 'rejected', 'failed'].includes(p.second_listen)
+    // Só os resultados que o robô sabe dar: o valor veio de um evento.
+    const qual = ['confirmed', 'rejected', 'failed', 'skipped_confident',
+                  'unknown_confidence', 'disabled'].includes(p.second_listen)
       ? p.second_listen : 'not_tried';
     const resultado = t(`conversa.perto_${qual}`);
-    return `<li><span class="t">${esc(hora)}</span> <b>“${esc(p.heard)}”</b> — ${esc(resultado)}</li>`;
+    const confianca = p.confidence === null ? ''
+      : ' (' + Math.round(p.confidence * 100) + '%)';
+    return `<li><span class="t">${esc(hora)}</span> <b>“${esc(p.heard)}”</b>${esc(confianca)} — ${esc(resultado)}</li>`;
   });
   caixa.innerHTML = `<div class="perto-titulo">${esc(t('conversa.perto_titulo'))}</div>`
     + (linhas.length ? '<ul>' + linhas.join('') + '</ul>'

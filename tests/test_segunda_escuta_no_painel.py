@@ -32,7 +32,9 @@ CHAVES = ("conversa.wake_conferir", "conversa.wake_conferir_dica",
           "conversa.wake_diagnostico", "conversa.wake_diagnostico_dica",
           "conversa.mudo_aviso", "conversa.perto_titulo", "conversa.perto_vazio",
           "conversa.perto_confirmed", "conversa.perto_rejected", "conversa.perto_failed",
-          "conversa.perto_not_tried", "lista.microfone", "lista.microfone_val",
+          "conversa.perto_not_tried", "conversa.perto_skipped_confident",
+          "conversa.perto_unknown_confidence", "conversa.perto_disabled",
+          "lista.microfone", "lista.microfone_val",
           "lista.microfone_fixo", "lista.microfone_parado")
 
 
@@ -142,7 +144,17 @@ def test_a_lista_e_curta_e_so_vive_na_pagina() -> None:
 
 
 def test_cada_resultado_da_conferencia_tem_nome_na_tela() -> None:
-    assert "t(`conversa.perto_${" in funcao("pintarPerto")
+    pinta = funcao("pintarPerto")
+    assert "t(`conversa.perto_${" in pinta
+    for resultado in ("confirmed", "rejected", "failed", "skipped_confident",
+                      "unknown_confidence", "disabled"):
+        assert f"'{resultado}'" in pinta, resultado
+
+
+def test_a_confianca_aparece_como_numero() -> None:
+    pinta = funcao("pintarPerto")
+    assert "p.confidence" in pinta
+    assert "Number.isFinite" in funcao("anotarPerto")
 
 
 # ─── o detector de fala ──────────────────────────────────────────────────────

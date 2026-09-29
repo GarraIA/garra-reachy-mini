@@ -25,8 +25,13 @@ SEM_DICA = "Fala Gabi, que horas são?"
 COM_DICA = "Fala Garra, que horas são?"
 
 
+def palavra(texto: str, p: float):
+    return types.SimpleNamespace(word=" " + texto, probability=p, start=0.0, end=0.3)
+
+
 class Ouvido:
-    """O Whisper de mentira: ouve certo só quando sabe a frase."""
+    """O Whisper de mentira: ouve certo só quando sabe a frase, e duvida do
+    "Gabi" que escreveu quando não sabe."""
 
     def __init__(self) -> None:
         self.chamadas: list[dict] = []
@@ -34,7 +39,15 @@ class Ouvido:
     def transcribe(self, audio, **kw):
         self.chamadas.append(kw)
         texto = COM_DICA if kw.get("hotwords") else SEM_DICA
-        return [types.SimpleNamespace(text=texto)], None
+        confianca = [0.95, 0.30 if "Gabi" in texto else 0.12, 0.98, 0.99, 0.97]
+        palavras = [palavra(w, p) for w, p in zip(texto.split(), confianca)]
+        if not kw.get("word_timestamps"):
+            palavras = None
+        # Em dois pedaços, como o Whisper faz com pausa no meio.
+        return [types.SimpleNamespace(text=" Fala " + texto.split()[1],
+                                      words=palavras[:2] if palavras else None),
+                types.SimpleNamespace(text=" " + " ".join(texto.split()[2:]),
+                                      words=palavras[2:] if palavras else None)], None
 
 
 @pytest.fixture()
@@ -60,6 +73,46 @@ AUDIO = np.full(16000, 0.1, dtype=np.float32).tobytes()
 def pedir(servidor, **params):
     return TestClient(servidor.app).post("/transcrever", params={"sr": 16000, **params},
                                          content=AUDIO)
+
+
+def test_a_resposta_traz_a_confianca_de_cada_palavra(servidor) -> None:
+    """Uma por palavra do texto, na ordem. É com ela que o robô separa "fala
+    gabi" (o Whisper em dúvida) de "fala galera" (o Whisper com certeza)."""
+    corpo = pedir(servidor).json()
+    assert corpo["texto"] == SEM_DICA
+    assert corpo["confianca"] == [0.95, 0.30, 0.98, 0.99, 0.97]
+    assert len(corpo["confianca"]) == len(corpo["texto"].split())
+    assert servidor.stt.chamadas[0]["word_timestamps"] is True
+
+
+def test_sem_fala_a_confianca_e_uma_lista_vazia(servidor) -> None:
+    servidor.stt.transcribe = lambda audio, **kw: ([], None)
+    assert pedir(servidor).json() == {"texto": "", "confianca": []}
+
+
+def test_whisper_que_nao_da_palavras_nao_inventa_confianca(servidor) -> None:
+    servidor.stt.transcribe = lambda audio, **kw: (
+        [types.SimpleNamespace(text=" Fala Gabi", words=None)], None)
+    corpo = pedir(servidor).json()
+    assert corpo["texto"] == "Fala Gabi" and corpo["confianca"] is None
+
+
+def test_contagem_que_nao_bate_com_o_texto_nao_vira_confianca(servidor) -> None:
+    """Quem recebe alinha pela posição. Lista torta poria a confiança de uma
+    palavra em outra — melhor dizer que não se sabe."""
+    servidor.stt.transcribe = lambda audio, **kw: (
+        [types.SimpleNamespace(text=" Fala Gabi, que horas são?",
+                               words=[palavra("Fala", 0.9), palavra("Gabi,", 0.3)])], None)
+    assert pedir(servidor).json()["confianca"] is None
+
+
+def test_pedaco_sem_palavras_invalida_a_lista_inteira(servidor) -> None:
+    """A contagem até fecharia — com as confianças nas palavras erradas."""
+    cinco = [palavra(w, 0.9) for w in ("a", "b", "c", "d", "e")]
+    servidor.stt.transcribe = lambda audio, **kw: (
+        [types.SimpleNamespace(text=" Fala Gabi,", words=None),
+         types.SimpleNamespace(text=" que horas são?", words=cinco)], None)
+    assert pedir(servidor).json()["confianca"] is None
 
 
 def test_sem_dica_o_whisper_nao_recebe_frase_nenhuma(servidor) -> None:
@@ -115,8 +168,11 @@ def test_o_log_nao_guarda_o_que_foi_dito_nem_a_dica(servidor, caplog) -> None:
 
 # ─── o cliente, no robô ──────────────────────────────────────────────────────
 class Resposta:
+    def __init__(self, corpo: dict | None = None) -> None:
+        self.corpo = corpo or {"texto": " Fala Garra, que horas são? ",
+                               "confianca": [0.9, 0.2, 0.9, 0.9, 0.9]}
     def raise_for_status(self) -> None: pass
-    def json(self) -> dict: return {"texto": " Fala Garra, que horas são? "}
+    def json(self) -> dict: return self.corpo
 
 
 def test_o_cliente_manda_a_dica_quando_ha(monkeypatch) -> None:
@@ -133,3 +189,28 @@ def test_o_cliente_manda_a_dica_quando_ha(monkeypatch) -> None:
     assert primeiro["params"] == {"sr": 16000}
     assert segundo["params"] == {"sr": 16000, "dica": "fala garra"}
     assert segundo["headers"] == {"Authorization": "Bearer t"}
+
+
+def test_ouvir_devolve_o_texto_e_a_confianca(monkeypatch) -> None:
+    monkeypatch.setattr(voz.requests, "post", lambda url, **kw: Resposta())
+    ouvido = voz.VozClient("http://pc:8123").ouvir(np.zeros(1600, dtype=np.float32), 16000)
+    assert ouvido.texto == "Fala Garra, que horas são?"
+    assert ouvido.confianca == (0.9, 0.2, 0.9, 0.9, 0.9)
+
+
+@pytest.mark.parametrize("corpo", [
+    {"texto": "Fala Gabi"},                              # servidor de voz antigo
+    {"texto": "Fala Gabi", "confianca": None},
+    {"texto": "Fala Gabi", "confianca": "alta"},
+    {"texto": "Fala Gabi", "confianca": [0.9, "x"]},
+])
+def test_servidor_que_nao_diz_a_confianca_deixa_ela_desconhecida(monkeypatch, corpo) -> None:
+    monkeypatch.setattr(voz.requests, "post", lambda url, **kw: Resposta(corpo))
+    ouvido = voz.VozClient("http://pc:8123").ouvir(np.zeros(1600, dtype=np.float32), 16000)
+    assert ouvido.texto == "Fala Gabi" and ouvido.confianca is None
+
+
+def test_a_transcricao_nao_mostra_o_texto_no_repr(monkeypatch) -> None:
+    monkeypatch.setattr(voz.requests, "post", lambda url, **kw: Resposta())
+    ouvido = voz.VozClient("http://pc:8123").ouvir(np.zeros(1600, dtype=np.float32), 16000)
+    assert "Garra" not in repr(ouvido) and "horas" not in repr(ouvido)

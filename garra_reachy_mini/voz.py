@@ -4,6 +4,7 @@ import re
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 
 import numpy as np
 import requests
@@ -73,6 +74,20 @@ def frases(texto: str) -> list[str]:
     return [p.strip() for p in partes if p.strip()]
 
 
+@dataclass(frozen=True)
+class Transcricao:
+    """O que o servidor de voz ouviu, e o quanto confia em cada palavra."""
+
+    texto: str
+    # Uma probabilidade por palavra de `texto`, ou `None` quando o servidor
+    # não disse (versão antiga) ou disse algo que não dá para usar.
+    confianca: tuple[float, ...] | None = None
+
+    def __repr__(self) -> str:      # nunca o texto
+        quantas = "?" if self.confianca is None else len(self.confianca)
+        return f"Transcricao({len(self.texto)} caracteres, confiança de {quantas} palavras)"
+
+
 class VozClient:
     def __init__(self, base_url: str, token: str | None = None) -> None:
         self.base = base_url.rstrip("/")
@@ -101,10 +116,14 @@ class VozClient:
             stop_event.wait(2.0)
         return False
 
-    def transcrever(self, audio: np.ndarray, sr: int, dica: str | None = None) -> str:
-        """`dica` é a frase de ativação, para a segunda escuta (ver
+    def ouvir(self, audio: np.ndarray, sr: int, dica: str | None = None) -> Transcricao:
+        """Transcreve e traz a confiança por palavra.
+
+        `dica` é a frase de ativação, para a segunda escuta (ver
         `ativacao.merece_segunda_escuta`). Um servidor de voz antigo ignora o
-        parâmetro e devolve a mesma transcrição — que é recusada de novo."""
+        parâmetro e não devolve confiança — e sem confiança o robô não pede
+        segunda escuta nenhuma.
+        """
         params: dict[str, int | str] = {"sr": sr}
         if dica:
             params["dica"] = dica
@@ -114,7 +133,16 @@ class VozClient:
             headers=self._cab,
         )
         r.raise_for_status()
-        return r.json().get("texto", "").strip()
+        corpo = r.json()
+        bruta = corpo.get("confianca")
+        confianca = None
+        if isinstance(bruta, list) and all(
+                isinstance(p, (int, float)) and not isinstance(p, bool) for p in bruta):
+            confianca = tuple(float(p) for p in bruta)
+        return Transcricao((corpo.get("texto") or "").strip(), confianca)
+
+    def transcrever(self, audio: np.ndarray, sr: int, dica: str | None = None) -> str:
+        return self.ouvir(audio, sr, dica=dica).texto
 
     def falar(self, texto: str, sr: int) -> np.ndarray:
         r = requests.post(f"{self.base}/falar", json={"texto": texto, "sr": sr},

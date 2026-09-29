@@ -444,7 +444,8 @@ def test_o_gate_vem_antes_do_log_do_chat_e_de_tudo_a_jusante() -> None:
 
 def test_o_carimbo_de_captura_e_calculado_antes_do_stt() -> None:
     corpo = _processar()
-    assert corpo.index("capturado_em") < corpo.index("voz.transcrever"), (
+    # `ouvir(audio)` é quem chama o servidor de voz desde o 1.4.1.
+    assert corpo.index("capturado_em") < corpo.index("ouvir(audio)"), (
         "medir o eco depois do STT julgaria o áudio errado")
     assert "time.monotonic() - dur" in corpo
 
@@ -662,10 +663,26 @@ def test_frase_curta_continua_exata_mesmo_com_letra_dobrada() -> None:
 # Pela bancada (caixas de som → microfone do robô), 30 vezes "Fala Garra, …":
 # o Whisper acertou a frase em 6. Nas outras saiu "fala gabi", "fala garne",
 # "fala gab", "fala dara"… Dando a frase como dica ele acertou as 30 — mas dica
-# em TUDO faz ruído virar "Fala Garra" (medido antes, e descartado). O meio
-# termo: só se pergunta de novo quando o COMEÇO do enunciado já lembra a frase.
-def merece(texto: str, frase=("fala", "garra")):
-    return ativacao.merece_segunda_escuta(ativacao.tokens(texto), frase)
+# em TUDO faz ruído virar "Fala Garra" (medido antes, e descartado).
+#
+# Primeira tentativa de meio-termo, medida no robô e REPROVADA: perguntar de
+# novo sempre que o começo lembrasse a frase. "Fala galera, beleza?" e "Fala,
+# cara, tudo bem?" ativaram o robô em 3 de 16 — a dica convence o Whisper a
+# trocar "galera" por "Garra".
+#
+# O que separa os dois casos é o quanto o próprio Whisper confia no que
+# escreveu. Quando erra a frase, ele duvida da palavra errada (0,13 a 0,62 em
+# 12 medidas). Quando alguém diz mesmo "galera", "cara" ou "agora", ele tem
+# certeza (0,83 a 0,99 em 9 de 11; nas outras duas a dica não o convenceu).
+INCERTO = (0.95, 0.40, 0.98, 0.99, 0.99)
+SEGURO = (0.95, 0.93, 0.98, 0.99, 0.99)
+
+
+def merece(texto: str, confianca=INCERTO, frase=("fala", "garra")):
+    toks = ativacao.tokens(texto)
+    if confianca is not None:
+        confianca = tuple(confianca[:len(toks)]) + (0.99,) * max(0, len(toks) - len(confianca))
+    return ativacao.merece_segunda_escuta(toks, frase, confianca)
 
 
 @pytest.mark.parametrize("ouvido", [
@@ -673,10 +690,45 @@ def merece(texto: str, frase=("fala", "garra")):
     "Fala garne, que horas são?",
     "Fala gab o que tem na lista de compras",
     "Fala dara, quanto é sete vezes oito?",
-    "Pau a garra",
+    "Fala agora, qual é o seu nome?",        # o "Garra" do robô, ouvido como "agora"
 ])
-def test_comeco_parecido_com_a_frase_merece_segunda_escuta(ouvido) -> None:
+def test_comeco_parecido_e_transcricao_em_duvida_merecem_segunda_escuta(ouvido) -> None:
     assert merece(ouvido) is not None
+
+
+@pytest.mark.parametrize("ouvido", [
+    "Fala galera, beleza?",
+    "Fala, cara, tudo bem com você?",
+    "Fala agora o que você quer",
+    "Fala para ela que eu já vou",
+    "Falta garra nesse time",
+])
+def test_quando_a_transcricao_tem_certeza_ninguem_pergunta_de_novo(ouvido) -> None:
+    """A falsa ativação medida: o Whisper ouviu "galera" com 0,99 de confiança,
+    e a dica o fez escrever "Garra" mesmo assim."""
+    assert merece(ouvido, SEGURO) is None
+
+
+def test_a_duvida_que_conta_e_a_do_trecho_parecido() -> None:
+    # dúvida no pedido, certeza na frase: não é caso de conferir
+    assert merece("Fala galera, beleza pura?", (0.95, 0.93, 0.20, 0.30)) is None
+    # dúvida na primeira palavra também conta
+    assert merece("Pau a garra", (0.32, 0.64, 0.71)) is not None
+    # …mesmo quando é a ÚNICA em dúvida: quem saiu errado foi o "Fala"
+    assert merece("Pau a garra", (0.32, 0.90, 0.95)) is not None
+    assert merece("Pau a garra", (0.32, 0.90, 0.95))["confidence"] == 0.32
+    assert merece("Palagra", (0.29,)) is not None
+
+
+def test_no_limite_a_duvida_ainda_vale() -> None:
+    assert merece("Fala agora, qual é o seu nome?", (0.92, 0.74)) is not None
+    assert merece("Fala agora, qual é o seu nome?", (0.92, 0.75)) is None
+
+
+def test_sem_saber_a_confianca_nao_ha_segunda_escuta() -> None:
+    """Servidor de voz antigo não diz o quanto confia. Sem isso não há como
+    separar "fala gabi" de "fala galera", e o erro que sobra é o pior dos dois."""
+    assert merece("Fala Gabi, que horas são?", None) is None
 
 
 @pytest.mark.parametrize("ouvido", [
@@ -690,16 +742,41 @@ def test_comeco_parecido_com_a_frase_merece_segunda_escuta(ouvido) -> None:
     "Eu disse fala garne para ele",
 ])
 def test_conversa_comum_nao_e_ouvida_duas_vezes(ouvido) -> None:
-    assert merece(ouvido) is None
+    assert merece(ouvido, (0.2,) * 12) is None
 
 
 def test_quem_ja_casou_nao_precisa_de_segunda_escuta() -> None:
-    assert merece("Fala Garra, que horas são?") is None
-    assert merece("Falagarra que horas são") is None
+    assert merece("Fala Garra, que horas são?", (0.2,) * 6) is None
+    assert merece("Falagarra que horas são", (0.2,) * 6) is None
 
 
 def test_frase_curta_nao_tem_segunda_escuta() -> None:
-    assert ativacao.merece_segunda_escuta(ativacao.tokens("Barra de ferro"), ("garra",)) is None
+    assert ativacao.merece_segunda_escuta(
+        ativacao.tokens("Barra de ferro"), ("garra",), (0.2, 0.2, 0.2)) is None
+
+
+# ─── a confiança, palavra por palavra ────────────────────────────────────────
+@pytest.mark.parametrize("texto,por_palavra,por_token", [
+    ("Fala, cara, tudo bem?", (0.9, 0.8, 0.7, 0.6), (0.9, 0.8, 0.7, 0.6)),
+    # uma palavra do STT que vira dois tokens: os dois herdam a confiança dela
+    ("Fala guarda-chuva agora", (0.9, 0.4, 0.7), (0.9, 0.4, 0.4, 0.7)),
+    # e uma que não vira token nenhum
+    ("Fala — Garra", (0.9, 0.5, 0.3), (0.9, 0.3)),
+    ("", (), ()),
+])
+def test_a_confianca_acompanha_os_tokens(texto, por_palavra, por_token) -> None:
+    assert ativacao.confianca_por_token(texto, por_palavra) == por_token
+
+
+@pytest.mark.parametrize("texto,por_palavra", [
+    ("Fala cara tudo bem", (0.9, 0.8)),          # faltam palavras
+    ("Fala cara", (0.9, 0.8, 0.7)),              # sobram
+    ("Fala cara", None),
+    ("Fala cara", ("x", 0.8)),
+    ("Fala cara", (0.9, 1.7)),                   # probabilidade que não é probabilidade
+])
+def test_confianca_que_nao_bate_com_o_texto_e_desconhecida(texto, por_palavra) -> None:
+    assert ativacao.confianca_por_token(texto, por_palavra) is None
 
 
 # ─── a dica da segunda escuta ────────────────────────────────────────────────

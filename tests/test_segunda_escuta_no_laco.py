@@ -5,6 +5,12 @@ errada do Whisper na maior parte das vezes ("fala gabi", "fala garne", "fala
 gab"…) e sai certa quando ele sabe qual é a frase. Então o robô pergunta de
 novo — mas só quando o COMEÇO do que ouviu já lembrava a frase.
 
+"Lembrar a frase" não basta, e isso também foi medido no robô: "Fala galera,
+beleza?" ativou o robô, porque a dica convence o Whisper a trocar "galera" por
+"Garra". O que separa os dois casos é a confiança do próprio Whisper na palavra
+que escreveu: em dúvida quando errou a frase, com certeza quando a palavra era
+outra mesmo.
+
 E ninguém conseguia ver por que o robô não respondia: o evento de recusa não
 diz o que foi ouvido, de propósito. O diagnóstico, que nasce desligado, mostra o
 trecho parecido com a frase e mais nada.
@@ -17,6 +23,7 @@ import logging
 
 import pytest
 
+from garra_reachy_mini.voz import Transcricao
 from test_escuta_no_laco import Cena, Voz
 
 FRASE = "Fala Garra"          # como está na configuração: foi assim que se mediu
@@ -25,25 +32,40 @@ CERTA = "Fala Garra, que horas são?"
 LIGADA = {"wake_phrase_enabled": True}
 
 
+DUVIDA = "dúvida"        # o STT não confia na segunda palavra que escreveu
+CERTEZA = "certeza"      # confia em todas
+SEM_MEDIDA = None        # servidor de voz antigo: não diz
+
+
 class VozComDica(Voz):
-    """Cada fala do roteiro é um par: o que o STT ouve sozinho, e o que ouve
-    sabendo a frase. `None` no segundo: o servidor de voz falha."""
+    """Cada fala do roteiro: o que o STT ouve sozinho, o que ouve sabendo a
+    frase (`None`: o servidor de voz falha) e, opcional, o quanto confiou na
+    primeira escuta (por padrão, em dúvida)."""
 
-    def __init__(self, pares: list[tuple[str, str | None]]) -> None:
+    def __init__(self, falas: list[tuple]) -> None:
         super().__init__([])
-        self.pares = list(pares)
+        self.falas = [f if len(f) == 3 else (*f, DUVIDA) for f in falas]
         self.dicas: list[str | None] = []
-        self._atual: tuple[str, str | None] = ("", "")
+        self._atual: tuple = ("", "", DUVIDA)
 
-    def transcrever(self, audio, sr, dica=None) -> str:
+    def ouvir(self, audio, sr, dica=None) -> Transcricao:
         self.dicas.append(dica)
         if dica is None:
-            self._atual = self.pares[self.transcritas]
+            self._atual = self.falas[self.transcritas]
             self.transcritas += 1
-            return self._atual[0]
+            texto, _, quanto = self._atual
+            if quanto is SEM_MEDIDA:
+                return Transcricao(texto, None)
+            confianca = [0.95] * len(texto.split())
+            if quanto == DUVIDA and len(confianca) > 1:
+                confianca[1] = 0.30
+            return Transcricao(texto, tuple(confianca))
         if self._atual[1] is None:
             raise RuntimeError("servidor de voz fora do ar")
-        return self._atual[1]
+        return Transcricao(self._atual[1], tuple([0.9] * len(self._atual[1].split())))
+
+    def transcrever(self, audio, sr, dica=None) -> str:
+        return self.ouvir(audio, sr, dica=dica).texto
 
 
 @pytest.fixture()
@@ -88,6 +110,28 @@ def test_segunda_escuta_que_nao_confirma_nao_ativa(montar) -> None:
     assert cena.voz.dicas == [None, FRASE]
     assert cena.cerebro.recebidas == [] and cena.voz.faladas == []
     assert cena.eventos("voice.wake.activated") == []
+
+
+def test_a_falsa_ativacao_medida_no_robo_nao_acontece_mais(montar) -> None:
+    """"Fala galera, beleza?" — o Whisper ouviu "galera" com certeza, e com a
+    dica escreveu "Garra" assim mesmo. Com certeza na primeira escuta, não há
+    segunda."""
+    cena = montar(LIGADA, [("Fala galera, beleza?", "Fala Garra, beleza?", CERTEZA),
+                           ("Fala, cara, tudo bem?", "Fala Garra, tudo bem?", CERTEZA)], [])
+    cena.alguem_fala()
+    cena.alguem_fala()
+
+    assert cena.voz.dicas == [None, None]
+    assert cena.cerebro.recebidas == [] and cena.voz.faladas == []
+    assert cena.eventos("voice.wake.activated") == []
+
+
+def test_servidor_de_voz_que_nao_diz_a_confianca_nao_tem_segunda_escuta(montar) -> None:
+    cena = montar(LIGADA, [(ERRADA, CERTA, SEM_MEDIDA)], [])
+    cena.alguem_fala()
+
+    assert cena.voz.dicas == [None]
+    assert cena.cerebro.recebidas == []
 
 
 def test_so_vale_a_frase_exata_na_segunda_escuta(montar) -> None:
@@ -195,7 +239,10 @@ def test_ligado_o_evento_traz_so_o_trecho_parecido(montar) -> None:
     [perto] = cena.eventos("voice.wake.near_miss")
     assert (perto["heard"], perto["position"], perto["distance"]) == ("fala gabi", 0, 3)
     assert perto["second_listen"] == "rejected"
+    assert perto["confidence"] == 0.3
     assert "horas" not in tudo(cena), "o resto do enunciado não entra"
+    assert set(perto) <= {"event_id", "type", "timestamp", "heard", "position", "distance",
+                          "confidence", "second_listen"}
 
 
 def test_o_diagnostico_conta_quando_a_segunda_escuta_salvou(montar) -> None:
@@ -214,6 +261,26 @@ def test_o_diagnostico_mostra_a_frase_que_veio_fora_do_comeco(montar) -> None:
     assert (perto["heard"], perto["position"], perto["distance"]) == ("fala garra", 2, 0)
     assert perto["second_listen"] == "not_tried"
     assert cena.voz.dicas == [None]
+
+
+@pytest.mark.parametrize("quanto,resultado", [
+    (CERTEZA, "skipped_confident"),
+    (SEM_MEDIDA, "unknown_confidence"),
+])
+def test_o_diagnostico_diz_por_que_nao_houve_segunda_escuta(montar, quanto, resultado) -> None:
+    cena = montar(DIAGNOSTICO, [("Fala galera, beleza?", CERTA, quanto)], [])
+    cena.alguem_fala()
+
+    [perto] = cena.eventos("voice.wake.near_miss")
+    assert (perto["heard"], perto["second_listen"]) == ("fala galera", resultado)
+    assert cena.voz.dicas == [None]
+
+
+def test_o_diagnostico_diz_quando_a_segunda_escuta_esta_desligada(montar) -> None:
+    cena = montar({**DIAGNOSTICO, "wake_second_listen_enabled": False}, [(ERRADA, CERTA)], [])
+    cena.alguem_fala()
+    [perto] = cena.eventos("voice.wake.near_miss")
+    assert perto["second_listen"] == "disabled"
 
 
 def test_o_diagnostico_diz_quando_a_conferencia_falhou(montar) -> None:

@@ -323,27 +323,83 @@ def confirma(texto: str, frase: tuple[str, ...]) -> bool:
     return bool(frase) and _casar(tokens(texto), frase) == (len(frase), "exact")
 
 
-def merece_segunda_escuta(ouvido: list[str],
-                          frase: tuple[str, ...]) -> dict[str, Any] | None:
-    """O enunciado foi recusado, mas COMEÇA com algo que lembra a frase?
+# Abaixo disto o STT está em dúvida sobre a palavra que escreveu. Medido pela
+# bancada em 29/09/2026: quando ele erra a frase de ativação, a confiança na
+# palavra errada fica entre 0,13 e 0,62 (12 medidas); quando alguém diz mesmo
+# "galera", "cara" ou "agora", entre 0,83 e 0,99 (9 de 11).
+SEGUNDA_ESCUTA_CONFIANCA_MAX = 0.75
 
-    Então vale pedir ao STT que ouça de novo, desta vez sabendo qual é a frase.
+
+def confianca_por_token(texto: str, por_palavra: Any) -> tuple[float, ...] | None:
+    """A confiança do STT, alinhada aos tokens de `texto`.
+
+    O STT dá uma probabilidade por palavra, e as palavras dele são os pedaços
+    de `texto` separados por espaço. Uma palavra pode virar dois tokens
+    ("guarda-chuva") ou nenhum ("—"). Se a conta não fecha — servidor de voz
+    antigo, lista truncada, número que não é probabilidade —, a confiança é
+    desconhecida: `None`, e não um palpite.
+    """
+    if not isinstance(por_palavra, (list, tuple)):
+        return None
+    palavras = (texto or "").split()
+    if len(palavras) != len(por_palavra):
+        return None
+    saida: list[float] = []
+    for palavra, p in zip(palavras, por_palavra):
+        if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0.0 <= p <= 1.0:
+            return None
+        saida.extend([float(p)] * len(tokens(palavra)))
+    return tuple(saida)
+
+
+def merece_segunda_escuta(ouvido: list[str], frase: tuple[str, ...],
+                          confianca: Any) -> dict[str, Any] | None:
+    """O enunciado foi recusado, mas vale pedir ao STT que ouça de novo?
+
     Pela bancada (caixas de som → microfone do robô), de 30 "Fala Garra, …" o
     Whisper acertou a frase em 6; nas outras saiu "fala gabi", "fala garne",
     "fala gab"… Com a frase dada como dica, acertou as 30.
 
     A dica não vai em tudo porque, em tudo, ela faz silêncio e ruído virarem
-    "Fala Garra" — medido e descartado no 1.3.3. Aqui ela só entra quando
-    alguém já disse, no começo do enunciado, algo a três letras da frase.
+    "Fala Garra" — medido e descartado no 1.3.3. E não basta o começo do
+    enunciado lembrar a frase: medido no robô, "Fala galera, beleza?" e "Fala,
+    cara, tudo bem?" ativaram em 3 de 16, porque a dica convence o STT a trocar
+    "galera" por "Garra".
 
-    Devolve o trecho parecido (o mesmo de `quase`), ou `None`.
+    Vale quando as duas coisas são verdade: o começo lembra a frase, E o STT
+    estava em dúvida sobre o que escreveu ali (`confianca`, uma probabilidade
+    por token). Confiança desconhecida é "não": dos dois erros possíveis, o
+    robô que se ativa sozinho é o pior.
+
+    Devolve o trecho parecido (o mesmo de `quase`) com a menor confiança dele
+    em `confidence`, ou `None`.
+    """
+    perto, motivo = exame(ouvido, frase, confianca)
+    return perto if motivo == "unsure" else None
+
+
+def exame(ouvido: list[str], frase: tuple[str, ...],
+          confianca: Any) -> tuple[dict[str, Any] | None, str]:
+    """O trecho parecido e o que fazer com ele.
+
+    O segundo valor é `"unsure"` (vale a segunda escuta), `"confident"` (o STT
+    tinha certeza do que ouviu), `"unknown"` (não se sabe a confiança),
+    `"elsewhere"` (parecido, mas não no começo) ou `"none"`.
     """
     if _casar(ouvido, frase)[0]:
-        return None
+        return None, "none"
     perto = quase(ouvido, frase)
-    if perto is None or perto["position"] != 0:
-        return None
-    return perto
+    if perto is None:
+        return None, "none"
+    if perto["position"] != 0:
+        return perto, "elsewhere"
+    quantos = len(perto["heard"].split())
+    if (not isinstance(confianca, (list, tuple)) or len(confianca) < quantos
+            or len(confianca) != len(ouvido)):
+        return perto, "unknown"
+    menor = min(float(p) for p in confianca[:quantos])
+    perto = dict(perto, confidence=round(menor, 2))
+    return perto, "unsure" if menor < SEGUNDA_ESCUTA_CONFIANCA_MAX else "confident"
 
 
 def avaliar(texto: str, capturado_em: float, sessao: Sessao, ativacao: Ativacao,

@@ -731,6 +731,19 @@ class GarraReachyMini(ReachyMiniApp):
         # A partir daqui o painel também consegue falar pelo robô.
         self._falar_texto = falar
 
+        def ouvir(audio: np.ndarray, dica: str | None = None):
+            """O texto e a confiança por palavra (`None` quando não se sabe).
+
+            Serve ao `VozClient` e a quem só sabe `transcrever` — servidor de
+            voz antigo, ou de teste —, que não tem confiança a dar.
+            """
+            extra = {"dica": dica} if dica else {}
+            metodo = getattr(voz, "ouvir", None)
+            if metodo is None:
+                return voz.transcrever(audio, sr_in, **extra), None
+            ouvido = metodo(audio, sr_in, **extra)
+            return ouvido.texto, ouvido.confianca
+
         def processar(audio: np.ndarray, esperas: list[np.ndarray]) -> None:
             dur = audio.size / sr_in
             if dur < FALA_MINIMA_S:
@@ -743,7 +756,7 @@ class GarraReachyMini(ReachyMiniApp):
             gestos.pensando()
             t0 = time.time()
             try:
-                texto = voz.transcrever(audio, sr_in)
+                texto, confianca = ouvir(audio)
             except Exception:
                 self._falhas_voz += 1
                 log.exception("Falha no STT (%d seguidas)", self._falhas_voz)
@@ -769,18 +782,24 @@ class GarraReachyMini(ReachyMiniApp):
             # ── segunda escuta ────────────────────────────────────────────
             # Pelo microfone do robô o STT erra a frase mais do que acerta:
             # "fala gabi", "fala garne". Quando o COMEÇO do que ele ouviu lembra
-            # a frase, vale perguntar de novo dizendo qual é. Só nesse caso: a
-            # frase dada como dica em tudo faz ruído virar chamado.
+            # a frase E ele mesmo duvidava do que escreveu ali, vale perguntar
+            # de novo dizendo qual é a frase. Só nesse caso: a frase dada como
+            # dica em tudo faz ruído virar chamado, e dada sempre que o começo
+            # é parecido faz "fala galera" virar chamado.
             perto, conferencia = None, "not_tried"
             if not veredicto.aceito and veredicto.motivo == "wake_phrase_required":
                 preferencias = conversa.normalizar(conf_wake.conversa)
                 ouvido = ativacao.tokens(texto)
-                if preferencias["wake_diagnostics_enabled"]:
-                    perto = ativacao.quase(ouvido, ativ.frase)
-                if (preferencias["wake_second_listen_enabled"] and ativ.dica
-                        and ativacao.merece_segunda_escuta(ouvido, ativ.frase)):
+                perto, exame = ativacao.exame(
+                    ouvido, ativ.frase, ativacao.confianca_por_token(texto, confianca))
+                conferencia = {"confident": "skipped_confident",
+                               "unknown": "unknown_confidence"}.get(exame, "not_tried")
+                if exame == "unsure" and not (
+                        preferencias["wake_second_listen_enabled"] and ativ.dica):
+                    conferencia = "disabled"
+                elif exame == "unsure":
                     try:
-                        de_novo = voz.transcrever(audio, sr_in, dica=ativ.dica)
+                        de_novo, _ = ouvir(audio, dica=ativ.dica)
                     except Exception:
                         # Não conta em `_falhas_voz`: a primeira escuta deste
                         # mesmo áudio acabou de dar certo.
@@ -798,13 +817,13 @@ class GarraReachyMini(ReachyMiniApp):
                                 texto = de_novo
                                 veredicto = dataclasses.replace(
                                     segundo, extras={"wake_match": "second_listen"})
-                if perto is not None:
+                if perto is not None and preferencias["wake_diagnostics_enabled"]:
                     # O único evento que carrega algo do que foi dito sem a
                     # frase — e carrega só o trecho que pareceu a frase.
                     controlador.eventos.publicar(
-                        "voice.wake.near_miss", heard=perto["heard"],
-                        position=perto["position"], distance=perto["distance"],
-                        second_listen=conferencia)
+                        "voice.wake.near_miss", second_listen=conferencia,
+                        **{k: perto[k] for k in ("heard", "position", "distance",
+                                                 "confidence") if k in perto})
             if not veredicto.aceito:
                 # Recusada por falta da frase: é conversa da sala. Com a escuta
                 # de contexto ligada ela fica em MEMÓRIA, para acompanhar o

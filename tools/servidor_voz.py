@@ -4,7 +4,8 @@ Roda na RTX 4090 e atende a ponte do robô em http://127.0.0.1:8123.
 
 Endpoints:
     GET  /saude                     -> estado dos modelos
-    POST /transcrever?sr=16000      -> corpo: float32 mono cru; retorna {"texto": ...}
+    POST /transcrever?sr=16000      -> corpo: float32 mono cru; retorna
+                                       {"texto": ..., "confianca": [uma por palavra]}
          &dica=fala%20garra         -> opcional: a frase de ativação, para a segunda escuta
     POST /falar                     -> json {"texto": ..., "sr": 16000}; retorna float32 mono cru
 
@@ -145,6 +146,23 @@ DICA_MAX = 60
 _DICA = re.compile(r"[^\W_]+(?: [^\W_]+)*")
 
 
+def confianca_das_palavras(segmentos, texto: str) -> list[float] | None:
+    """Uma probabilidade por palavra de `texto`, na ordem — ou `None`.
+
+    `None` quando o Whisper não devolveu palavras ou quando a contagem não bate
+    com o texto: quem recebe alinha pela posição, e uma lista torta poria a
+    confiança de uma palavra em outra.
+    """
+    palavras = []
+    for s in segmentos:
+        if getattr(s, "words", None) is None:
+            return None
+        palavras.extend(s.words)
+    if len(palavras) != len(texto.split()):
+        return None
+    return [round(float(p.probability), 3) for p in palavras]
+
+
 @app.post("/transcrever")
 async def transcrever(request: Request, sr: int = Query(default=16000),
                       dica: str = Query(default="")):
@@ -155,7 +173,7 @@ async def transcrever(request: Request, sr: int = Query(default=16000),
     corpo = await request.body()
     audio = np.frombuffer(corpo, dtype=np.float32)
     if audio.size < sr // 10:
-        return JSONResponse({"texto": ""})
+        return JSONResponse({"texto": "", "confianca": []})
     if sr != 16000:
         t = torch.from_numpy(audio.copy())
         audio = torchaudio.functional.resample(t, sr, 16000).numpy()
@@ -167,16 +185,20 @@ async def transcrever(request: Request, sr: int = Query(default=16000),
     # virarem a frase (medido em 29/09/2026). O robô só a manda quando o começo
     # do que ouviu já lembrava a frase.
     extra = {"hotwords": dica} if dica else {}
+    # `word_timestamps` não é pelos tempos: é o que faz o Whisper dizer o
+    # quanto confia em cada palavra. Medido na GPU: 0,11 s contra 0,12 s.
     segmentos, _ = stt.transcribe(audio, language="pt", vad_filter=True, beam_size=2,
-                                  **extra)
-    texto = " ".join(s.text for s in segmentos).strip()
+                                  word_timestamps=True, **extra)
+    segmentos = list(segmentos)
+    texto = " ".join(" ".join(s.text for s in segmentos).split())
+    confianca = confianca_das_palavras(segmentos, texto)
     ultima_transcricao_em, ultima_transcricao_tam = time.time(), len(texto)
     # O texto vai só para DEBUG. Em INFO este log já acumulou conversa de casa,
     # inclusive de crianças, num arquivo que ninguém lembrava que existia.
     log.info("STT %.2fs (%d caracteres%s)", time.time() - t0, len(texto),
              ", com dica" if dica else "")
     log.debug("STT texto: %r", texto)
-    return JSONResponse({"texto": texto})
+    return JSONResponse({"texto": texto, "confianca": confianca})
 
 
 def sintetizar(texto: str, sr_destino: int) -> np.ndarray:
