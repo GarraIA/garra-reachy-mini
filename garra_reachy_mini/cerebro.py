@@ -343,6 +343,14 @@ class GatewayBrain:
             try:
                 r = self.http.get(
                     self._url(f"/api/sessions/{self.session_id}/history"), timeout=4)
+                if r.status_code == 404:
+                    # A sessão não vale mais: o gateway reiniciou, ou a ponte a
+                    # recusa. `perguntar` já se recupera disso no turno seguinte;
+                    # aqui, sem ninguém falando, o poll insistiria para sempre.
+                    self.log.info("Sessão %s recusada no poll; abrindo outra.",
+                                  self.session_id)
+                    self._criar_sessao()
+                    return []
                 if r.status_code != 200:
                     return []
                 mensagens = r.json().get("messages", [])

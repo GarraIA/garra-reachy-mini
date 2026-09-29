@@ -80,6 +80,16 @@ CICLO_VOZ_ESTAVEL_S = 30.0
 REJEICAO_INTERVALO_S = 30.0
 
 
+def troca_de_sessao(cerebro_atual: list) -> "Callable[[], str | None]":
+    """A troca de sessão do cérebro EM USO, e não do que existia ao ligar.
+
+    O laço de voz reconstrói o cérebro quando o gateway volta. Amarrar a rota
+    ao método do cérebro antigo fazia "nova conversa" responder `ok` sem
+    trocar nada: quem atendia era um cérebro já fechado, em modo reserva.
+    """
+    return lambda: cerebro_atual[0].nova_sessao()
+
+
 class ResultadoFala(Enum):
     """Por que uma tentativa de fala terminou como terminou.
 
@@ -286,8 +296,9 @@ class GarraReachyMini(ReachyMiniApp):
             codigo="ok" if alcancou else "unreachable",
             detalhe=cfg.gateway_url,
             dica="" if alcancou else
-                 "The Garra gateway did not answer. Open the Reachy page on the "
-                 "Garra console and use Configure or reconnect Reachy.",
+                 "The Garra gateway did not answer. Start the Garra companion "
+                 "on the desktop (systemctl --user start "
+                 "garra-reachy-companion) and check that the gateway is up.",
         )
         self.servicos.marcar(
             "brain", disponivel,
@@ -620,7 +631,7 @@ class GarraReachyMini(ReachyMiniApp):
         self._calar = calar
         # O cérebro é local a esta função; o painel alcança a troca de sessão
         # por aqui, e só enquanto o loop de voz está de pé.
-        self._trocar_sessao = cerebro.nova_sessao
+        self._trocar_sessao = troca_de_sessao(cerebro_atual)
 
         def ler_mono() -> np.ndarray:
             pedaco = reachy_mini.media.get_audio_sample()

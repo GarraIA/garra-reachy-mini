@@ -419,7 +419,12 @@ def test_o_nucleo_deste_robo_nao_tem_nome_nem_id(conf):
     real = pathlib.Path("~/.config/garraia/config.yml").expanduser()
     if not real.exists():
         return
-    a = yaml.safe_load(real.read_text(encoding="utf-8"))["agents"]["reachy_voice"]
+    producao = yaml.safe_load(real.read_text(encoding="utf-8")) or {}
+    a = (producao.get("agents") or {}).get("reachy_voice")
+    if not isinstance(a, dict):
+        # Gateway sem o agente (o público, que restringe por modo e não por
+        # agente): não há núcleo de produção para conferir.
+        pytest.skip("o config de produção não define agents.reachy_voice")
     nucleo = a.get("system_prompt") or ""
     # A invariante certa não tem nome de ninguém: SE um operador está
     # configurado, o nome dele não pode aparecer diluído no núcleo — o campo

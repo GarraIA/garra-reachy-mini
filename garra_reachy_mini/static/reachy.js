@@ -86,12 +86,17 @@ function pintarServicos(dados) {
   $('lista-servicos').innerHTML = faltando.map((s) => {
     const nome = t(`servico.${s.name}`);
     const motivo = t(`motivo.${s.reason_code}`);
-    // A dica vem do servidor em inglês; quando existe tradução para o mesmo
-    // `reason_code`, ela vence. `t()` devolve a própria chave quando não acha.
+    // A dica vem do servidor em inglês; quando existe tradução, ela vence.
+    // Primeiro a do SERVIÇO: "não respondeu" é o mesmo motivo para a voz e
+    // para o gateway, e o conselho de um não serve ao outro. `t()` devolve a
+    // própria chave quando não acha.
     // Só onde o servidor achou que cabia uma dica — senão o mesmo conselho
     // aparece repetido em três serviços que caíram pelo mesmo motivo.
-    const traduzida = t(`dica.${s.reason_code}`);
-    const texto = s.hint ? (traduzida.startsWith('dica.') ? s.hint : traduzida) : '';
+    const doServico = t(`dica.${s.name}.${s.reason_code}`);
+    const doMotivo = t(`dica.${s.reason_code}`);
+    const traduzida = !doServico.startsWith('dica.') ? doServico
+      : !doMotivo.startsWith('dica.') ? doMotivo : '';
+    const texto = s.hint ? (traduzida || s.hint) : '';
     const dica = texto ? ` <span class="dica">${esc(texto)}</span>` : '';
     return `<li><b>${esc(nome)}</b>: ${esc(motivo)}${dica}</li>`;
   }).join('');
