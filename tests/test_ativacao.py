@@ -66,6 +66,102 @@ def test_prefixo_parcial_nao_ativa() -> None:
     assert avaliar("garra", s, 100.0).aceito is False
 
 
+# ─── tolerância ao erro do STT ───────────────────────────────────────────────
+# Medido em 29/09/2026 com o Whisper do servidor de voz: "Fala Garra" dito 60
+# vezes, reconhecido em 45. As linhas abaixo são transcrições REAIS daquela
+# medida. Casamento exato recusava todas, e quem falava com o robô só via o
+# robô ignorar. Os erros caem em três lugares, e só neles: as palavras se
+# fundem, uma letra nasce na emenda entre elas, ou o primeiro som sai trocado.
+@pytest.mark.parametrize("ouvido,resto", [
+    ("Falagarra que dia é hoje", "que dia é hoje"),            # fundiu
+    ("Falangarra, que horas são?", "que horas são?"),          # fundiu, letra na emenda
+    ("Fala, agarra, levanta a cabeça.", "levanta a cabeça."),  # letra na emenda
+    ("Fala a garra! Que horas são?", "Que horas são?"),        # a mesma, solta
+    ("Palagarra! Que horas são?", "Que horas são?"),           # fundiu, 1º som trocado
+    ("Balagarra, olhe para mim.", "olhe para mim."),
+    ("Bala Garra, olhe para mim!", "olhe para mim!"),          # 1º som trocado
+])
+def test_o_erro_de_borda_do_stt_ainda_ativa(ouvido, resto) -> None:
+    s = nova()
+    d = avaliar(ouvido, s, 100.0)
+    assert d.aceito is True and d.abriu_sessao
+    assert d.motivo == "wake_phrase"
+    assert d.texto == resto, "o que segue ao modelo é o original, sem a frase"
+
+
+@pytest.mark.parametrize("ouvido", [
+    "fala garrafa agora",             # a garantia nº 1 não pode cair com a tolerância
+    # Uma letra de diferença, e frase de verdade: foi a falsa ativação que uma
+    # tolerância de "qualquer letra" produziu na mesma medida.
+    "Falta garra nesse time.",
+    "Fala barra de ferro",
+    "Fala garras afiadas",
+    "Fala gara",
+    "Paula Garra, tudo bem com você?",
+    "Fala, guerra, que horas são?",
+    "Vou agarrar aqui",
+    "Oi Garra, tudo bem?",
+    "E aí, fala Garra, tudo bem?",    # aproximado também é só no COMEÇO
+])
+def test_erro_fora_da_borda_nao_ativa(ouvido) -> None:
+    s = nova()
+    d = avaliar(ouvido, s, 100.0)
+    assert d.aceito is False
+    assert d.motivo == "wake_phrase_required"
+    assert s.abertura is None
+
+
+def test_a_tolerancia_nao_engole_a_primeira_palavra_do_pedido() -> None:
+    """`"falagarraa"` está a uma letra da frase; casar por aí comeria o "a"."""
+    s = nova()
+    assert avaliar("Fala Garra e aí?", s, 100.0).texto == "e aí?"
+    assert avaliar("Fala Garra, a luz está acesa?", s, 200.0).texto == "a luz está acesa?"
+    assert avaliar("Falagarra a luz está acesa?", s, 300.0).texto == "a luz está acesa?"
+    assert avaliar("Palagarra e aí?", s, 400.0).texto == "e aí?"
+
+
+def test_a_emenda_e_a_da_frase_configurada() -> None:
+    """A tolerância acompanha a frase do dono, não a de fábrica."""
+    outra = ativacao.Ativacao(habilitada=True, frase=("oi", "reachy", "mini"),
+                              janela_s=15.0, sessao_max_s=90.0)
+    for ouvido in ("Oi Reachy Mini, olhe", "Oireachy mini, olhe",
+                   "Oi Reachyn Mini, olhe", "Ei Reachy Mini, olhe"):
+        assert avaliar(ouvido, nova(), 100.0, ativ=outra).texto == "olhe", ouvido
+    assert avaliar("Oi Reachy Mimi, olhe", nova(), 100.0, ativ=outra).aceito is False
+
+
+def test_a_frase_aproximada_sozinha_abre_sessao_sem_turno() -> None:
+    s = nova()
+    d = avaliar("Palagarra!", s, 100.0)
+    assert d.aceito and d.so_ativacao and d.abriu_sessao
+    assert d.texto == ""
+
+
+def test_frase_curta_nao_ganha_tolerancia() -> None:
+    """Uma letra em cinco não é erro de STT, é outra palavra: barra, jarra, agarra."""
+    curta = ativacao.Ativacao(habilitada=True, frase=("garra",),
+                              janela_s=15.0, sessao_max_s=90.0)
+    for outra in ("Barra de ferro", "Agarra isso", "Gara", "Garras afiadas"):
+        assert avaliar(outra, nova(), 100.0, ativ=curta).aceito is False, outra
+    assert avaliar("Garra, olhe para mim", nova(), 100.0, ativ=curta).aceito is True
+
+
+def test_o_eco_aproximado_tambem_nao_abre_sessao() -> None:
+    """A margem anti-eco vale para o que ATIVA, exato ou não."""
+    s = nova()
+    s.falou_ate = 100.0
+    d = avaliar("Falangarra, tudo bem", s, 100.3, capturado=100.2)
+    assert d.aceito is False and d.motivo == "echo_suppressed"
+    assert s.abertura is None
+
+
+def test_a_decisao_diz_se_o_casamento_foi_exato_ou_aproximado() -> None:
+    """Sem isto não há como saber, no robô, quanto a tolerância está salvando."""
+    assert avaliar("Fala Garra, oi", nova(), 100.0).extras == {"wake_match": "exact"}
+    assert avaliar("Falangarra, oi", nova(), 100.0).extras == {
+        "wake_match": "approximate"}
+
+
 # ─── preservação do texto original ───────────────────────────────────────────
 def test_o_texto_util_preserva_acento_caixa_e_pontuacao() -> None:
     s = nova()
@@ -361,6 +457,16 @@ def test_o_evento_de_rejeicao_e_redigido_e_limitado() -> None:
     for proibido in ("content=", "texto", "transcript", "hash"):
         assert proibido not in evento, f"o evento carrega {proibido}"
     assert "REJEICAO_INTERVALO_S" in corpo, "sem rate limit"
+
+
+def test_o_evento_de_ativacao_diz_como_a_frase_casou() -> None:
+    """`exact` ou `approximate`, e nada do que foi dito."""
+    corpo = _processar()
+    i = corpo.index('"voice.wake.activated"')
+    evento = corpo[i:i + 300]
+    assert 'match=veredicto.extras.get("wake_match"' in evento
+    for proibido in ("content=", "texto", "transcript", "hash"):
+        assert proibido not in evento, f"o evento carrega {proibido}"
 
 
 def test_o_estop_e_reconhecido_antes_da_decisao() -> None:

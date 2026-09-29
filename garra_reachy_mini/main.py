@@ -768,7 +768,8 @@ class GarraReachyMini(ReachyMiniApp):
             if veredicto.abriu_sessao:
                 controlador.eventos.publicar(
                     "voice.wake.activated", window_s=ativ.janela_s,
-                    session_max_s=ativ.sessao_max_s)
+                    session_max_s=ativ.sessao_max_s,
+                    match=veredicto.extras.get("wake_match", "exact"))
             if veredicto.so_ativacao:
                 # "Fala Garra" sozinho: a sessão abriu e não há o que responder.
                 gestos.ouvindo()

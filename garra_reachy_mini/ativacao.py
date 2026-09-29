@@ -10,7 +10,8 @@ Três coisas que este módulo garante, e cada uma existe por um motivo concreto:
 
 1. **Fronteira de token, nunca `startswith`.** `"fala garrafa agora"` começa com
    `"fala garra"` e não é ativação nenhuma. A comparação é por sequência de
-   tokens iniciais.
+   tokens iniciais — com tolerância aos erros de BORDA do STT (ver `_casar`),
+   que não alcança `"garrafa"` nem frase de verdade como `"falta garra"`.
 2. **O texto original sobrevive.** A normalização serve só para *detectar*.
    O que segue para o chat, o histórico e o modelo é o original com a frase
    removida — com acento, caixa e pontuação intactos. Mandar texto normalizado
@@ -34,6 +35,11 @@ from .robo.intencoes import normalizar
 # rastro dele. Curta de propósito: ela não pode impedir a pessoa de responder
 # logo depois do robô.
 MARGEM_ECO_S = 0.5
+
+# A partir de quantas letras a frase ganha tolerância. Abaixo disto ela troca
+# de palavra em vez de perdoar o STT: com o primeiro som trocado, "garra" é
+# barra, jarra, farra e marra.
+TOLERANCIA_MIN_LETRAS = 8
 
 # Faixas do evento de rejeição. Duração exata em milissegundos é mais precisão
 # do que o diagnóstico precisa e mais do que se deve guardar sobre alguém.
@@ -171,6 +177,62 @@ def _remover_prefixo(original: str, quantos: int) -> str:
     return original[i:].lstrip(" ,.;:!?-–—\t\n").strip()
 
 
+def _erro_de_borda(colado: str, alvo: str, emendas: tuple[int, ...]) -> bool:
+    """`colado` é `alvo` com um dos erros que o STT comete nas bordas?
+
+    Medido em 29/09/2026, "Fala Garra" dito 60 vezes ao Whisper do servidor de
+    voz: 45 saíram certas e as outras caíram em três lugares.
+
+    - As palavras se fundem: `"falagarra"`.
+    - Uma letra nasce na emenda entre elas: `"falangarra"`, `"fala agarra"`,
+      `"fala a garra"`.
+    - O primeiro som do enunciado sai trocado: `"palagarra"`, `"bala garra"`.
+
+    Letra trocada, a mais ou a menos em QUALQUER outro lugar não entra. Foi o
+    que a mesma medida reprovou: tolerar "uma letra, onde for" ativou o robô
+    com `"falta garra nesse time"`, que é frase de verdade.
+    """
+    if colado == alvo:
+        return True
+    if len(colado) == len(alvo):
+        return colado[1:] == alvo[1:]
+    if len(colado) == len(alvo) + 1:
+        return any(colado[:j] == alvo[:j] and colado[j + 1:] == alvo[j:]
+                   for j in emendas)
+    return False
+
+
+def _casar(ouvido: list[str], frase: tuple[str, ...]) -> tuple[int, str]:
+    """Quantos tokens iniciais de `ouvido` são a frase, e como casaram.
+
+    `(0, "")` quando não são. A comparação aproximada é sobre os tokens
+    COLADOS, porque o STT tanto funde a frase (`"falagarra"`) quanto solta a
+    letra que nasceu na emenda (`"fala a garra"`). Colar não põe o pedido em
+    risco: nenhum erro tolerado fica no FIM da frase, então `"fala garra a
+    luz"` não tem como perder o `"a"`.
+    """
+    n = len(frase)
+    if not n:
+        return 0, ""
+    if tuple(ouvido[:n]) == frase:
+        return n, "exact"
+    alvo = "".join(frase)
+    if len(alvo) < TOLERANCIA_MIN_LETRAS:
+        return 0, ""
+    emendas, corrido = [], 0
+    for palavra in frase[:-1]:
+        corrido += len(palavra)
+        emendas.append(corrido)
+    colado = ""
+    for k, palavra in enumerate(ouvido, start=1):
+        colado += palavra
+        if len(colado) > len(alvo) + 1:
+            break
+        if _erro_de_borda(colado, alvo, tuple(emendas)):
+            return k, "approximate"
+    return 0, ""
+
+
 def avaliar(texto: str, capturado_em: float, sessao: Sessao, ativacao: Ativacao,
             agora: float, e_stop: bool = False) -> Decisao:
     """O enunciado passa? E, se passa, com que texto?
@@ -192,27 +254,26 @@ def avaliar(texto: str, capturado_em: float, sessao: Sessao, ativacao: Ativacao,
                        estado_sessao="open" if sessao.aberta(agora, ativacao)
                        else "closed")
 
-    n = tokens(texto)
-    frase = ativacao.frase
-    bate = bool(frase) and len(n) >= len(frase) and tuple(n[:len(frase)]) == frase
+    quantos, casamento = _casar(tokens(texto), ativacao.frase)
 
-    if bate:
+    if quantos:
         # Eco: o robô acabou de falar e o microfone pegou a própria voz. Não
         # abre sessão. Uma sessão JÁ aberta segue valendo — a margem existe
         # contra autoativação, não contra a pessoa.
         if capturado_em - sessao.falou_ate < MARGEM_ECO_S:
             if sessao.aberta(agora, ativacao):
                 sessao.renovar(agora)
-                return Decisao(True, _remover_prefixo(texto, len(frase)) or texto,
+                return Decisao(True, _remover_prefixo(texto, quantos) or texto,
                                "session_open", estado_sessao="open")
             return Decisao(False, "", "echo_suppressed", estado_sessao="closed")
         sessao.abrir(agora, ativacao)
-        resto = _remover_prefixo(texto, len(frase))
+        resto = _remover_prefixo(texto, quantos)
+        como = {"wake_match": casamento}
         if not resto:
             return Decisao(True, "", "wake_only", abriu_sessao=True,
-                           so_ativacao=True, estado_sessao="open")
+                           so_ativacao=True, estado_sessao="open", extras=como)
         return Decisao(True, resto, "wake_phrase", abriu_sessao=True,
-                       estado_sessao="open")
+                       estado_sessao="open", extras=como)
 
     if sessao.aberta(agora, ativacao):
         return Decisao(True, texto, "session_open", estado_sessao="open")
