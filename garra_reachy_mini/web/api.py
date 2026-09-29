@@ -34,7 +34,9 @@ from fastapi import (
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                StreamingResponse)
 
-from .. import armazenamento, build_info, conversa, recursos
+from .. import armazenamento, build_info, conversa, envelope, recursos
+from .. import caderno as caderno_mod
+from ..acompanhamento import Acompanhamento
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
 from ..robo.barramento import Barramento
 from ..servicos import Servicos
@@ -63,6 +65,9 @@ class ContextoWeb:
     eventos: Barramento
     politica: Politica
     chat: PonteChat | None = None
+    # A escuta de contexto e o caderno. O MESMO objeto que o laço de voz usa:
+    # é por ele que o painel lê o caderno e manda esquecer o que foi ouvido.
+    acompanhamento: Acompanhamento | None = None
     # Quais subsistemas estão de pé. Sem isto o painel não tem como distinguir
     # "sem voz porque você não configurou" de "sem voz porque quebrou".
     servicos: Servicos = field(default_factory=Servicos)
@@ -180,6 +185,10 @@ def montar(app: FastAPI, ctx: ContextoWeb) -> None:
     if not hasattr(app.state, "reachy_politica"):
         # Caminho de quem monta tudo de uma vez (modo simulado, testes).
         preparar(app, ctx.politica, ctx.limitador)
+    if ctx.acompanhamento is None:
+        # Quem monta sem laço de voz (modo simulado antigo, testes) ainda tem
+        # caderno: ele é um arquivo, não depende de microfone.
+        ctx.acompanhamento = Acompanhamento(ctx.eventos)
     app.state.reachy = ctx
     app.state.reachy_politica = ctx.politica
     app.state.reachy_limitador = ctx.limitador
@@ -396,6 +405,57 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
     async def diagnostico_runtime() -> dict[str, Any]:
         return await asyncio.to_thread(build_info.diagnostico)
 
+    # ── caderno e escuta de contexto ─────────────────────────────────────────
+    # O painel é onde se CONFERE o que o robô anotou: o modelo pode dizer
+    # "anotado" e não ter anotado, e só o arquivo diz a verdade.
+    ac = ctx.acompanhamento
+    assert ac is not None
+
+    def _caderno_json() -> dict[str, Any]:
+        return {"lists": ac.caderno.ler(),
+                "limits": {"lists": caderno_mod.MAX_LISTAS,
+                           "items": caderno_mod.MAX_ITENS,
+                           "item_chars": caderno_mod.MAX_ITEM}}
+
+    def _apagou(lista: str) -> None:
+        # Sem o item: o evento diz que mudou e quanto sobrou, nunca o quê.
+        chave = caderno_mod.chave_de_lista(lista)
+        ctx.eventos.publicar(
+            "notebook.changed", list=chave, op="remove", applied=True,
+            items=len(ac.caderno.ler().get(chave, [])), source="painel")
+
+    @r.get("/notebook")
+    async def caderno_ler() -> dict[str, Any]:
+        return await asyncio.to_thread(_caderno_json)
+
+    @r.delete("/notebook/{lista}/{indice}")
+    async def caderno_apagar_item(lista: str, indice: int) -> dict[str, Any]:
+        if not await asyncio.to_thread(ac.caderno.remover_indice, lista, indice):
+            raise _erro(404, "esse item não existe", codigo="item_not_found")
+        await asyncio.to_thread(_apagou, lista)
+        return await asyncio.to_thread(_caderno_json)
+
+    @r.delete("/notebook/{lista}")
+    async def caderno_apagar_lista(lista: str) -> dict[str, Any]:
+        if not await asyncio.to_thread(ac.caderno.apagar_lista, lista):
+            raise _erro(404, "essa lista não existe", codigo="list_not_found")
+        await asyncio.to_thread(_apagou, lista)
+        return await asyncio.to_thread(_caderno_json)
+
+    @r.get("/ambient-context")
+    async def ambiente_ler() -> dict[str, Any]:
+        # Quanto há guardado, nunca o quê: esta rota responde a qualquer um que
+        # alcance o painel, e o que foi ouvido é conversa de casa.
+        conf = _conversa_atual()
+        return {"enabled": bool(conf["ambient_context_enabled"]
+                                and conf["wake_phrase_enabled"]),
+                "window_s": conf["ambient_context_window_s"],
+                **ac.memoria.medida()}
+
+    @r.delete("/ambient-context")
+    async def ambiente_esquecer() -> dict[str, Any]:
+        return {"ok": True, "forgotten": ac.esquecer()}
+
     @r.get("/conversation")
     async def conversa_ler() -> dict[str, Any]:
         return await asyncio.to_thread(_ler_conversa)
@@ -540,6 +600,11 @@ class _Conflito(RuntimeError):
         self.atual = atual
 
 
+def _conversa_atual() -> dict[str, Any]:
+    """Os interruptores como valem AGORA, lidos do arquivo a cada uso."""
+    return conversa.normalizar(armazenamento.carregar_config().get("conversation"))
+
+
 def _ler_conversa() -> dict[str, Any]:
     salvo = armazenamento.carregar_config()
     conf = conversa.normalizar(salvo.get("conversation"))
@@ -621,11 +686,21 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
             "chat.message", correlation_id=correlacao, role="user", content=texto,
             source="painel",
         )
+        # O caderno vale também para quem digita. O que o microfone ouviu NÃO:
+        # quem está no painel não estava sendo ouvido, e o contexto continua
+        # esperando o pedido por voz. O evento acima mostra o que foi digitado;
+        # a mensagem montada é entre o app e o modelo.
+        ac = ctx.acompanhamento
+        conf = await asyncio.to_thread(_conversa_atual)
+        mensagem = await asyncio.to_thread(
+            ac.montar, texto, time.monotonic(), conf, correlacao, False)
         try:
-            resposta = await ponte().enviar(texto)
+            resposta = await ponte().enviar(mensagem)
         except ErroChat as e:
             ctx.eventos.publicar("chat.error", correlation_id=correlacao, error=str(e))
             raise _erro(502, str(e)) from e
+        resposta["content"] = await asyncio.to_thread(
+            ac.receber, resposta.get("content") or "", conf, correlacao)
         ctx.eventos.publicar(
             "chat.message", correlation_id=correlacao, role="assistant",
             content=resposta["content"], source="garra",
@@ -637,9 +712,17 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
     @r.get("/historico")
     async def historico() -> dict[str, Any]:
         try:
-            return {"messages": await ponte().historico()}
+            mensagens = await ponte().historico()
         except ErroChat as e:
             raise _erro(502, str(e)) from e
+        # A sessão do gateway guarda a mensagem MONTADA e a resposta com a
+        # diretiva. O painel mostra o que a pessoa escreveu e o que ouviu.
+        for m in mensagens:
+            if isinstance(m, dict) and isinstance(m.get("content"), str):
+                m["content"] = (envelope.pedido_de(m["content"])
+                                if m.get("role") == "user"
+                                else caderno_mod.sem_diretivas(m["content"]))
+        return {"messages": mensagens}
 
     @r.post("/limpar")
     async def limpar() -> dict[str, Any]:

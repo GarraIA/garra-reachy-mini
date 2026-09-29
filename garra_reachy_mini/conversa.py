@@ -87,6 +87,18 @@ PADRAO: dict[str, Any] = {
     # janela de inatividade: é o que impede uma sala barulhenta de manter o
     # robô escutando indefinidamente.
     "wake_phrase_session_max_s": 90,
+    # ── escuta de contexto ───────────────────────────────────────────────────
+    # Com a frase de ativação ligada, o que é dito sem ela é recusado e some.
+    # Ligado, isto muda: o TEXTO do que foi ouvido fica em memória pela janela
+    # abaixo e acompanha o próximo pedido — é o que faz "insira isso na lista"
+    # ter sentido. Nasce desligado porque quebra, de propósito, a promessa de
+    # que nada dito sem a frase sai do robô. Ver ambiente.py.
+    "ambient_context_enabled": False,
+    "ambient_context_window_s": 120,
+    # ── caderno ──────────────────────────────────────────────────────────────
+    # Listas que o robô anota a pedido e guarda em arquivo. Ligado, todo pedido
+    # leva o que está anotado e a instrução de como anotar. Ver caderno.py.
+    "notebook_enabled": False,
     "progress_update_delay_ms": 10000,
     "max_progress_messages": 1,
     "acknowledgement_cut_threshold_ms": 1200,
@@ -106,7 +118,8 @@ PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": False}
 
 BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
              "spoken_acknowledgements_enabled", "spoken_progress_updates",
-             "announce_tool_usage", "wake_phrase_enabled")
+             "announce_tool_usage", "wake_phrase_enabled",
+             "ambient_context_enabled", "notebook_enabled")
 
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
 # folgado para isso e curto o bastante para não virar um parágrafo.
@@ -118,11 +131,15 @@ FRASE_MAX = 64
 # robô, não em teste de unidade, porque só a escrita passa pelo segundo.
 INTEIROS = ("progress_update_delay_ms", "max_progress_messages",
             "acknowledgement_cut_threshold_ms",
-            "wake_phrase_window_s", "wake_phrase_session_max_s")
+            "wake_phrase_window_s", "wake_phrase_session_max_s",
+            "ambient_context_window_s")
 
 LIMITES = {
     "wake_phrase_window_s": (3, 120),
     "wake_phrase_session_max_s": (15, 600),
+    # Piso de 30 s: menos que isso não cobre nem uma troca de frases. Teto de
+    # 5 min: é o que separa "o que se falava agora" de gravar a tarde inteira.
+    "ambient_context_window_s": (30, 300),
     "progress_update_delay_ms": (1000, 120000),
     "max_progress_messages": (0, 5),
     "acknowledgement_cut_threshold_ms": (0, 10000),

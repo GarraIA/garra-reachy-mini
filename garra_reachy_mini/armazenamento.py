@@ -4,6 +4,7 @@ Tudo fica em ~/.config/garra_reachy_mini (ou $GARRA_REACHY_DIR):
   config.json — opções salvas pela página de configurações
   estado.json — session_id do gateway e cursor_falado (histórico já FALADO em
                 voz alta, não apenas buscado — ver GatewayBrain)
+  caderno.json — as listas que o robô anota a pedido (ver caderno.py)
 Gravação atômica (arquivo temporário + os.replace) para sobreviver a quedas.
 """
 
@@ -74,3 +75,11 @@ def carregar_estado() -> dict:
 
 def salvar_estado(dados: dict) -> None:
     _salvar("estado.json", dados)
+
+
+def carregar_caderno() -> dict:
+    return _carregar("caderno.json")
+
+
+def salvar_caderno(dados: dict) -> None:
+    _salvar("caderno.json", dados)

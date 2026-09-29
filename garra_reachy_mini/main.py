@@ -35,6 +35,8 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 from enum import Enum
 
 from . import armazenamento, ativacao
+from . import caderno as caderno_mod
+from .acompanhamento import Acompanhamento
 from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
                       RespostaCerebro)
 from .cerebro import sondar as cerebro_sondar
@@ -150,6 +152,10 @@ class GarraReachyMini(ReachyMiniApp):
         self.hub: FrameHub | None = None
         self.comportamento: Comportamento | None = None
         self.chat: PonteChat | None = None
+        # A escuta de contexto e o caderno. Um por app: a memória do que foi
+        # ouvido tem de sobreviver entre turnos, e o painel precisa alcançar a
+        # MESMA que o laço de voz usa.
+        self.acompanhamento: Acompanhamento | None = None
         # Quem está de pé e quem não está. O painel lê isto para dizer ao
         # usuário o que falta, em vez de parecer quebrado.
         self.servicos = Servicos()
@@ -267,6 +273,7 @@ class GarraReachyMini(ReachyMiniApp):
         comportamento.iniciar()
 
         self.controlador, self.hub, self.comportamento = controlador, hub, comportamento
+        self.acompanhamento = Acompanhamento(controlador.eventos)
         self.servicos.conectar(controlador.eventos)
 
         estado = controlador.status()
@@ -373,6 +380,7 @@ class GarraReachyMini(ReachyMiniApp):
                 eventos=self.controlador.eventos,
                 politica=self.politica,
                 chat=self.chat,
+                acompanhamento=self.acompanhamento,
                 servicos=self.servicos,
                 falar=self._falar_async,
                 calar=self._calar_agora,
@@ -600,6 +608,7 @@ class GarraReachyMini(ReachyMiniApp):
 
         gestos = self.comportamento
         assert gestos is not None
+        assert self.acompanhamento is not None
         gestos.ouvindo()
 
         # Único dono do alto-falante. Ver conversa.py: o lock dele cobre a
@@ -749,6 +758,13 @@ class GarraReachyMini(ReachyMiniApp):
             veredicto = ativacao.avaliar(texto, capturado_em, sessao_ativacao,
                                        ativ, time.monotonic(), e_stop=e_stop)
             if not veredicto.aceito:
+                # Recusada por falta da frase: é conversa da sala. Com a escuta
+                # de contexto ligada ela fica em MEMÓRIA, para acompanhar o
+                # próximo pedido; desligada, `ouviu` não guarda coisa alguma.
+                # Nada mais muda neste ramo: o evento abaixo segue sem o que
+                # foi dito, e o registro do app segue sem uma linha sobre isto.
+                if veredicto.motivo == "wake_phrase_required":
+                    self.acompanhamento.ouviu(texto, capturado_em, conf_wake.conversa)
                 agora_r = time.monotonic()
                 if agora_r - rejeicoes["ultimo"] >= REJEICAO_INTERVALO_S:
                     # Evento redigido: faixa de duração, nunca o valor exato, e
@@ -842,7 +858,16 @@ class GarraReachyMini(ReachyMiniApp):
                 mode=politica.modo, ack_delay_ms=politica.ack_atraso_ms)
 
             t0 = time.time()
-            futuro = executor.submit(cerebro.perguntar, texto + complemento)
+            # O que acompanha o pedido: o que se falava na sala e o caderno.
+            # Só AQUI, depois de todo retorno antecipado acima — ativação
+            # sozinha, atalho local, robô sem cérebro —, porque colher gasta o
+            # contexto, e gastá-lo num turno que não consulta o modelo seria
+            # jogá-lo fora. O chat e o registro seguem mostrando `texto`, que é
+            # o que a pessoa disse.
+            mensagem = self.acompanhamento.montar(texto, time.monotonic(),
+                                                  conf_agora.conversa,
+                                                  correlacao=correlacao)
+            futuro = executor.submit(cerebro.perguntar, mensagem + complemento)
 
             # Prazos ABSOLUTOS a partir do início do turno. Encadear as esperas
             # daria ack+progresso, e um progresso de 10 s viraria 14 s.
@@ -929,7 +954,12 @@ class GarraReachyMini(ReachyMiniApp):
                     turn_id=turno.id, reason="late_response", brain_ms=cerebro_ms)
                 return
 
-            fala = limpar_para_voz(resposta.texto)
+            # Primeiro o caderno, depois a limpeza para a voz: a diretiva de
+            # anotação é executada e SAI do texto antes de qualquer coisa ser
+            # falada, mostrada no chat ou escrita no registro.
+            recebida = self.acompanhamento.receber(
+                resposta.texto, conf_agora.conversa, correlacao=correlacao)
+            fala = limpar_para_voz(recebida)
             log.info("🤖 GarraIA [%s%s] (%.1fs): %s", resposta.modo,
                      f"/{resposta.erro}" if resposta.erro else "",
                      time.time() - t0, fala)
@@ -1051,7 +1081,8 @@ class GarraReachyMini(ReachyMiniApp):
                         # Silêncio de verdade: hora de falar notificações pendentes
                         evento = fila.proximo()
                         if evento is not None:
-                            fala = limpar_para_voz(evento.texto)
+                            fala = limpar_para_voz(
+                                caderno_mod.sem_diretivas(evento.texto))
                             if fala:
                                 log.info("🔔 Notificação [%s]: %s", evento.tipo, fala)
                                 falar(fala)
@@ -1190,6 +1221,7 @@ def _rodar_simulado() -> None:
         controlador=controlador, hub=hub, eventos=controlador.eventos,
         politica=politica, servicos=servicos,
         chat=PonteChat(cfg.gateway_url, cfg.gateway_key, cfg.agent_id),
+        acompanhamento=Acompanhamento(controlador.eventos),
         dir_estatico=Path(__file__).resolve().parent / "static",
     ))
     print(f"\nModo simulado (sem robô). Painel em {politica.url_visivel}/reachy\n")
