@@ -354,6 +354,24 @@ textarea:focus, input:focus { outline: none; border-color: var(--garra-accent); 
 
 .vazio { color: var(--garra-muted-2); font-size: 0.83rem; padding: 8px 0; }
 
+/* ── caderno ─────────────────────────────────────────────────────────────── */
+#caderno-listas { display: grid; gap: 8px; }
+.caderno-lista {
+  padding: 10px 12px;
+  border-radius: var(--garra-radius-sm);
+  border: 1px solid var(--garra-border);
+  background: var(--garra-panel);
+}
+.caderno-lista .linha { justify-content: space-between; }
+.caderno-lista ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.caderno-lista li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 0.87rem;
+}
+/* O item é texto que veio de fora: quebra em vez de alargar o cartão. */
+.caderno-lista li span { min-width: 0; overflow-wrap: anywhere; }
+button.mini { padding: 3px 9px; font-size: 0.72rem; flex: none; }
+
 /* ── faixa de parada de emergência ───────────────────────────────────────── */
 #faixa-estop {
   display: none;

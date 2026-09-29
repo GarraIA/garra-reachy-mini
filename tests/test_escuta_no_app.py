@@ -267,3 +267,12 @@ def test_o_estado_da_escuta_diz_quanto_e_nao_o_que(painel) -> None:
     d = painel.get("/api/robot/ambient-context").json()
     assert d == {"enabled": True, "window_s": 120, "utterances": 1,
                  "chars": len("segredo de família")}
+
+
+# ─── o que este build anuncia ────────────────────────────────────────────────
+def test_as_capacidades_sao_anunciadas() -> None:
+    """É por aqui que um painel sabe se pode desenhar os interruptores."""
+    from garra_reachy_mini import build_info
+
+    assert build_info.CAPACIDADES["ambient_context"] is True
+    assert build_info.CAPACIDADES["notebook"] is True

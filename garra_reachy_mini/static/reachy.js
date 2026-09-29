@@ -217,9 +217,72 @@ function tratarEvento(e) {
       // tempo mostra o que foi falado e o que foi digitado.
       if (e.source === 'voz' || e.source === 'garra') addMsg(e.role, e.content, e.source);
       break;
+    case 'notebook.changed':
+      // O robô anotou (ou alguém apagou em outro painel): relê do arquivo.
+      carregarCaderno();
+      break;
+    case 'voice.context.attached':
+    case 'voice.wake.rejected':
+      carregarContexto();
+      break;
     case 'voice.state':
       $('p-chat').textContent = { listening: 'ouvindo', thinking: 'pensando', speaking: 'falando', idle: '—' }[e.state] || e.state;
       break;
+  }
+}
+
+// ─── caderno ─────────────────────────────────────────────────────────────────
+// O que aparece aqui foi escrito por um modelo que leu conversa de sala: é
+// texto não confiável, e nenhum pedaço dele vira HTML sem passar por `esc`.
+function pintarCaderno(d) {
+  const listas = Object.entries(d.lists || {});
+  const total = listas.reduce((n, [, itens]) => n + itens.length, 0);
+  $('caderno-info').textContent = total ? t('caderno.itens', { n: total }) : '';
+  if (!listas.length) {
+    $('caderno-listas').innerHTML = `<div class="vazio">${esc(t('caderno.vazio'))}</div>`;
+    return;
+  }
+  $('caderno-listas').innerHTML = listas.map(([nome, itens]) => `
+    <div class="caderno-lista">
+      <div class="linha">
+        <b>${esc(nome)}</b>
+        <button class="mini" data-caderno-lista="${esc(nome)}"
+                title="${esc(t('caderno.apagar_lista'))}">${esc(t('caderno.apagar_lista'))}</button>
+      </div>
+      <ul>${itens.map((item, i) => `
+        <li>
+          <span>${esc(item)}</span>
+          <button class="mini" data-caderno-lista="${esc(nome)}" data-caderno-indice="${i}"
+                  title="${esc(t('caderno.apagar_item'))}">✕</button>
+        </li>`).join('')}
+      </ul>
+    </div>`).join('');
+  for (const b of $('caderno-listas').querySelectorAll('[data-caderno-lista]')) {
+    b.addEventListener('click', () =>
+      apagarDoCaderno(b.dataset.cadernoLista, b.dataset.cadernoIndice));
+  }
+}
+
+async function carregarCaderno() {
+  try {
+    pintarCaderno(await api('/api/robot/notebook'));
+    pill($('p-caderno'), true, t('caderno.lido'));
+  } catch (e) {
+    // App anterior ao caderno: some com o cartão em vez de mostrar um vazio
+    // que pareceria "nada anotado".
+    if (e.status === 404 || e.status === 405) { $('caderno-bloco').hidden = true; return; }
+    pill($('p-caderno'), false, e.message);
+  }
+}
+
+async function apagarDoCaderno(lista, indice) {
+  const caminho = `/api/robot/notebook/${encodeURIComponent(lista)}`
+    + (indice === undefined ? '' : `/${encodeURIComponent(indice)}`);
+  try {
+    pintarCaderno(await api(caminho, { method: 'DELETE' }));
+  } catch (e) {
+    registrarLog(e.message, 'err');
+    carregarCaderno();
   }
 }
 
@@ -597,8 +660,39 @@ function pintarConversa(d) {
   $('v-conversa-wake-janela').textContent = `${jan} s`;
   $('conversa-wake-teto').value = teto;
   $('v-conversa-wake-teto').textContent = `${teto} s`;
+  // Escuta de contexto e caderno. `=== true`, e não `!== false`: o padrão
+  // destes é DESLIGADO, e config sem a chave tem de aparecer assim.
+  $('conversa-contexto').checked = c.ambient_context_enabled === true;
+  const tras = c.ambient_context_window_s ?? 120;
+  $('conversa-contexto-janela').value = tras;
+  $('v-conversa-contexto-janela').textContent = `${tras} s`;
+  $('conversa-caderno').checked = c.notebook_enabled === true;
   sincronizarMestre();
   sincronizarWake();
+  sincronizarContexto();
+}
+
+// Escuta desligada (ou frase de ativação desligada): a janela e o botão de
+// esquecer ficam inativos. O valor da janela continua salvo.
+function sincronizarContexto() {
+  const ligada = $('conversa-wake').checked && $('conversa-contexto').checked;
+  for (const linha of document.querySelectorAll('[data-conversa-contexto-sub]')) {
+    linha.style.opacity = ligada ? '' : '0.55';
+    for (const el of linha.querySelectorAll('input, button')) el.disabled = !ligada;
+  }
+}
+
+// Quanto há guardado do que foi ouvido — nunca o quê. A rota só devolve
+// contagem, e é de propósito: o painel responde a quem o alcançar.
+async function carregarContexto() {
+  try {
+    const d = await api('/api/robot/ambient-context');
+    $('conversa-contexto-estado').textContent = d.enabled
+      ? t('conversa.contexto_estado', { n: d.utterances, s: d.window_s })
+      : '—';
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) $('linha-conversa-contexto').hidden = true;
+  }
 }
 
 // Ativação desligada: os três campos ficam inativos e os valores continuam
@@ -830,6 +924,9 @@ function ligar() {
     wake_phrase_text: $('conversa-wake-texto').value.trim() || undefined,
     wake_phrase_window_s: Number($('conversa-wake-janela').value),
     wake_phrase_session_max_s: Number($('conversa-wake-teto').value),
+    ambient_context_enabled: $('conversa-contexto').checked,
+    ambient_context_window_s: Number($('conversa-contexto-janela').value),
+    notebook_enabled: $('conversa-caderno').checked,
     automatic_speech_enabled: $('conversa-mestre').checked,
     spoken_acknowledgements_enabled: $('conversa-ack-on').checked,
     announce_tool_usage: $('conversa-tool-on').checked,
@@ -840,7 +937,21 @@ function ligar() {
   // Reflete na hora; grava só no botão, numa escrita e numa revisão só.
   $('conversa-mestre').addEventListener('change', sincronizarMestre);
   $('conversa-saida').addEventListener('change', sincronizarMestre);
-  $('conversa-wake').addEventListener('change', sincronizarWake);
+  $('conversa-wake').addEventListener('change', () => {
+    sincronizarWake();
+    sincronizarContexto();
+  });
+  $('conversa-contexto').addEventListener('change', sincronizarContexto);
+  $('conversa-contexto-janela').addEventListener('input', (e) =>
+    $('v-conversa-contexto-janela').textContent = `${e.target.value} s`);
+  $('btn-contexto-esquecer').addEventListener('click', async () => {
+    try {
+      const d = await api('/api/robot/ambient-context', { method: 'DELETE' });
+      registrarLog(t('conversa.contexto_esquecido', { n: d.forgotten }), 'ok');
+    } catch (e) { registrarLog(e.message, 'err'); }
+    carregarContexto();
+  });
+  $('btn-caderno-atualizar').addEventListener('click', carregarCaderno);
   $('conversa-wake-janela').addEventListener('input', (e) =>
     $('v-conversa-wake-janela').textContent = `${e.target.value} s`);
   $('conversa-wake-teto').addEventListener('input', (e) =>
@@ -878,6 +989,8 @@ function ligar() {
   await carregarCapacidades();
   carregarApps();
   carregarConversa();
+  carregarContexto();
+  carregarCaderno();
   carregarAgentes();
   const btnAgentes = $('btn-agentes-atualizar');
   if (btnAgentes) btnAgentes.addEventListener('click', carregarAgentes);

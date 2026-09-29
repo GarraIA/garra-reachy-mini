@@ -54,6 +54,12 @@ CAPACIDADES: dict[str, bool] = {
     # isso é independente do mestre da saída: "escute e obedeça, mas responda
     # só no chat" é combinação legítima.
     "wake_phrase": True,
+    # Escuta de contexto (`ambient_context_*`): o que foi dito sem a frase de
+    # ativação acompanha o próximo pedido. Chave própria porque muda o que SAI
+    # do robô — um painel tem de saber que este build oferece o interruptor.
+    "ambient_context": True,
+    # Caderno (`notebook_enabled`, GET/DELETE /api/robot/notebook).
+    "notebook": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

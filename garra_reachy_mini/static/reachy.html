@@ -271,11 +271,47 @@
         <b id="v-conversa-wake-teto">—</b></label>
       <input type="range" id="conversa-wake-teto" min="15" max="600" step="5">
     </div>
+    <!-- Escuta de contexto. Subordinada à frase de ativação: sem a frase toda
+         fala já é um turno, e não existe "o que se falava antes". A dica diz
+         para onde a conversa vai — este interruptor é o que a tira de casa. -->
+    <label class="caixa" id="linha-conversa-contexto" data-conversa-wake-sub="1">
+      <input type="checkbox" id="conversa-contexto">
+      <span data-i18n="conversa.contexto"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.contexto_dica"></div>
+    <div class="linha" data-conversa-wake-sub="1" data-conversa-contexto-sub="1">
+      <label for="conversa-contexto-janela"><span data-i18n="conversa.contexto_janela"></span>
+        <b id="v-conversa-contexto-janela">—</b></label>
+      <input type="range" id="conversa-contexto-janela" min="30" max="300" step="10">
+    </div>
+    <div class="linha" data-conversa-contexto-sub="1">
+      <span class="conta" id="conversa-contexto-estado">—</span>
+      <button id="btn-contexto-esquecer" data-i18n="conversa.contexto_esquecer"></button>
+    </div>
+    <!-- Caderno. Independente de tudo acima: vale por voz e pelo chat. -->
+    <hr class="divisor">
+    <label class="caixa" id="linha-conversa-caderno">
+      <input type="checkbox" id="conversa-caderno">
+      <span data-i18n="conversa.caderno"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.caderno_dica"></div>
     <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
 
       <span class="pill" id="p-conversa">—</span>
     </div>
     <div class="status-lista" id="conversa-metricas" style="margin-top:12px"></div>
+  </section>
+
+  <!-- ── caderno ─────────────────────────────────────────────────────────────
+       O que o robô anotou, lido do arquivo dele. É aqui que se confere: o
+       modelo pode dizer "anotado" sem ter anotado. -->
+  <section class="card glass-panel" id="caderno-bloco">
+    <h2><span data-i18n="caderno.titulo"></span> <span class="conta" id="caderno-info"></span></h2>
+    <div id="caderno-listas"><div class="vazio" data-i18n="caderno.vazio"></div></div>
+    <div class="linha" style="margin-top:10px">
+      <button id="btn-caderno-atualizar" data-i18n="caderno.atualizar"></button>
+      <span class="pill" id="p-caderno">—</span>
+    </div>
   </section>
 
   <!-- ── apps ────────────────────────────────────────────────────────────── -->

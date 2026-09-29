@@ -155,6 +155,26 @@ control *when* a phrase may start once enabled; the switches control *if*.
 Settings persist in the robot's own config with optimistic revisions, so two
 panels never silently overwrite each other.
 
+### Context listening and notebook (optional, off by default)
+
+Since 1.4.0, with the activation phrase on, two more switches live in the
+Conversation card.
+
+**Listen for context** lets the robot sit in a room and make sense of "write
+*that* down". What is said *without* the activation phrase is normally dropped;
+with this switch on, its **text** is kept in memory for a short window (120 s by
+default, 30–300 s) and sent to the model together with the next request. It is
+never written to disk, never logged and never put in an event, and it is
+forgotten as soon as it falls out of the window or the switch is turned off.
+Read the Privacy section before turning it on: this is the switch that lets
+room conversation leave the house.
+
+**Notebook** gives the robot lists that survive restarts and new conversations
+("put butter on the shopping list", "what is on the shopping list?"). They live
+in `caderno.json` next to the app's settings, show up in the panel's Notebook
+card, and can be deleted there item by item. The panel is where you check what
+was actually written down.
+
 ### Assistant identity (requires a Garra gateway)
 
 The assistant's display name and personality live in the **gateway's**
@@ -258,6 +278,15 @@ advice applies to the robot as a whole, not just to this app.
 - **No transcripts are written to disk.** Only settings, a session id and the
   API token live in `~/.config/garra_reachy_mini/`. Photos you take with the
   capture button are saved there too, and nowhere else.
+- **With "Listen for context" on, room conversation reaches the provider.**
+  Every time the robot is called, the text of what it heard in the last window
+  (120 s by default) is sent along with the request — to your gateway, which
+  keeps it in the session history, and to the model behind it. On the robot
+  that text exists only in memory. With the switch off, which is the default,
+  nothing said without the activation phrase leaves the robot.
+- **With "Notebook" on, what you ask the robot to write down is stored** in
+  `~/.config/garra_reachy_mini/caderno.json` until you delete it, and is sent
+  to the model with every request so it can answer questions about it.
 - **Credentials are never returned by the API.** `GET /api/config` masks the
   gateway key; the panel can set it but never read it back.
 - **Identity fields reach the model.** The assistant name, operator name and
