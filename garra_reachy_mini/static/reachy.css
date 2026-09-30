@@ -174,6 +174,9 @@ main { padding: 16px clamp(14px, 3vw, 28px) 40px; }
 .card { padding: 16px 18px 18px; min-width: 0; }
 .card.largo { grid-column: span 2; }
 @media (max-width: 760px) { .card.largo { grid-column: span 1; } }
+/* Em tela larga a câmera ocupa duas colunas: é o que se quer ver grande, e
+   o INÍCIO com quatro cartões de uma coluna deixava metade da tela vazia. */
+@media (min-width: 1100px) { .card.camera { grid-column: span 2; } }
 
 /* ── navegação entre telas ───────────────────────────────────────────────── */
 /* No computador: uma fila de abas no rodapé do cabeçalho (que é sticky, então

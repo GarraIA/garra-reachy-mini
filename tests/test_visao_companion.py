@@ -38,18 +38,28 @@ def prefs(**mudancas) -> visao.Preferencias:
 class Ollama:
     """Um Ollama de mentira: sabe quais modelos tem e o que cada um enxerga."""
 
-    def __init__(self, modelos=None, resposta="Uma mesa com um copo.", falha=None) -> None:
+    def __init__(self, modelos=None, resposta="Uma mesa com um copo.", falha=None, residentes=None) -> None:
         self.modelos = modelos if modelos is not None else {"qwen2.5vl:7b": ["completion", "vision"]}
         self.resposta, self.falha = resposta, falha
-        self.pedidos: list[dict] = []
+        self.pedidos: list[dict] = []           # só /api/chat: o que levou imagem
+        self.cargas: list[dict] = []            # /api/generate sem prompt: só carregar
+        self.residentes = residentes or []      # o que /api/ps mostra
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.falha == "offline":
             raise httpx.ConnectError("recusado")
         if self.falha == "timeout" and request.url.path == "/api/chat":
             raise httpx.ReadTimeout("demorou")       # responde à lista, trava na descrição
+        if self.falha == "carga" and request.url.path == "/api/generate":
+            raise httpx.ReadTimeout("nao carrega")   # a GPU está com outro modelo: o load não termina
+        if request.url.path == "/api/generate":
+            corpo = json.loads(request.content)
+            self.cargas.append(corpo)
+            return httpx.Response(200, json={"model": corpo["model"], "done": True, "done_reason": "load"})
+        if request.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": self.residentes})
         if request.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": [{"name": m} for m in self.modelos]})
+            return httpx.Response(200, json={"models": [{"name": m, "size": int(5.97e9)} for m in self.modelos]})
         if request.url.path == "/api/show":
             nome = json.loads(request.content)["model"]
             if nome not in self.modelos:
@@ -87,10 +97,23 @@ class OpenRouter:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
 
 
-def montar(ollama: Ollama | None = None, openrouter: OpenRouter | None = None, chave="sk-or-teste"):
+GiB = 2 ** 30
+
+
+def residente(nome: str, total_gb: float, vram_gb: float, ctx: int = 4096) -> dict:
+    return {"name": nome, "model": nome, "size": int(total_gb * GiB), "size_vram": int(vram_gb * GiB),
+            "context_length": ctx, "expires_at": "2026-09-30T10:00:00-04:00"}
+
+
+HERA_27B = residente("hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL", 20.2, 11.2, 32768)
+EMBEDDING = residente("qwen3-embedding:0.6b", 5.8, 5.8, 32768)
+
+
+def montar(ollama: Ollama | None = None, openrouter: OpenRouter | None = None, chave="sk-or-teste",
+           vram_livre_mb: int | None = 16000):
     ollama = ollama or Ollama()
     openrouter = openrouter or OpenRouter()
-    local = visao.Local(http=ollama.cliente())
+    local = visao.Local(http=ollama.cliente(), vram_livre=lambda: vram_livre_mb)
     nuvem = visao.Nuvem(http=openrouter.cliente(), chave=chave)
     return ollama, openrouter, local, nuvem
 
@@ -136,6 +159,108 @@ def test_ollama_fora_do_ar_e_dito() -> None:
     with pytest.raises(visao.ErroDeVisao) as e:
         visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
     assert e.value.codigo == "provider_offline"
+
+
+def test_modelo_que_nao_carrega_e_provider_busy_rapido_e_nao_timeout() -> None:
+    """Medido no PC em 30/09: o modelo de visão responde em 1 s, mas com a GPU
+    ocupada por outro modelo (27B) o CARREGAMENTO levou 154 s. Carregar é uma
+    fase à parte, com prazo curto e código próprio — o robô diz na hora que o
+    computador está ocupado, em vez de 30 s de silêncio."""
+    ollama = Ollama(falha="carga")
+    _, _, local, nuvem = montar(ollama)
+    with pytest.raises(visao.ErroDeVisao) as e:
+        visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+    assert e.value.codigo == "provider_busy"
+    assert ollama.pedidos == [], "sem carregar, a imagem não vai"
+    assert "provider_busy" in visao.CODIGOS
+
+
+def test_a_carga_pede_para_o_modelo_ficar_quente_e_a_imagem_vai_depois() -> None:
+    ollama = Ollama()
+    _, _, local, nuvem = montar(ollama)
+    obs = visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+    assert obs.texto == "Uma mesa com um copo."
+    [carga] = ollama.cargas
+    assert carga["model"] == "qwen2.5vl:7b" and carga["keep_alive"] == visao.MANTER_QUENTE
+    assert "prompt" not in carga or carga["prompt"] == ""
+    [chat] = ollama.pedidos
+    assert chat["keep_alive"] == visao.MANTER_QUENTE
+    # as MESMAS opções na carga e na descrição: opção diferente faz o Ollama recarregar
+    assert carga["options"]["num_ctx"] == chat["options"]["num_ctx"] == visao.CONTEXTO
+    assert carga["options"]["num_gpu"] == chat["options"]["num_gpu"] == visao.CAMADAS_NA_GPU
+
+
+# ─── convivência com os outros modelos da GPU (medido em 30/09) ──────────────
+def test_com_um_modelo_grande_ocupando_a_gpu_a_visao_nao_entra_na_fila_do_ollama() -> None:
+    """O agendador do Ollama, para carregar um modelo que exige despejar outro
+    OCUPADO, bloqueia a fila inteira até o outro terminar. Medido em 30/09: a
+    visão esperando o 27B da Hera travou os embeddings do gateway e o chat do
+    Garra caiu (502). Sem VRAM para caber, a visão nem pede: diz na hora."""
+    ollama = Ollama(residentes=[HERA_27B])
+    _, openrouter, local, nuvem = montar(ollama, vram_livre_mb=1900)
+    with pytest.raises(visao.ErroDeVisao) as e:
+        visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+    assert e.value.codigo == "provider_busy"
+    assert ollama.cargas == [] and ollama.pedidos == [], "nada foi à fila do Ollama"
+    assert openrouter.pedidos == [], "e sem permissão a nuvem não recebe nada"
+
+
+def test_ocupada_mas_com_a_nuvem_permitida_vai_para_a_nuvem() -> None:
+    ollama = Ollama(residentes=[HERA_27B])
+    _, openrouter, local, nuvem = montar(ollama, vram_livre_mb=1900)
+    obs = visao.descrever(JPEG, PERGUNTA, prefs(nuvem_permitida=True), local, nuvem)
+    assert obs.provedor == "openrouter" and len(openrouter.pedidos) == 1
+    assert ollama.pedidos == []
+
+
+def test_modelo_pequeno_ocioso_pode_ser_despejado_e_a_visao_entra() -> None:
+    """O embedding do gateway ocupa 5,8 GB mas atende em milissegundos: o
+    Ollama o despeja sem fila. Livre + o que é despejável basta → entra."""
+    ollama = Ollama(residentes=[EMBEDDING])
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=6000)
+    obs = visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+    assert obs.provedor == "local" and len(ollama.cargas) == 1
+
+
+def test_a_visao_ja_residente_na_gpu_entra_mesmo_com_pouca_vram() -> None:
+    ollama = Ollama(residentes=[HERA_27B, residente("qwen2.5vl:7b", 5.1, 5.1)])
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=500)
+    assert visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem).provedor == "local"
+
+
+def test_a_visao_residente_na_cpu_nao_conta_como_pronta() -> None:
+    """Medido em 30/09: residente na CPU, o Ollama reaproveita esse runner e a
+    descrição leva 1m45s. Na CPU não serve; e recarregar na GPU com o 27B
+    ocupando a VRAM é a espera que trava a fila."""
+    ollama = Ollama(residentes=[HERA_27B, residente("qwen2.5vl:7b", 5.8, 0.0)])
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=1900)
+    with pytest.raises(visao.ErroDeVisao) as e:
+        visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+    assert e.value.codigo == "provider_busy" and ollama.pedidos == []
+
+
+@pytest.mark.parametrize("residentes,ok", [([HERA_27B], False), ([EMBEDDING], True), ([], True)])
+def test_sem_nvidia_smi_decide_pelo_tamanho_do_que_esta_residente(residentes, ok) -> None:
+    ollama = Ollama(residentes=residentes)
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=None)
+    if ok:
+        assert visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem).provedor == "local"
+    else:
+        with pytest.raises(visao.ErroDeVisao) as e:
+            visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+        assert e.value.codigo == "provider_busy"
+
+
+def test_o_estado_diz_se_esta_pronto_se_cabe_e_quem_ocupa() -> None:
+    ollama = Ollama(residentes=[HERA_27B])
+    _, _, local, _ = montar(ollama, vram_livre_mb=1900)
+    e = local.estado(prefs())
+    assert e["loaded"] is None and e["admissible"] is False
+    assert e["blocker"] == "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL"
+    assert e["free_mb"] == 1900 and e["needed_mb"] >= 7000
+    ollama.residentes = [residente("qwen2.5vl:7b", 5.1, 5.1)]
+    e = local.estado(prefs())
+    assert e["loaded"] == "gpu" and e["admissible"] is True and e["blocker"] is None
 
 
 def test_demora_vira_timeout_e_nao_descricao() -> None:
@@ -240,7 +365,9 @@ def test_o_estado_diz_o_que_cada_provedor_consegue() -> None:
                                                  "qwen3.5:0.8b": ["completion"]}))
     estado = visao.estado(prefs(), local, nuvem)
     assert estado["local"] == {"reachable": True, "model_present": True, "vision": True,
-                               "endpoint": "http://ollama.local:11434", "model": "qwen2.5vl:7b"}
+                               "endpoint": "http://ollama.local:11434", "model": "qwen2.5vl:7b",
+                               "loaded": None, "admissible": True, "blocker": None,
+                               "free_mb": 16000, "needed_mb": int(5.97e9) // 2 ** 20 + visao.MARGEM_VRAM_MB}
     assert estado["cloud"] == {"enabled": False, "key_present": True, "model": "google/gemini-3.8-flash"}
     assert estado["effective"] == "local"
 
@@ -265,3 +392,10 @@ def test_quando_tudo_falha_o_erro_e_o_do_provedor_preferido() -> None:
     with pytest.raises(visao.ErroDeVisao) as e:
         visao.descrever(JPEG, PERGUNTA, prefs(nuvem_permitida=True), local, nuvem)
     assert e.value.codigo == "provider_offline"
+
+
+@pytest.mark.parametrize("permitida,efetivo", [(False, None), (True, "openrouter")])
+def test_com_a_gpu_ocupada_o_efetivo_nao_e_o_local(permitida, efetivo) -> None:
+    ollama = Ollama(residentes=[HERA_27B])
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=1900)
+    assert visao.estado(prefs(nuvem_permitida=permitida), local, nuvem)["effective"] == efetivo

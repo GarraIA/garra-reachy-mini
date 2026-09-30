@@ -218,7 +218,7 @@ IMAGEM_B64_MAX = 6 * 1024 * 1024
 _MODELO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}")
 _STATUS_DO_ERRO = {
     "bad_image": 400, "no_provider": 400, "cloud_disabled": 403,
-    "provider_offline": 503, "model_missing": 503, "model_without_vision": 503,
+    "provider_offline": 503, "provider_busy": 503, "model_missing": 503, "model_without_vision": 503,
     "timeout": 504, "provider_error": 502, "auth_failed": 502,
 }
 

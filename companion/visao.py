@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 
 PROVEDORES = ("auto", "local", "openrouter")
-CODIGOS = ("no_provider", "provider_offline", "model_missing", "model_without_vision",
+CODIGOS = ("no_provider", "provider_offline", "provider_busy", "model_missing", "model_without_vision",
            "cloud_disabled", "auth_failed", "timeout", "bad_image", "provider_error")
 IMAGEM_MAX_BYTES = 4 * 1024 * 1024
 DESCRICAO_MAX = 1500
@@ -36,6 +36,47 @@ DESCRICAO_MAX = 1500
 # só termina no timeout — quanto mais curto, mais cedo o robô diz "não estou
 # conseguindo ver agora" e, com a nuvem permitida, mais cedo cai nela.
 TIMEOUT_S = 30.0
+# Carregar o modelo é uma fase à parte. Medido em 30/09 com a GPU livre: a
+# carga do qwen2.5vl:7b levou 2,6 s e a descrição de um quadro 720p, 0,9 s.
+# Com a GPU ocupada por outro modelo (o 27B da Hera), a carga levou 154 s.
+CARGA_S = 20.0
+# Quente por dez minutos depois de usado: "o que você está vendo?" costuma vir
+# em série, e dez minutos devolvem a VRAM a quem precisar depois.
+MANTER_QUENTE = "10m"
+# As MESMAS opções em toda chamada: opção diferente faz o Ollama recarregar.
+# Contexto de 4096 cabe um quadro 720p (1230 tokens) e custa 5,1 GiB em vez
+# dos 7,3 do padrão; todas as camadas na GPU, porque na CPU um quadro levou
+# de 131 a 156 s (medido em 30/09, com o 27B dividindo a CPU).
+CONTEXTO = 4096
+CAMADAS_NA_GPU = 999
+OPCOES = {"num_ctx": CONTEXTO, "num_gpu": CAMADAS_NA_GPU}
+# ── convivência com os outros modelos da mesma GPU ──
+# O agendador do Ollama, para carregar um modelo que exige despejar outro que
+# está OCUPADO, para a fila inteira até o outro terminar — os embeddings do
+# gateway esperam junto, e o chat do Garra caiu assim em 30/09. Então a visão
+# só pede ao Ollama quando cabe sem despejar ninguém grande: no que está livre,
+# mais o que é de modelos pequenos (que atendem em milissegundos e o Ollama
+# despeja sem fila). Modelo "grande" é o de pedidos de minutos.
+GRANDE_BYTES = 10 * 2 ** 30
+# Além do arquivo: contexto CUDA e buffers. Medido: arquivo de 5,97 GB (5693
+# MiB) → 6910 MiB a menos no nvidia-smi; 1400 dá a folga.
+MARGEM_VRAM_MB = 1400
+
+
+def vram_livre_mb() -> int | None:
+    """VRAM livre na GPU 0, pelo nvidia-smi; None se não houver como saber."""
+    import shutil
+    import subprocess
+
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=3)
+        return int(r.stdout.strip().splitlines()[0])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
 OPENROUTER = "https://openrouter.ai/api/v1"
 
 # O que se pede ao modelo. A instrução do fim não é enfeite: o que está escrito
@@ -110,24 +151,81 @@ class Local:
 
     nome = "local"
 
-    def __init__(self, http: httpx.Client | None = None, timeout_s: float = TIMEOUT_S) -> None:
+    def __init__(self, http: httpx.Client | None = None, timeout_s: float = TIMEOUT_S,
+                 vram_livre=vram_livre_mb) -> None:
         self.http = http or httpx.Client(timeout=timeout_s)
         self.timeout_s = timeout_s
+        self._vram_livre = vram_livre
+
+    @staticmethod
+    def _e_o_modelo(m: dict, modelo: str) -> bool:
+        return modelo in (m.get("name"), m.get("model")) or f"{modelo}:latest" in (m.get("name"), m.get("model"))
+
+    def admissao(self, p: Preferencias, tamanho_bytes: int | None = None) -> dict[str, Any]:
+        """Pode pedir agora sem fazer o Ollama esperar por um modelo ocupado?
+
+        `loaded` é onde o modelo de visão está: "gpu" (pronto, com as nossas
+        opções), "cpu" (não serve: lento, e recarregar exige VRAM) ou None."""
+        saida: dict[str, Any] = {"loaded": None, "admissible": False, "blocker": None,
+                                 "free_mb": None, "needed_mb": None}
+        try:
+            r = self.http.get(f"{p.local_endpoint}/api/ps", timeout=5.0)
+            r.raise_for_status()
+            residentes = [m for m in r.json().get("models", []) if isinstance(m, dict)]
+        except Exception:       # noqa: BLE001 — sem /api/ps não há como saber: não arrisca a fila
+            saida["blocker"] = "?"
+            return saida
+        outros = [m for m in residentes if not self._e_o_modelo(m, p.local_modelo)]
+        meu = next((m for m in residentes if self._e_o_modelo(m, p.local_modelo)), None)
+        if meu is not None:
+            na_gpu = int(meu.get("size_vram") or 0) > 0
+            saida["loaded"] = "gpu" if na_gpu else "cpu"
+            if na_gpu and int(meu.get("context_length") or CONTEXTO) == CONTEXTO:
+                saida["admissible"] = True
+                return saida
+        grandes = [m for m in outros if int(m.get("size") or 0) >= GRANDE_BYTES]
+        despejavel_mb = sum(int(m.get("size_vram") or 0) for m in outros
+                            if int(m.get("size") or 0) < GRANDE_BYTES) // 2 ** 20
+        precisa_mb = (int(tamanho_bytes) // 2 ** 20 + MARGEM_VRAM_MB) if tamanho_bytes else None
+        livre = self._vram_livre() if self._vram_livre else None
+        saida.update(free_mb=livre, needed_mb=precisa_mb)
+        if livre is not None and precisa_mb is not None:
+            saida["admissible"] = livre + despejavel_mb >= precisa_mb
+        else:
+            # Sem nvidia-smi: só entra se nenhum modelo grande estiver residente.
+            saida["admissible"] = not grandes
+        if not saida["admissible"]:
+            saida["blocker"] = (grandes[0].get("name") if grandes else
+                                (outros[0].get("name") if outros else "vram"))
+        return saida
+
+    def _tamanho(self, p: Preferencias, modelos: list[dict]) -> int | None:
+        for m in modelos:
+            if isinstance(m, dict) and self._e_o_modelo(m, p.local_modelo):
+                try:
+                    return int(m.get("size") or 0) or None
+                except (TypeError, ValueError):
+                    return None
+        return None
 
     def estado(self, p: Preferencias) -> dict[str, Any]:
         saida: dict[str, Any] = {"reachable": False, "model_present": False, "vision": False,
-                                 "endpoint": p.local_endpoint, "model": p.local_modelo}
+                                 "endpoint": p.local_endpoint, "model": p.local_modelo,
+                                 "loaded": None, "admissible": False, "blocker": None,
+                                 "free_mb": None, "needed_mb": None}
         try:
             r = self.http.get(f"{p.local_endpoint}/api/tags", timeout=5.0)
             r.raise_for_status()
         except Exception:       # noqa: BLE001 — fora do ar é um estado, não uma exceção
             return saida
         saida["reachable"] = True
-        nomes = {m.get("name") for m in r.json().get("models", []) if isinstance(m, dict)}
+        modelos = [m for m in r.json().get("models", []) if isinstance(m, dict)]
+        nomes = {m.get("name") for m in modelos}
         if p.local_modelo not in nomes and f"{p.local_modelo}:latest" not in nomes:
             return saida
         saida["model_present"] = True
         saida["vision"] = self._enxerga(p)
+        saida.update(self.admissao(p, self._tamanho(p, modelos)))
         return saida
 
     def _enxerga(self, p: Preferencias) -> bool:
@@ -143,6 +241,21 @@ class Local:
         # com a lista e sem "vision", não enxerga.
         return capacidades is None or "vision" in capacidades
 
+    def _carregar(self, p: Preferencias) -> None:
+        """Sobe o modelo (ou confirma que já está de pé) sem mandar a imagem:
+        `/api/generate` sem prompt só carrega. Se não subir em `CARGA_S`, a GPU
+        está com outro modelo — e isso tem nome, não é "demorou"."""
+        try:
+            r = self.http.post(f"{p.local_endpoint}/api/generate",
+                               json={"model": p.local_modelo, "keep_alive": MANTER_QUENTE, "options": OPCOES},
+                               timeout=CARGA_S)
+        except httpx.TimeoutException as e:
+            raise ErroDeVisao("provider_busy", f"o modelo não carregou em {CARGA_S:.0f} s") from e
+        except httpx.HTTPError as e:
+            raise ErroDeVisao("provider_offline", str(e)) from e
+        if r.status_code != 200:
+            raise ErroDeVisao("provider_error", f"HTTP {r.status_code} ao carregar")
+
     def descrever(self, jpeg: bytes, pergunta: str, p: Preferencias) -> Observacao:
         estado = self.estado(p)
         if not estado["reachable"]:
@@ -151,10 +264,15 @@ class Local:
             raise ErroDeVisao("model_missing", p.local_modelo)
         if not estado["vision"]:
             raise ErroDeVisao("model_without_vision", p.local_modelo)
+        if not estado["admissible"]:
+            # Não entra na fila do Ollama: esperar aqui trava todo mundo.
+            raise ErroDeVisao("provider_busy", f"GPU ocupada por {estado['blocker']}")
+        self._carregar(p)
         corpo = {
             "model": p.local_modelo,
             "stream": False,
-            "options": {"temperature": 0.2},
+            "keep_alive": MANTER_QUENTE,
+            "options": dict(OPCOES, temperature=0.2),
             "messages": [{"role": "user", "content": INSTRUCAO.format(pergunta=pergunta),
                           "images": [_b64(jpeg)]}],
         }
@@ -264,7 +382,8 @@ def estado(p: Preferencias, local: Local, nuvem: Nuvem) -> dict[str, Any]:
     e_local, e_nuvem = local.estado(p), nuvem.estado(p)
     efetivo = None
     for provedor in _ordem(p, local, nuvem):
-        if provedor is local and e_local["vision"]:
+        # Local que não cabe agora na GPU não é o que responderia agora.
+        if provedor is local and e_local["vision"] and e_local.get("admissible", True):
             efetivo = "local"
             break
         if provedor is nuvem and e_nuvem["enabled"] and e_nuvem["key_present"]:

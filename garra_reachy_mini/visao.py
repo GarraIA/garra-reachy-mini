@@ -55,6 +55,7 @@ MOTIVOS = {
     "stale_frame": "a última imagem da câmera é velha demais",
     "bridge_unreachable": "o companion no computador não respondeu",
     "provider_offline": "o modelo de visão no computador não respondeu",
+    "provider_busy": "o computador está ocupado com outro modelo e o de visão não conseguiu carregar",
     "model_missing": "o modelo de visão configurado não está instalado no computador",
     "model_without_vision": "o modelo configurado não entende imagens",
     "cloud_disabled": "a descrição pela nuvem está desligada e o modelo local não serviu",

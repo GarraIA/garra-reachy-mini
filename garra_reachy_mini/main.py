@@ -25,6 +25,7 @@ import dataclasses
 import random
 import threading
 import time
+from typing import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from pathlib import Path

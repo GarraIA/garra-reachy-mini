@@ -1038,10 +1038,18 @@ function pintarVisaoEstado(d) {
     const efetivo = p.effective;
     itens.push(item(t('visao.estado_provedor'), efetivo ? t(`visao.provedor_${efetivo}`) : t('visao.nenhum'), !!efetivo));
     const l = p.local || {};
+    // Pronto na GPU, carrega no primeiro pedido, ou a GPU está com outro
+    // modelo grande — e aí a visão local espera, sem entrar na fila de ninguém.
+    const curto = (n) => String(n || '').split('/').pop().split(':')[0].slice(0, 28);
     const textoLocal = !l.reachable ? t('visao.erro_provider_offline')
       : !l.model_present ? t('visao.erro_model_missing')
-      : !l.vision ? t('visao.erro_model_without_vision') : (l.model || t('visao.pronto'));
-    itens.push(item(t('visao.estado_local'), textoLocal, !!(l.reachable && l.model_present && l.vision)));
+      : !l.vision ? t('visao.erro_model_without_vision')
+      : l.loaded === 'gpu' ? t('visao.pronto_gpu', { modelo: l.model || '' })
+      : !l.admissible ? t('visao.gpu_ocupada', { quem: curto(l.blocker) })
+      : t('visao.carrega_no_pedido', { modelo: l.model || '' });
+    const okLocal = !!(l.reachable && l.model_present && l.vision && (l.admissible || l.loaded === 'gpu'));
+    itens.push(item(t('visao.estado_local'), textoLocal, okLocal));
+    visaoCarregada = l.loaded === 'gpu';
     const n = p.cloud || {};
     const textoNuvem = !n.enabled ? t('visao.nuvem_desligada')
       : !n.key_present ? t('visao.erro_auth_failed') : (n.model || t('visao.pronto'));
@@ -1066,11 +1074,15 @@ async function carregarVisao() {
   }
 }
 
+// Se o modelo local já estava de pé no último estado, é só olhar; senão o
+// primeiro pedido carrega (medido: ~3 s com a GPU livre).
+let visaoCarregada = false;
+
 async function analisarVisao() {
   const b = $('btn-visao-analisar'), caixa = $('visao-resultado');
   b.disabled = true;
   caixa.hidden = false;
-  caixa.innerHTML = `<span class="t">${esc(t('visao.analisando'))}</span>`;
+  caixa.innerHTML = `<span class="t">${esc(t(visaoCarregada ? 'visao.analisando' : 'visao.carregando_e_olhando'))}</span>`;
   try {
     const r = await api('/api/robot/vision/analyze', { method: 'POST', body: '{}' });
     if (r.ok) {

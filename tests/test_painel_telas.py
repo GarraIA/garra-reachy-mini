@@ -187,7 +187,7 @@ def test_todo_texto_da_tela_tem_traducao_nos_dois_idiomas() -> None:
 
 
 @pytest.mark.parametrize("prefixo,codigos", [
-    ("visao.erro_", ["disabled", "camera_unavailable", "stale_frame", "bridge_unreachable", "provider_offline",
+    ("visao.erro_", ["disabled", "camera_unavailable", "stale_frame", "bridge_unreachable", "provider_offline", "provider_busy",
                      "model_missing", "model_without_vision", "cloud_disabled", "auth_failed", "timeout",
                      "bad_image", "provider_error"]),
     ("familia.amostra_", ["no_face", "many_faces", "too_small", "blurry", "too_dark", "too_bright", "no_embedding",
@@ -224,3 +224,10 @@ def test_o_evento_de_status_nao_apaga_camera_voz_e_chat() -> None:
     completo em vez de pintar "indisponível" a cada ação (medido no robô)."""
     assert "pintarStatus({ ...(estado.status || {}), ...e }); break;" in JS
     assert "case 'robot.status':\n      pintarStatus(e); break;" not in JS
+
+
+def test_o_painel_diz_se_a_visao_local_esta_pronta_carrega_ou_espera_a_gpu() -> None:
+    trecho = JS[JS.index("function pintarVisaoEstado"):JS.index("async function carregarVisao")]
+    assert "l.loaded === 'gpu'" in trecho and "!l.admissible" in trecho
+    for chave in ("visao.pronto_gpu", "visao.gpu_ocupada", "visao.carrega_no_pedido", "visao.carregando_e_olhando"):
+        assert chave in JS and f"'{chave}':" in I18N, chave

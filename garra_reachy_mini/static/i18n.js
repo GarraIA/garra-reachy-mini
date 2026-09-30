@@ -494,6 +494,7 @@ const TEXTOS = {
     'visao.erro_stale_frame': 'the last frame is too old',
     'visao.erro_bridge_unreachable': 'the companion on the computer did not answer',
     'visao.erro_provider_offline': 'the local vision server did not answer',
+    'visao.erro_provider_busy': 'the computer is busy with another model; the vision model could not load',
     'visao.erro_model_missing': 'the local model is not installed (ollama pull)',
     'visao.erro_model_without_vision': 'the local model does not understand images',
     'visao.erro_cloud_disabled': 'cloud is off and the local model did not answer',
@@ -627,6 +628,10 @@ const TEXTOS = {
     'musica.erro_bridge_invalid_response': 'the companion answered something unexpected',
     'diag.erro_bridge_invalid_response': 'the companion answered something unexpected',
     'diag.unhealthy': 'down',
+    'visao.pronto_gpu': 'ready on the GPU ({modelo})',
+    'visao.carrega_no_pedido': '{modelo} loads on the first request (a few seconds)',
+    'visao.gpu_ocupada': 'GPU busy with another model ({quem}); local vision waits until it frees up',
+    'visao.carregando_e_olhando': 'loading the model and looking…',
   },
 
   pt: {
@@ -1111,6 +1116,7 @@ const TEXTOS = {
     'visao.erro_stale_frame': 'a última imagem é velha demais',
     'visao.erro_bridge_unreachable': 'o companion no computador não respondeu',
     'visao.erro_provider_offline': 'o servidor de visão local não respondeu',
+    'visao.erro_provider_busy': 'o computador está ocupado com outro modelo; o de visão não conseguiu carregar',
     'visao.erro_model_missing': 'o modelo local não está instalado (ollama pull)',
     'visao.erro_model_without_vision': 'o modelo local não entende imagens',
     'visao.erro_cloud_disabled': 'a nuvem está desligada e o modelo local não respondeu',
@@ -1244,6 +1250,10 @@ const TEXTOS = {
     'musica.erro_bridge_invalid_response': 'o companion respondeu algo inesperado',
     'diag.erro_bridge_invalid_response': 'o companion respondeu algo inesperado',
     'diag.unhealthy': 'fora do ar',
+    'visao.pronto_gpu': 'pronto na GPU ({modelo})',
+    'visao.carrega_no_pedido': '{modelo} carrega no primeiro pedido (alguns segundos)',
+    'visao.gpu_ocupada': 'GPU ocupada por outro modelo ({quem}); a visão local espera ela liberar',
+    'visao.carregando_e_olhando': 'carregando o modelo e olhando…',
   },
 };
 
