@@ -14,7 +14,7 @@ seção "Estado" e a "PRÓXIMA AÇÃO EXATA".
 | GitHub | releases até **v1.3.1** (2026-08-05); branches remotos `main`, `fix/agents-capability-gate`; 5 PRs, todos integrados. **Nenhuma tag v1.4.x existe.** |
 | Robô | app **1.4.1 / `41e9637`** instalado do Space privado `michelbr/garra_reachy_mini_rc` (sha `e27981eef8dc`); Space público segue **1.3.1**. |
 | Quem serve a página | `:8042/reachy` = o app no robô (`garra_reachy_mini/web/api.py` + `static/`). O console `:3888` é do gateway (`GarraRUST`). |
-| Core / gateway | binário `garra 0.4.7` (`~/.local/bin/garraia`, 29/09 01:37, `garraia.service`). Checkout local `~/Documents/Projetos/GarraRUST` está em **outro branch (`feat/1434-presets`, 0.4.5, 8 arquivos modificados) de OUTRO agente** — **somente leitura para este trabalho**, por instrução do Michel. |
+| Core / gateway | binário `garra 0.4.7` (`garraia.service`). Checkout local do core está em **outro branch (`feat/1434-presets`, 0.4.5, 8 arquivos modificados) de OUTRO agente** — **somente leitura para este trabalho**, por instrução do Michel. |
 | Serviços no PC | `garra-reachy-voice` (STT/TTS :8123), `garra-reachy-companion` (ponte :8126), `garraia` (:3888), `garra-stt` (:9090): todos ativos. |
 | Local | Ollama sem modelo de visão (só Qwen3.8-27B texto, qwen3-embedding, qwen3.5:0.8b); RTX 4090 com 10,7 de 24,5 GB em uso. |
 
@@ -169,7 +169,7 @@ citado no envelope do pedido, como o contexto do ambiente.
 | Smoke em hardware | **validado real** | página, câmera, apps, movimentos limitados, expressões, STOP 207 ms e bloqueando até liberar, TTS, chat, configuração preservada na reinstalação (`smoke-final.log`) |
 | Visão local — painel/chat/voz | **validado real** | fria 5,1 s, quente 1,8 s; 3 cenas distintas; chat e voz com cenas diferentes; "o que eu estou segurando?" sem inventar (`visao-robo-3.log`, `voz-visao.log`) |
 | Visão — negativos | **validado real** | `model_missing`, `provider_offline`, `cloud_disabled`, `disabled`; o chat diz que não vê |
-| Visão × GPU (Hera) | **resolvido por admissão** (§10) | 37 testes da visão no PC; mutantes mortos |
+| Visão × GPU (job diário do outro agente) | **resolvido por admissão** (§10) | 37 testes da visão no PC; mutantes mortos |
 | Casa | implementado; real até a fronteira | onboarding com entradas inválidas → códigos certos, nada gravado; situação no envelope (acima). **Real: sem Home Assistant nesta casa** |
 | Spotify | implementado; real até a autorização | `spotify.log`; voz recusada pela política (painel, chat e voz). **Real: Client ID do Michel** |
 | Família | implementado; fluxo de cadastro validado pela UI real sem cadastrar ninguém | criar com consentimento, recusa de menor sem responsável, captura guiada → "nenhum rosto no quadro", desativar, persistência após reiniciar o serviço, apagar em dois cliques; pasta 0700/0600, nada no git (`familia-ui.log`). **Cadastro real: consentimento presencial** |
@@ -185,7 +185,7 @@ citado no envelope do pedido, como o contexto do ambiente.
 cd garra_reachy_mini && ../reachy_mini_env/bin/python -m pytest -q          # suíte do app
 GARRA_SPACE=garra_reachy_mini_rc bash publicar.sh privado                    # RC privado
 bash ~/.local/state/garra-reachy/validacao-1.11.0/2026-09-29-noite/instalar_rc.sh
-curl -s http://10.0.0.142:8042/api/robot/status | jq .version               # o que está no robô
+curl -s http://<ip-do-robô>:8042/api/robot/status | jq .version               # o que está no robô
 ```
 
 ## 8. Bloqueios externos e handoff
@@ -265,20 +265,19 @@ Dito e não mudado (decisão de postura, registrada):
 
 **Quem ocupa a GPU (RTX 4090, 24,5 GB):** STT `garra-stt` 2,5 GB e voz
 `garra-reachy-voice` 6,1 GB, sempre; o Ollama (unidade de usuário
-`ollama.service`) serve três clientes — o **job diário da Hera** "Resumo diário
-8:30 — Emails importantes 24h" (Hermes cron `8b1d8a060800`, `Qwen3.8-27B`,
-20,2 GB, 11–12 GB na GPU e o resto na CPU, ~2,4 tok/s, das 08:30 até ~09:50
-hoje), o **embedding da memória do gateway** (`qwen3-embedding:0.6b`, 5,8 GB
-por usar contexto de 32 k) e a **visão do robô** (`qwen2.5vl:7b`).
+`ollama.service`) serve três clientes — um **job diário de outro agente local** (às
+08:30, `Qwen3.8-27B`, 20,2 GB, 11–12 GB na GPU e o resto na CPU, ~2,4 tok/s, das
+08:30 até ~09:50 hoje), o **embedding da memória do gateway** (`qwen3-embedding:0.6b`,
+5,8 GB por usar contexto de 32 k) e a **visão do robô** (`qwen2.5vl:7b`).
 
-**Quem parou o Ollama às 09:20:12:** nem esta sessão nem a Hera (o job dela
+**Quem parou o Ollama às 09:20:12:** nem esta sessão nem o outro agente (o job dele
 caiu junto e se recuperou). O systemd registra, no mesmo instante, um
 `systemctl` vindo de **outra aba do GNOME Terminal** (`vte-spawn-9139802b…`,
 já fechada; esta sessão roda em `vte-spawn-bbcf1bd1…`) com parada + recarga
 — o padrão de `systemctl --user disable --now ollama` — e a unidade, que
 subia no boot desde 27/09, ficou `disabled`. **Esta sessão religou o serviço
 com `start` às 09:21:25 (sem `enable`)**: voltou a visão local, o embedding
-do gateway e o job da Hera (terminou `ok` às 09:49). Se o `disable` foi
+do gateway e o job do outro agente (terminou `ok` às 09:49). Se o `disable` foi
 decisão do Michel, o Ollama está de pé agora mas **não sobe no próximo boot**.
 
 **Por que a visão travava (e o chat junto):** para carregar um modelo que
@@ -302,13 +301,13 @@ quando cabe no que está livre mais o que é de modelos pequenos (despejo
 instantâneo); com um modelo grande (≥ 10 GB, pedidos de minutos) ocupando a
 VRAM, responde `provider_busy` na hora — sem entrar na fila de ninguém — e,
 com a nuvem permitida, vai para ela. Carga como fase à parte (20 s), opções
-fixas (num_ctx 4096, num_gpu 999), quente por 10 min. Nada da Hera, do
+fixas (num_ctx 4096, num_gpu 999), quente por 10 min. Nada do outro agente, do
 gateway ou do Ollama foi reconfigurado.
 
 **Custo aceito e opções para o dono:** durante o job das 08:30 (~1 h/dia) a
 visão local responde "o computador está ocupado com outro modelo". Para ter
-visão local também nessa janela, as alavancas são do dono da Hera/do PC:
-limitar as camadas do 27B na GPU (`num_gpu` no Modelfile/pedido da Hera) ou
+visão local também nessa janela, as alavancas são do dono do outro agente/do PC:
+limitar as camadas do 27B na GPU (`num_gpu` no Modelfile/pedido desse agente) ou
 mudar o horário do job; reservar VRAM para a visão (mantê-la carregada)
 deixaria o 27B ~30 % mais lento. Com a nuvem ligada no painel, a visão segue
 funcionando nessa janela pela OpenRouter.

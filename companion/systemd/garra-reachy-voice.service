@@ -3,6 +3,11 @@ Description=Garra Reachy — servidor de voz (Whisper STT + Chatterbox TTS na GP
 Documentation=https://github.com/GarraIA/garra-reachy-mini
 After=network-online.target
 Wants=network-online.target
+# Cinco quedas em cinco minutos = problema real (GPU ocupada, venv quebrado):
+# sem isto o systemd reiniciaria para sempre um serviço que nunca vai subir.
+# Fica em [Unit]: em [Service] o systemd ignora estas chaves.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -21,10 +26,6 @@ TimeoutStartSec=300
 
 Restart=always
 RestartSec=5
-# Cinco quedas em cinco minutos = problema real (GPU ocupada, venv quebrado).
-# Sem isto o systemd reiniciaria para sempre um serviço que nunca vai subir.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # O que este serviço criar (cache do HuggingFace) nasce só para o dono.
 UMask=0077
