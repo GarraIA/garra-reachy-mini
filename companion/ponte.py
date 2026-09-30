@@ -44,7 +44,7 @@ import urllib.parse
 
 import httpx
 
-from . import agente, modo, visao
+from . import agente, casa as casa_mod, modo, visao
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -273,17 +273,25 @@ def _preferencias_da_query(q) -> visao.Preferencias | None:
     return _preferencias(bruto)
 
 
-def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None) -> FastAPI:
+_casa = None
+_STATUS_DA_CASA = {"invalid_url": 400, "invalid_token": 400, "unreachable": 502, "unauthorized": 401,
+                   "not_configured": 409, "config_error": 500, "gateway_restart_failed": 502}
+
+
+def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None,
+           casa=None) -> FastAPI:
     """Devolve o app da ponte já com o token e a chave real do gateway.
 
     `visao_local`/`visao_nuvem` são os provedores de visão; sem eles, os de
-    verdade — o Ollama deste PC e a OpenRouter com a chave do ambiente.
+    verdade — o Ollama deste PC e a OpenRouter com a chave do ambiente. `casa`
+    é quem liga o Home Assistant ao gateway (`casa.Casa`).
     """
     # Módulo, não closure: o `app` é um só e as rotas ficam registradas na
     # primeira chamada; o que `montar` decide depois precisa valer também.
-    global _olho_local, _olho_nuvem
+    global _olho_local, _olho_nuvem, _casa
     _olho_local = visao_local or visao.Local()
     _olho_nuvem = visao_nuvem or visao.Nuvem(chave=os.environ.get("OPENROUTER_API_KEY"))
+    _casa = casa or casa_mod.Casa(chave_gateway=chave_gateway)
 
     @app.api_route("/ping", methods=["GET", "HEAD"])
     async def saude(request: Request) -> Response:
@@ -478,6 +486,79 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
                                 status_code=400, headers=cabecalhos)
         estado = await asyncio.to_thread(visao.estado, prefs, _olho_local, _olho_nuvem)
         return JSONResponse(estado, headers=cabecalhos)
+
+    # ── casa ─────────────────────────────────────────────────────────────────
+    # O painel do robô configura o Home Assistant por aqui. O token do HA
+    # atravessa UMA vez, no `configurar`, e vai para o ambiente do gateway;
+    # nenhuma resposta o devolve, nenhum log o guarda.
+    def _erro_da_casa(e: casa_mod.ErroCasa) -> JSONResponse:
+        log.info("casa: %s", e.codigo)
+        return JSONResponse({"erro": e.codigo, "detalhe": e.detalhe[:120]},
+                            status_code=_STATUS_DA_CASA.get(e.codigo, 502),
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/casa/estado")
+    async def casa_estado(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            return JSONResponse(await asyncio.to_thread(_casa.estado),
+                                headers={"Cache-Control": "no-store"})
+        except casa_mod.ErroCasa as e:
+            return _erro_da_casa(e)
+
+    @app.post("/api/casa/configurar")
+    async def casa_configurar(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            corpo = json.loads(await request.body())
+        except ValueError:
+            corpo = None
+        if (not isinstance(corpo, dict) or not isinstance(corpo.get("url"), str)
+                or not isinstance(corpo.get("token"), str)):
+            return JSONResponse({"erro": "bad_request"}, status_code=400)
+        try:
+            return JSONResponse(await asyncio.to_thread(_casa.configurar, corpo["url"], corpo["token"]),
+                                headers={"Cache-Control": "no-store"})
+        except casa_mod.ErroCasa as e:
+            return _erro_da_casa(e)
+
+    @app.delete("/api/casa")
+    async def casa_remover(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            return JSONResponse(await asyncio.to_thread(_casa.remover),
+                                headers={"Cache-Control": "no-store"})
+        except casa_mod.ErroCasa as e:
+            return _erro_da_casa(e)
+
+    @app.get("/api/casa/entidades")
+    async def casa_entidades(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            return JSONResponse({"entities": await asyncio.to_thread(_casa.entidades)},
+                                headers={"Cache-Control": "no-store"})
+        except casa_mod.ErroCasa as e:
+            return _erro_da_casa(e)
+
+    @app.post("/api/casa/voz")
+    async def casa_voz(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            corpo = json.loads(await request.body())
+        except ValueError:
+            corpo = None
+        if not isinstance(corpo, dict) or not isinstance(corpo.get("enabled"), bool):
+            return JSONResponse({"erro": "bad_request"}, status_code=400)
+        try:
+            return JSONResponse(await asyncio.to_thread(_casa.voz, corpo["enabled"]),
+                                headers={"Cache-Control": "no-store"})
+        except casa_mod.ErroCasa as e:
+            return _erro_da_casa(e)
 
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])

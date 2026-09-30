@@ -43,6 +43,7 @@ from ..robo.barramento import Barramento
 from ..servicos import Servicos
 from .camera import FrameHub
 from .chat import ErroChat, PonteChat
+from .integracoes import Ponte as PonteIntegracoes
 from .seguranca import Limitador, Politica, origem_permitida, token_valido
 
 log = logging.getLogger("garra_reachy_mini.web.api")
@@ -72,6 +73,9 @@ class ContextoWeb:
     # A visão pela câmera (`visao.Olho`): o painel analisa um quadro por aqui,
     # e o chat digitado olha quando o texto pede.
     olho: Any = None
+    # As integrações que moram no companion (casa, música, rostos), pelo único
+    # caminho que fala com a ponte (`web/integracoes.Ponte`). `None` sem ponte.
+    integracoes: Any = None
     # Quais subsistemas estão de pé. Sem isto o painel não tem como distinguir
     # "sem voz porque você não configurou" de "sem voz porque quebrou".
     servicos: Servicos = field(default_factory=Servicos)
@@ -201,6 +205,7 @@ def montar(app: FastAPI, ctx: ContextoWeb) -> None:
     app.state.reachy_limitador = ctx.limitador
     app.include_router(_rotas_robo(ctx))
     app.include_router(_rotas_chat(ctx))
+    app.include_router(_rotas_integracoes(ctx))
     _montar_ws(app, ctx)
     _montar_painel(app, ctx)
 
@@ -214,6 +219,55 @@ def _medida_do_detector(ctx: ContextoWeb) -> dict[str, Any] | None:
         return ctx.detector()
     except Exception:       # noqa: BLE001
         return None
+
+
+# ─── integrações no companion: casa, música, rostos ──────────────────────────
+def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
+    """Repasse estreito para a ponte. Cada rota valida a forma do pedido AQUI
+    (o robô não repassa o que não entende) e devolve a resposta da ponte tal
+    qual, para o painel ler um só formato de erro."""
+    r = APIRouter(prefix="/api/robot", tags=["integracoes"])
+
+    def sem_ponte() -> JSONResponse:
+        return JSONResponse({"ok": False, "error": {"code": "bridge_not_configured",
+                                                    "detail": "gateway não configurado"}},
+                            status_code=503)
+
+    async def repassar(metodo: str, caminho: str, corpo: Any = None,
+                       timeout_s: float | None = None) -> Any:
+        if ctx.integracoes is None:
+            return sem_ponte()
+        return await ctx.integracoes.pedir(metodo, caminho, corpo, timeout_s=timeout_s)
+
+    # ── casa ─────────────────────────────────────────────────────────────────
+    @r.get("/casa/estado")
+    async def casa_estado() -> Any:
+        return await repassar("GET", "/api/casa/estado")
+
+    @r.post("/casa/configurar")
+    async def casa_configurar(corpo: dict[str, Any] = Body(...)) -> Any:
+        url, token = corpo.get("url"), corpo.get("token")
+        if not isinstance(url, str) or not isinstance(token, str) or not url or not token:
+            raise _erro(400, "informe url e token", "bad_request")
+        # O gateway reinicia por trás desta chamada: dá tempo.
+        return await repassar("POST", "/api/casa/configurar",
+                              {"url": url.strip(), "token": token.strip()}, timeout_s=90.0)
+
+    @r.delete("/casa")
+    async def casa_remover() -> Any:
+        return await repassar("DELETE", "/api/casa", timeout_s=90.0)
+
+    @r.get("/casa/entidades")
+    async def casa_entidades() -> Any:
+        return await repassar("GET", "/api/casa/entidades")
+
+    @r.post("/casa/voz")
+    async def casa_voz(corpo: dict[str, Any] = Body(...)) -> Any:
+        if not isinstance(corpo.get("enabled"), bool):
+            raise _erro(400, "informe enabled", "bad_request")
+        return await repassar("POST", "/api/casa/voz", {"enabled": corpo["enabled"]})
+
+    return r
 
 
 # ─── rotas do robô ───────────────────────────────────────────────────────────

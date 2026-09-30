@@ -57,6 +57,7 @@ from .servicos import Servicos
 from .voz import VozClient, frases, limpar_para_voz
 from .web import (ContextoWeb, FrameHub, PonteChat, montar, preparar,
                   resolver_politica)
+from .web.integracoes import Ponte as PonteIntegracoes
 
 # A página é servida sem autenticação no loopback (é o daemon quem sobe o
 # uvicorn): nada de segredo sai pelo GET /api/config.
@@ -388,6 +389,7 @@ class GarraReachyMini(ReachyMiniApp):
                 chat=self.chat,
                 acompanhamento=self.acompanhamento,
                 olho=self.olho,
+                integracoes=PonteIntegracoes(cfg.gateway_url, cfg.gateway_key),
                 servicos=self.servicos,
                 falar=self._falar_async,
                 calar=self._calar_agora,

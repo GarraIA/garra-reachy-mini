@@ -41,9 +41,13 @@ POLITICA: dict = {
 # quem fala com o robô é qualquer pessoa na sala.
 PERIGOSAS = frozenset({
     "bash", "run_program", "file_write", "file_read", "list_dir", "repo_search",
-    "device_execute", "git_diff", "run_tests", "code_review",
+    "git_diff", "run_tests", "code_review",
     "schedule_recurring", "schedule_heartbeat",
 })
+# As ferramentas da casa (`garraia-hardware`). Mexem no mundo físico, então
+# também ficam fora da voz — a não ser que o dono libere de propósito, em
+# `casa.py`. Quem fala com o robô é qualquer pessoa na sala.
+DA_CASA = frozenset({"device_list", "device_read", "device_execute"})
 
 PROMPT_PADRAO = """\
 Você é o Garra, um assistente pessoal falando EM VOZ ALTA através do robô Reachy Mini.
@@ -63,13 +67,14 @@ Do not announce that you are thinking, checking, looking, or using a tool. \
 Return only the useful final response."""
 
 
-def politica_segura(politica: object) -> bool:
+def politica_segura(politica: object, casa_liberada: bool | None = None) -> bool:
     """A política mantém a voz longe de arquivo e de processo?
 
     Confere o invariante, não a igualdade: o dono pode ter acrescentado
     ferramentas à lista branca (as do próprio robô, por exemplo) e isso não é
     defeito. Defeito é a lista deixar de ser lista, ou deixar entrar o que mexe
-    na máquina.
+    na máquina. As ferramentas da casa só entram se o dono liberou a voz para
+    a casa (`casa_liberada`; sem o argumento, lê a escolha guardada).
     """
     if not isinstance(politica, dict):
         return False
@@ -80,7 +85,13 @@ def politica_segura(politica: object) -> bool:
         return False
     if not isinstance(permitidas, list) or not permitidas:
         return False
-    return not (set(map(str, permitidas)) & PERIGOSAS)
+    nomes = set(map(str, permitidas))
+    if nomes & PERIGOSAS:
+        return False
+    if casa_liberada is None:
+        from . import casa
+        casa_liberada = casa.voz_liberada()
+    return casa_liberada or not (nomes & DA_CASA)
 
 
 def garantir(cliente: httpx.Client) -> str:
