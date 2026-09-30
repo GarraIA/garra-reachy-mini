@@ -158,7 +158,7 @@ citado no envelope do pedido, como o contexto do ambiente.
   hoje continuam (suíte de testes do painel verde).
 - Casa/Spotify/Família: ver cada frente ao ser aberta.
 
-## 6. Estado (30/09, 10:50 — RC final validado no robô)
+## 6. Estado (30/09, 11:30 — RC final validado no robô)
 
 | Requisito | Estado | Evidência (em `~/.local/state/garra-reachy/validacao-1.11.0/2026-09-30-robo/`) |
 |---|---|---|
@@ -174,9 +174,10 @@ citado no envelope do pedido, como o contexto do ambiente.
 | Spotify | implementado; real até a autorização | `spotify.log`; voz recusada pela política (painel, chat e voz). **Real: Client ID do Michel** |
 | Família | implementado; fluxo de cadastro validado pela UI real sem cadastrar ninguém | criar com consentimento, recusa de menor sem responsável, captura guiada → "nenhum rosto no quadro", desativar, persistência após reiniciar o serviço, apagar em dois cliques; pasta 0700/0600, nada no git (`familia-ui.log`). **Cadastro real: consentimento presencial** |
 | Painel 5 telas no robô | **validado real** | 5 larguras × 7 telas: 0 rolagem, 0 alvo < 44 px no toque, 0 cartão cortado, STOP visível, status real, 0 erro de JS; stream + 10 trocas de aba + 5 recargas → 0 cliente de câmera sobrando (`final-34cddf9/`) |
-| Correções vindas do hardware | feitas, com teste | status por evento, timeout/carga/admissão da visão, alvos mini e ⏮/⏭, câmera primeiro no celular, resumo real no INÍCIO, atalhos em AJUSTES, situação da casa |
-| Recursos | observação contínua | `recursos-rc-407b2dd.tsv` (1 h sob carga: FDs 62→63, threads em platô 49–50) e `recursos-final.tsv` (build final, em repouso) |
-| Suíte | 1589 passed, 1 skipped; pyflakes limpo | |
+| Correções vindas do hardware | feitas, com teste | status por evento, timeout/carga/admissão da visão, alvos mini e ⏮/⏭, câmera primeiro no celular, resumo real no INÍCIO, atalhos em AJUSTES, situação da casa, capturas no fuso da casa |
+| Reconexão | **validado real** | painel aberto durante a reinstalação: WebSocket caiu e voltou sozinho em 39 s, com o status do processo novo, sem recarregar (`reconexao.log`) |
+| Recursos | observação contínua | `recursos-rc-407b2dd.tsv` (1 h sob carga: FDs 62→63, threads em platô 49–50), `recursos-durante-validacao.tsv` (VRAM 10,9–23,0 GB; só visão e embedding no Ollama) e `recursos-repouso-<commit final>.tsv` (build final, em repouso) |
+| Suíte | 1638 passed, 1 skipped; pyflakes limpo | |
 | Publicação v1.4.1 | **bloqueado pelo OK único do Michel** | decisão 1 |
 
 ## 7. Validação (comandos)
@@ -363,6 +364,6 @@ carga legítima seria abortada; aqui leva 2,6 s); o `garra-stt.service`, que nã
 
 ## PRÓXIMA AÇÃO EXATA
 
-Instalar o RC final (o commit deste registro) no robô, deixar a observação de
-recursos em repouso por pelo menos uma hora e pedir ao Michel, uma vez, o OK
-para publicar (§ publicação no relatório final).
+O RC final é o commit deste registro, instalado no robô a partir do Space
+privado. Falta só o repouso de uma hora sobre ele e o pedido único de OK para
+publicar (push, merge em `main`, tag `v1.4.1`, release e Space público).
