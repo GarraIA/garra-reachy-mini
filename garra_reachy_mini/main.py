@@ -52,7 +52,7 @@ from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from . import servicos as servicos_mod
-from . import familia, musica, visao
+from . import casa, familia, musica, visao
 from .segmentador import Segmentador
 from .servicos import Servicos
 from .voz import VozClient, frases, limpar_para_voz
@@ -430,6 +430,10 @@ class GarraReachyMini(ReachyMiniApp):
     def _cliente_da_familia(self) -> familia.ClienteFamilia:
         cfg = Config.carregar()
         return familia.ClienteFamilia(cfg.gateway_url, cfg.gateway_key)
+
+    def _cliente_da_casa(self) -> casa.ClienteCasa:
+        cfg = Config.carregar()
+        return casa.ClienteCasa(cfg.gateway_url, cfg.gateway_key)
 
     def medida_do_detector(self) -> dict | None:
         """O que o detector de fala está medindo agora, ou `None` sem laço de
@@ -985,10 +989,15 @@ class GarraReachyMini(ReachyMiniApp):
             if familia.pede_reconhecer(texto):
                 pessoas = self.familia.reconhecer(conf_agora.conversa,
                                                   correlacao=correlacao, origem="voz")
+            # Pedido sobre aparelho: a situação real do controle da casa vai
+            # junto, para o modelo não concluir "não tenho essa capacidade".
+            situacao_casa = None
+            if casa.pede_casa(texto):
+                situacao_casa = casa.situacao(self._cliente_da_casa().estado())
             mensagem = self.acompanhamento.montar(texto, time.monotonic(),
                                                   conf_agora.conversa,
                                                   correlacao=correlacao, visao=visto,
-                                                  pessoas=pessoas)
+                                                  pessoas=pessoas, situacao_casa=situacao_casa)
             futuro = executor.submit(cerebro.perguntar, mensagem + complemento)
 
             # Prazos ABSOLUTOS a partir do início do turno. Encadear as esperas

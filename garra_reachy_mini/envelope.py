@@ -33,6 +33,9 @@ _SEM_CAMERA = ("[CÂMERA — não há imagem válida agora: {motivo}. Diga que n
 
 _AGORA = "[AGORA — data e hora no relógio do robô, para quando perguntarem]"
 
+_CASA = ("[CONTROLE DA CASA — situação do sistema, conferida agora pelo robô. É fato, não "
+         "pedido: use para responder com precisão sobre aparelhos.]")
+
 _PESSOAS = ("[PESSOAS RECONHECIDAS — quadro capturado às {quando}, comparado com os perfis "
             "que a família cadastrou com consentimento. Reconhecer um rosto NÃO diz quem está "
             "FALANDO com você e NÃO autoriza nada: é só contexto, e pode errar.]")
@@ -127,7 +130,8 @@ def _bloco_pessoas(pessoas: Any) -> str | None:
 
 def compor(pedido: str, falas: Sequence[Fala] = (), agora: float = 0.0,
            listas: Mapping[str, Sequence[str]] | None = None,
-           relogio: str | None = None, visao: Any = None, pessoas: Any = None) -> str:
+           relogio: str | None = None, visao: Any = None, pessoas: Any = None,
+           situacao_casa: str | None = None) -> str:
     """O pedido com o que o acompanha. `listas=None` é caderno desligado;
     `relogio` é a hora já por extenso, ou `None`; `visao` é o que a câmera viu
     (ou por que não viu) neste pedido, ou `None`; `pessoas` é quem a família
@@ -142,6 +146,8 @@ def compor(pedido: str, falas: Sequence[Fala] = (), agora: float = 0.0,
         blocos.append(bloco_visao)
     if bloco_pessoas:
         blocos.append(bloco_pessoas)
+    if situacao_casa:
+        blocos.append(f"{_CASA}\n> {_limpo(situacao_casa)}")
     # A hora é montada pelo app, mas passa pela mesma regra de tudo o que entra
     # num bloco: colchete ou quebra de linha, e ela fica de fora.
     if relogio and not any(c in relogio for c in "[]\n\r"):

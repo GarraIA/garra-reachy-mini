@@ -39,6 +39,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 
 from .. import armazenamento, build_info, conversa, envelope, recursos
 from .. import caderno as caderno_mod
+from .. import casa as casa_mod
 from .. import familia as familia_mod
 from .. import musica as musica_mod
 from .. import visao as visao_mod
@@ -914,6 +915,17 @@ def _gravar_conversa(corpo: dict[str, Any]) -> dict[str, Any]:
 def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
     r = APIRouter(prefix="/api/chat", tags=["chat"])
 
+    async def _estado_da_casa() -> dict | None:
+        """O estado da casa pela ponte, para o envelope; None se não deu."""
+        if ctx.integracoes is None:
+            return None
+        resposta = await ctx.integracoes.pedir("GET", "/api/casa/estado", timeout_s=casa_mod.TIMEOUT_S)
+        try:
+            dados = json.loads(bytes(resposta.body))
+        except (ValueError, TypeError, AttributeError):
+            return None
+        return dados if resposta.status_code == 200 and isinstance(dados, dict) else None
+
     def ponte() -> PonteChat:
         if ctx.chat is None:
             raise _erro(503, "o chat não está configurado")
@@ -962,8 +974,11 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         pessoas = None
         if ctx.familia is not None and familia_mod.pede_reconhecer(texto):
             pessoas = await asyncio.to_thread(ctx.familia.reconhecer, conf, correlacao, "chat")
+        situacao_casa = None
+        if casa_mod.pede_casa(texto):
+            situacao_casa = casa_mod.situacao(await _estado_da_casa())
         mensagem = await asyncio.to_thread(
-            ac.montar, texto, time.monotonic(), conf, correlacao, False, visto, pessoas)
+            ac.montar, texto, time.monotonic(), conf, correlacao, False, visto, pessoas, situacao_casa)
         try:
             resposta = await ponte().enviar(mensagem)
         except ErroChat as e:
