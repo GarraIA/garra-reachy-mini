@@ -1217,7 +1217,7 @@ function pintarMusica(d) {
   const spot = d.provider === 'spotatui';
   integracoes.musica = { ...d, state: st };
   const classe = { connected: 'success', ready: 'success', not_connected: 'warning', player_off: 'warning',
-                   not_configured: '', not_installed: '' }[st] ?? 'danger';
+                   rate_limited: 'warning', not_configured: '', not_installed: '' }[st] ?? 'danger';
   pill($('p-musica'), MUSICA_PRONTA.has(st), t(`musica.estado_${st}`), classe);
   $('musica-estado-texto').textContent = t(`musica.estado_${st}_dica`);
   $('musica-spotatui').hidden = !spot;

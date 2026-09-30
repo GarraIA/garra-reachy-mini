@@ -575,3 +575,42 @@ def test_companion_novo_recupera_sozinho_na_partida(cmd, tmp_path) -> None:
                        segundo_plano=lambda funcao, *args: funcao(*args))
     novo.iniciar()
     assert cmd.falso.aparelhos["spotatui"] == 60
+
+
+def test_limite_da_spotify_e_dito_e_nao_insiste(cmd) -> None:
+    cmd.falso.falha = "Spotify API 429 Too Many Requests failed: rate limited by Spotify, retry in 600s"
+    cmd.falso.falhas_restantes = 1
+    r = pedir(cmd, "play_track", query="Hotel California")
+    assert (r["status"], r["reason"], r["retry_after_s"]) == ("unavailable", "rate_limited", 600)
+    antes = len(cmd.falso.chamadas)
+    r = pedir(cmd, "pause")
+    assert r["reason"] == "rate_limited" and len(cmd.falso.chamadas) == antes
+
+
+def test_conferencia_le_pouco_o_player(cmd) -> None:
+    cmd.falso.ignorar.add("play")
+    pedir(cmd, "play_track", query="Hotel California")
+    leituras = sum(1 for a in cmd.falso.chamadas if a[1] == "playback" and "--status" in a)
+    assert leituras <= mc.LEITURAS_MAX + 1, "cada leitura é uma chamada à Web API (limite de taxa)"
+
+
+def test_resultado_que_nao_bate_com_o_pedido_pergunta_em_vez_de_tocar(cmd) -> None:
+    # Medido: o STT ouviu "toco até o Califórnia"; a busca devolveu outra música.
+    cmd.falso.catalogo.insert(0, cmd.falso.catalogo[3])
+    r = pedir(cmd, "play_track", query="até o Califórnia")
+    assert (r["status"], r["reason"]) == ("found", "low_confidence")
+    assert comandos_enviados(cmd.falso) == [], "na dúvida, não toca"
+    r = pedir(cmd, "play_found")
+    assert r["status"] == "playing" and r["track"]["uri"] == "spotify:track:bohe01"
+
+
+@pytest.mark.parametrize("consulta,titulo,artistas,confia", [
+    ("Hotel California dos Eagles", "Hotel California - 2013 Remaster", ["Eagles"], True),
+    ("o Hotel California", "Hotel California - 2013 Remaster", ["Eagles"], True),
+    ("Queen", "Bohemian Rhapsody", ["Queen"], True),
+    ("Evidências", "Evidências", ["Chitãozinho & Xororó"], True),
+    ("até o Califórnia", "Cachimbo da Paz (feat. Lulu Santos)", ["Gabriel O Pensador, Lulu Santos"], False),
+    ("hotel Califórnia", "Hotel California", ["Eagles"], True),
+])
+def test_confianca_do_resultado(consulta, titulo, artistas, confia) -> None:
+    assert mc.confia(consulta, {"name": titulo, "artists": artistas, "album": None}) is confia

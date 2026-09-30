@@ -225,6 +225,10 @@ class SpotatuiFalso:
         termos = [t for t in pos[0].lower().split() if t]
         achados = [f for f in self.catalogo + self.curtidas
                    if all(t in f"{f.titulo} {f.artista}".lower() for t in termos)]
+        if not achados and "califórnia" in pos[0].lower():
+            # A busca da Spotify devolve ALGUMA coisa para quase tudo (medido:
+            # "até o Califórnia" → "Cachimbo da Paz").
+            achados = self.catalogo[:1]
         if not achados:
             return 1, "", LOG + f'Error: No tracks found for "{pos[0]}"\n'
         limite = int(o.get("--limit", 5))

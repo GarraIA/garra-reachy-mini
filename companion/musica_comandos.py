@@ -48,10 +48,15 @@ _ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 _PLAYLIST = re.compile(r"spotify:playlist:[A-Za-z0-9]{1,64}")
 _CONTROLE = re.compile(r"[\x00-\x1f\x7f]")
 _CONECTIVOS = {"de", "do", "da", "dos", "das", "by"}
-_INDISPONIVEL = {"not_installed", "player_off", "auth_expired", "unreachable"}
+_INDISPONIVEL = {"not_installed", "player_off", "auth_expired", "unreachable", "rate_limited"}
+_VAZIAS = {"de", "do", "da", "dos", "das", "o", "a", "os", "as", "e", "the", "by", "feat", "ft", "musica", "cancao",
+           "um", "uma", "no", "na", "em", "com", "remaster", "remastered", "version", "ao", "vivo"}
 
 VERIFICAR_S = 8.0
-INTERVALO_S = 0.4
+# Cada leitura do player é uma chamada à Web API, e a Spotify limita a taxa por
+# app (a TUI do spotatui, aberta, também lê): poucas leituras, espaçadas.
+INTERVALO_S = 1.0
+LEITURAS_MAX = 6
 FILA_REPETIDA_S = 90.0
 FILA_EXTRA = 3
 ESPERA_DUPLICADO_S = 20.0
@@ -72,6 +77,24 @@ def _norm(texto: str | None) -> str:
     t = unicodedata.normalize("NFD", (texto or "").lower())
     t = "".join(c for c in t if unicodedata.category(c) != "Mn")
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", t)).strip()
+
+
+def confia(consulta: str, faixa: dict) -> bool:
+    """A faixa achada tem a ver com o que foi pedido? A busca da Spotify sempre
+    devolve ALGUMA coisa — medido: "até o Califórnia" (o STT ouvindo "toca
+    Hotel California") devolveu "Cachimbo da Paz". Metade das palavras que
+    importam precisa aparecer no título, no artista ou no álbum."""
+    pedidas = [p for p in _norm(consulta).split() if len(p) >= 2 and p not in _VAZIAS]
+    if not pedidas:
+        return True
+    achadas = set(_norm(" ".join([faixa.get("name") or "", *(faixa.get("artists") or []),
+                                  faixa.get("album") or ""])).split())
+
+    def bate(p: str) -> bool:
+        return p in achadas or (len(p) >= 4 and any(a.startswith(p) or p.startswith(a) for a in achadas
+                                                     if len(a) >= 4))
+
+    return sum(1 for p in pedidas if bate(p)) * 2 >= len(pedidas)
 
 
 def _titulo_base(titulo: str | None) -> str:
@@ -242,6 +265,8 @@ class Comandos:
                     self.segundo_plano(*tarefa)
         except ErroSpotatui as e:
             resultado = self._falha(pedido, e.codigo)
+            if e.retry_after_s is not None:
+                resultado["retry_after_s"] = e.retry_after_s
         except Exception:
             log.exception("musica: erro inesperado em %s", pedido["operation"])
             resultado = self._falha(pedido, "provider_error")
@@ -302,16 +327,18 @@ class Comandos:
         """
         fim = self.agora() + prazo_s
         anterior = atual = None
+        leituras = 0
         while True:
             try:
                 atual = self.provedor.reproducao()
             except ErroSpotatui as e:
-                if e.codigo in ("auth_expired", "not_installed"):
+                if e.codigo in ("auth_expired", "not_installed", "rate_limited"):
                     raise
                 atual = None
+            leituras += 1
             if cond(atual, anterior):
                 return True, atual, self._avancou(anterior, atual)
-            if self.agora() >= fim:
+            if self.agora() >= fim or leituras >= LEITURAS_MAX:
                 return False, atual, self._avancou(anterior, atual)
             anterior = atual
             self.dormir(INTERVALO_S)
@@ -384,10 +411,19 @@ class Comandos:
                 raise e
         return resultados
 
+    def _na_duvida(self, pedido: dict, faixa: dict) -> dict[str, Any]:
+        """O achado não bate com o pedido: pergunta em vez de tocar (e guarda
+        para o "toca essa")."""
+        self._achado = (faixa, self.agora())
+        return {**self._base(pedido), "status": "found", "reason": "low_confidence", "verified": True,
+                "track": {k: faixa[k] for k in ("name", "artists", "album", "uri")}}
+
     def _op_play_track(self, pedido: dict, alvo: str) -> dict[str, Any]:
         achadas, est = self._em_paralelo(lambda: self._buscar(pedido["query"]), self.provedor.reproducao)
         if not achadas:
             return self._falha(pedido, "not_found")
+        if not confia(pedido["query"], achadas[0]):
+            return self._na_duvida(pedido, achadas[0])
         return self._tocar_faixa(pedido, alvo, achadas[0], est)
 
     def _tocar_faixa(self, pedido: dict, alvo: str, faixa: dict, est: dict | None | bool = False) -> dict[str, Any]:
@@ -489,6 +525,8 @@ class Comandos:
         if not achadas:
             return self._falha(pedido, "not_found")
         faixa = achadas[0]
+        if not confia(pedido["query"], faixa):
+            return self._na_duvida(pedido, faixa)
         est = self.provedor.reproducao()
         if est is None:
             return self._falha(pedido, "no_playback")
@@ -799,4 +837,4 @@ class Comandos:
         return e
 
 
-__all__ = ["ABAFAR_MAX_S", "Comandos", "OPERACOES", "PedidoInvalido", "Preferencias", "STATUS"]
+__all__ = ["ABAFAR_MAX_S", "Comandos", "OPERACOES", "PedidoInvalido", "Preferencias", "STATUS", "confia"]

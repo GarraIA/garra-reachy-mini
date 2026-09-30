@@ -74,6 +74,8 @@ _INDISPONIVEL = {
     "auth_expired": "Preciso que você reconecte sua conta do Spotify no computador.",
     "unreachable": "Não consegui conectar ao Spotify agora.",
     "not_installed": "O Spotify não está configurado no computador.",
+    "rate_limited": ("O Spotify pediu para esperar um pouco antes de novos comandos. "
+                     "Tente de novo em alguns minutos."),
 }
 _NAO_CONFERIDO = {
     "pause": "Pedi para pausar, mas não consegui confirmar.",
@@ -118,6 +120,9 @@ def frase(r: dict | None) -> str:
             return "Não encontrei uma playlist sua com esse nome."
         return "Não encontrei essa música no Spotify."
     if st == "found":
+        if motivo == "low_confidence":
+            # O que a busca devolveu não bate com o que foi ouvido: não tocou.
+            return f"Não tenho certeza de que entendi. Encontrei {_musica(r)}. Se for essa, diga: toca essa."
         return f"Encontrei {_musica(r)}. Para ouvir, diga: toca essa."
     if st == "queued":
         return f"{_musica(r)}, já está na fila." if ja else f"Adicionei à fila: {_musica(r)}."

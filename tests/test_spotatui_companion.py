@@ -279,3 +279,28 @@ def test_icone_com_comentario_no_config(tmp_path) -> None:
     cfg = tmp_path / "config.yml"
     cfg.write_text("behavior:\n  playing_icon: '▶' # tocando\n  paused_icon: ⏸  # pausado\n")
     assert spotatui.icones_do_config(cfg) == ("▶", "⏸")
+
+
+# ── limite de taxa da Spotify (medido em 30/09: 429, "retry in 600s") ─────────
+
+def test_429_vira_rate_limited_com_prazo_e_pausa_local(sp, falso) -> None:
+    falso.falha = "Spotify API 429 Too Many Requests failed: rate limited by Spotify, retry in 600s"
+    falso.falhas_restantes = 1
+    with pytest.raises(spotatui.ErroSpotatui) as e:
+        sp.reproducao()
+    assert e.value.codigo == "rate_limited" and e.value.retry_after_s == 600
+    antes = len(falso.chamadas)
+    with pytest.raises(spotatui.ErroSpotatui) as e:
+        sp.dispositivos()
+    assert e.value.codigo == "rate_limited" and len(falso.chamadas) == antes, \
+        "durante a pausa pedida pela Spotify, a CLI nem é chamada"
+
+
+def test_a_pausa_local_acaba_no_prazo(falso, tmp_path) -> None:
+    agora = [0.0]
+    sp = spotatui.Spotatui(executavel="/x/spotatui", executar=falso, dir_temp=tmp_path, agora=lambda: agora[0])
+    falso.falha, falso.falhas_restantes = "Spotify API 429 Too Many Requests failed: retry in 30s", 1
+    with pytest.raises(spotatui.ErroSpotatui):
+        sp.dispositivos()
+    agora[0] = 31.0
+    assert sp.dispositivos()[0]["name"] == "spotatui"

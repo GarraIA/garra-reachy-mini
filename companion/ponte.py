@@ -291,7 +291,7 @@ _STATUS_DA_MUSICA = {"invalid_client_id": 400, "bad_request": 400, "not_configur
                      "timeout": 504, "spotify_error": 502}
 _STATUS_DO_SPOTATUI = {"not_installed": 409, "player_off": 409, "no_playback": 409, "auth_expired": 401,
                        "unreachable": 502, "timeout": 504, "not_found": 404, "bad_request": 400,
-                       "provider_error": 502}
+                       "provider_error": 502, "rate_limited": 429}
 _STATUS_DA_CASA = {"invalid_url": 400, "invalid_token": 400, "unreachable": 502, "unauthorized": 401,
                    "not_configured": 409, "config_error": 500, "gateway_restart_failed": 502}
 
@@ -646,8 +646,11 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
             return JSONResponse({"erro": "bad_request"}, status_code=400)
         except spotatui.ErroSpotatui as e:
             log.info("musica: %s", e.codigo)
+            cabecalhos = {"Cache-Control": "no-store"}
+            if e.retry_after_s is not None:
+                cabecalhos["Retry-After"] = str(e.retry_after_s)
             return JSONResponse({"erro": e.codigo}, status_code=_STATUS_DO_SPOTATUI.get(e.codigo, 502),
-                                headers={"Cache-Control": "no-store"})
+                                headers=cabecalhos)
 
     async def _corpo_json(request: Request) -> object:
         try:

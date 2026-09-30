@@ -273,3 +273,11 @@ def test_reproducao_pela_ponte(monkeypatch) -> None:
     monkeypatch.setattr(musica.requests.Session, "get",
                         lambda self, *a, **k: (_ for _ in ()).throw(requests.ConnectionError("x")))
     assert musica.ClienteMusica("http://ponte", "tok").reproducao() is None
+
+
+def test_limite_da_spotify_e_busca_duvidosa() -> None:
+    f = musica.frase(resultado("unavailable", reason="rate_limited", track=None, retry_after_s=600))
+    assert "Spotify pediu" in f and "minutos" in f and "está tocando" not in f
+    f = musica.frase(resultado("found", "play_track", reason="low_confidence",
+                               track=("Cachimbo da Paz (feat. Lulu Santos)", ["Gabriel O Pensador, Lulu Santos"])))
+    assert f.startswith("Não tenho certeza de que entendi.") and "toca essa" in f and "Pronto" not in f

@@ -35,13 +35,17 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Callable
 
 log = logging.getLogger("companion.spotatui")
 
 CODIGOS = ("not_installed", "player_off", "no_playback", "auth_expired", "unreachable", "timeout",
-           "not_found", "bad_request", "provider_error")
+           "not_found", "bad_request", "provider_error", "rate_limited")
+# A Spotify limita a taxa por app (medido em 30/09: "429 … retry in 600s"). Pausa
+# local no máximo por isto, mesmo que a mensagem peça mais.
+PAUSA_MAX_S = 900
 TIMEOUT_S = 10.0
 MAX_LOGS = 20
 CONSULTA_MAX = 120
@@ -63,11 +67,12 @@ _AMBIENTE = {"HOME", "USER", "LOGNAME", "PATH", "LANG", "LANGUAGE", "SHELL", "SS
 
 
 class ErroSpotatui(Exception):
-    def __init__(self, codigo: str, detalhe: str = "") -> None:
+    def __init__(self, codigo: str, detalhe: str = "", retry_after_s: int | None = None) -> None:
         assert codigo in CODIGOS, codigo
         super().__init__(f"{codigo}: {detalhe}" if detalhe else codigo)
         self.codigo = codigo
         self.detalhe = detalhe
+        self.retry_after_s = retry_after_s
 
 
 def icones_do_config(caminho: Path = CONFIG_YML) -> tuple[str, str]:
@@ -110,6 +115,9 @@ def _erro_de(stderr: str) -> ErroSpotatui:
     linhas = [linha for linha in stderr.splitlines() if linha.strip() and not linha.startswith("Logging to:")]
     erros = [linha for linha in linhas if "error" in linha.lower()]
     t = "\n".join(erros or linhas).lower()
+    if re.search(r"\b429\b", t) or "too many requests" in t or "rate limited" in t:
+        m = re.search(r"retry (?:in|after) (\d+)\s*s", t)
+        return ErroSpotatui("rate_limited", retry_after_s=int(m.group(1)) if m else 60)
     if "no device with name" in t or "no active device" in t or "device not found" in t:
         return ErroSpotatui("player_off")
     if "no context available" in t:
@@ -135,8 +143,12 @@ def _erro_de(stderr: str) -> ErroSpotatui:
 class Spotatui:
     def __init__(self, executavel: str | None = None, executar: Executor | None = None,
                  dir_temp: Path | None = None, icones: tuple[str, str] | None = None,
-                 timeout_s: float = TIMEOUT_S, max_logs: int = MAX_LOGS) -> None:
+                 timeout_s: float = TIMEOUT_S, max_logs: int = MAX_LOGS,
+                 agora: Callable[[], float] = time.monotonic) -> None:
         self.executavel = executavel or self._achar()
+        self.agora = agora
+        # Até quando a Spotify pediu para parar: nada vai à CLI antes disso.
+        self._pausa_ate = 0.0
         self._executar = executar or _executar_processo
         self.dir_temp = Path(dir_temp or DIR_TEMP)
         self.icones = icones or icones_do_config()
@@ -193,10 +205,16 @@ class Spotatui:
             raise ErroSpotatui("provider_error", type(e).__name__) from None
 
     def _cli(self, args: list[str]) -> str:
+        falta = self._pausa_ate - self.agora()
+        if falta > 0:
+            # Insistir durante o limite só o prolonga.
+            raise ErroSpotatui("rate_limited", retry_after_s=int(falta) + 1)
         rc, out, err = self._rodar(args)
         if rc != 0:
             e = _erro_de(err)
             log.info("spotatui %s → %s", args[0], e.codigo)
+            if e.codigo == "rate_limited":
+                self._pausa_ate = self.agora() + min(PAUSA_MAX_S, e.retry_after_s or 60)
             raise e
         return out
 
