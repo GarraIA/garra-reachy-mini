@@ -18,9 +18,10 @@ O que as regras da Spotify vigentes em 30/09/2026 decidem por nós
   e cada estado devolvido diz onde a música está tocando.
 - **Aceito não é tocando**: um 204 diz que o comando entrou; o estado se lê
   depois (`GET /me/player`). Comando não idempotente não é repetido.
-- **Voz não controla** (Developer Policy III.3) e nada da Spotify vai ao
-  modelo (III.14). O robô reconhece o pedido de música por voz só para
-  recusá-lo com a razão e apontar o painel.
+- **Este provedor é do painel.** O comando por VOZ (e pelo chat) vai pelo
+  spotatui deste PC (`musica_comandos.py`), que reaproveita a sessão que o
+  spotatui já tem; ligá-lo é opt-in do dono, porque a Developer Policy III.3
+  não permite assistente de voz. Nada da Spotify vai ao modelo (III.14).
 """
 
 from __future__ import annotations
@@ -54,22 +55,6 @@ CODIGOS = ("invalid_client_id", "not_configured", "not_connected", "invalid_stat
            "auth_expired", "premium_required", "no_active_device", "restricted_device",
            "rate_limited", "bad_request", "unreachable", "timeout", "spotify_error")
 _CLIENT_ID = re.compile(r"[A-Za-z0-9]{32}")
-
-RECUSA_POR_VOZ = ("Por voz eu não controlo o Spotify: a política da Spotify não permite "
-                  "assistente de voz. Use o painel do robô, na aba de música.")
-_MUSICA = re.compile(
-    r"\b(spotify|musica|música|faixa|playlist|album|álbum|cancao|canção)\b|"
-    r"\b(toca|toque|tocar|pausa|pause|pausar|despausa|proxima|próxima|anterior|pula|pular|"
-    r"aumenta o volume|abaixa o volume|diminui o volume|volume da musica|volume da música)\b|"
-    r"\b(play|pause|next|skip) (some |the |a )?(music|song|track)\b|\bplay some music\b")
-_NAO_MUSICA = re.compile(r"\b(campainha|tanque|alarme)\b")
-
-
-def pede_controle(texto: str) -> bool:
-    """Parece pedido de música? Serve para RECUSAR por voz, não para agir."""
-    t = (texto or "").lower()
-    return bool(t) and bool(_MUSICA.search(t)) and not _NAO_MUSICA.search(t)
-
 
 class ErroMusica(Exception):
     def __init__(self, codigo: str, detalhe: str = "", retry_after_s: int | None = None) -> None:
@@ -123,7 +108,8 @@ class Spotify:
             "expires_in_s": max(0, int(d.get("expires_at", 0) - self.agora())) if conectado else None,
             "redirect_uri": REDIRECT_URI,
             "connect_url": CONNECT_URL,
-            "voice_control": "blocked_by_policy",
+            # A voz não passa por este provedor: vai pelo spotatui do PC.
+            "voice_control": "spotatui_only",
         }
 
     def configurar(self, client_id: str) -> dict[str, Any]:
@@ -337,5 +323,5 @@ class Spotify:
         return {"requested": acao, "accepted": True, "state": estado}
 
 
-__all__ = ["ACOES", "CODIGOS", "CONNECT_URL", "ErroMusica", "ESCOPOS", "RECUSA_POR_VOZ",
-           "REDIRECT_URI", "STATE_VALIDADE_S", "Spotify", "pede_controle"]
+__all__ = ["ACOES", "CODIGOS", "CONNECT_URL", "ErroMusica", "ESCOPOS", "REDIRECT_URI", "STATE_VALIDADE_S",
+           "Spotify"]

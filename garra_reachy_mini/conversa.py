@@ -138,6 +138,12 @@ PADRAO: dict[str, Any] = {
     # Desligado de fábrica; reconhecer não identifica quem fala nem autoriza
     # nada. Ver familia.py.
     "family_recognition_enabled": False,
+    # ── música ───────────────────────────────────────────────────────────────
+    # "Toca Hotel California": o robô entende o comando (musica_pedido.py, sem
+    # modelo) e o spotatui do computador toca no aparelho configurado. Opt-in
+    # do dono: a Developer Policy III.3 da Spotify não permite assistente de
+    # voz, e o painel diz isso onde se liga. Ver musica.py.
+    "music_voice_enabled": False,
     "progress_update_delay_ms": 10000,
     "max_progress_messages": 1,
     "acknowledgement_cut_threshold_ms": 1200,
@@ -161,7 +167,8 @@ BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
              "wake_second_listen_enabled", "wake_second_listen_always",
              "wake_diagnostics_enabled",
              "ambient_context_enabled", "notebook_enabled", "clock_enabled",
-             "vision_enabled", "vision_cloud_enabled", "family_recognition_enabled")
+             "vision_enabled", "vision_cloud_enabled", "family_recognition_enabled",
+             "music_voice_enabled")
 
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
 # folgado para isso e curto o bastante para não virar um parágrafo.

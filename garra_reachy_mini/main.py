@@ -52,7 +52,7 @@ from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from . import servicos as servicos_mod
-from . import casa, familia, musica, relogio, visao
+from . import casa, familia, musica, musica_pedido, relogio, visao
 from .segmentador import Segmentador
 from .servicos import Servicos
 from .voz import VozClient, frases, limpar_para_voz
@@ -79,6 +79,20 @@ RECONFERIR_CEREBRO_S = 20.0
 # disso ele voltou por falha (voz sumiu, cérebro sumiu, config mudou), e
 # reentrar na hora vira laço apertado — que foi o que esgotou os FDs.
 CICLO_VOZ_ESTAVEL_S = 30.0
+
+
+# Música. Um comando solto ("continua", "próxima", "mais alto") só é sobre
+# música até este tanto depois do último comando de música atendido.
+MUSICA_ASSUNTO_S = 30 * 60.0
+# O pedido ao PC leva de 2 a 8 s (busca, play e a conferência, medidos em
+# 30/09). Passou disto sem resposta, o robô avisa que está indo.
+MUSICA_AVISO_S = 1.5
+# Teto do pedido inteiro, reentrega incluída: sem resposta, a fala é a de
+# falha, e ninguém toca "de novo" por cima.
+MUSICA_PRAZO_S = 65.0
+# O que abaixa a música e mantém o laço vivo se a música estiver tocando.
+_MUSICA_SEGUE = ("play_generic", "play_track", "play_playlist", "play_found", "resume", "next", "previous",
+                 "now_playing", "queue_track", "search_track")
 
 
 # Rejeição em sala barulhenta pode acontecer a cada frase dita perto do robô.
@@ -402,6 +416,7 @@ class GarraReachyMini(ReachyMiniApp):
                 falar=self._falar_async,
                 calar=self._calar_agora,
                 nova_sessao=self._nova_sessao_async,
+                atender_musica=self._atender_musica_do_chat,
                 detector=self.medida_do_detector,
                 dir_estatico=Path(__file__).resolve().parent / "static",
             ),
@@ -444,6 +459,108 @@ class GarraReachyMini(ReachyMiniApp):
         cfg = Config.carregar()
         return casa.ClienteCasa(cfg.gateway_url, cfg.gateway_key)
 
+    def _cliente_da_musica(self) -> musica.ClienteMusica:
+        cfg = Config.carregar()
+        return musica.ClienteMusica(cfg.gateway_url, cfg.gateway_key)
+
+    def _pool_da_musica(self) -> ThreadPoolExecutor:
+        """Um pool só, criado uma vez — pelo mesmo motivo do pool do cérebro."""
+        atual = self._executor_musica
+        if atual is None or getattr(atual, "_shutdown", False):
+            atual = ThreadPoolExecutor(max_workers=2, thread_name_prefix="musica")
+            self._executor_musica = atual
+        return atual
+
+    def _atender_musica(self, pedido: musica_pedido.PedidoMusica, correlacao: str, origem: str,
+                        eventos, falar=None) -> str | None:
+        """Atende o comando de música e devolve o que foi respondido.
+
+        `None` quando a frase não é sobre música AGORA — comando solto
+        ("continua") sem música no assunto — e então ela segue para o modelo.
+        O pedido nunca vai ao modelo, e nada da Spotify vai (III.14).
+        """
+        conv = Config.carregar().conversa
+        ligada = conv.get("music_voice_enabled") is True
+        if pedido.contextual and (not ligada or time.monotonic() >= self._musica_ate):
+            return None
+        resultado = None
+        if pedido.operacao == "capability":
+            texto = musica.capacidade(ligada)
+        elif not ligada:
+            texto = musica.DESLIGADO
+        else:
+            resultado = self._executar_musica(pedido, correlacao, origem, eventos, falar)
+            texto = musica.frase(resultado)
+        eventos.publicar("chat.message", correlation_id=correlacao, role="assistant",
+                         content=texto, source="garra")
+        if falar is None:
+            return texto
+        falada = None
+        try:
+            falada = falar(texto)
+        except Exception:
+            self.logger.exception("Falha ao falar a confirmação da música")
+        finally:
+            if resultado and (resultado.get("ducked") or {}).get("ducked"):
+                self._pool_da_musica().submit(self._cliente_da_musica().restaurar, correlacao)
+        if resultado and resultado.get("status") in ("playing", "paused", "queued", "volume_set") \
+                and falada is not ResultadoFala.FALADA:
+            # A música mudou e a confirmação não saiu: fica registrado assim, e a
+            # faixa NÃO é recomeçada para tentar de novo.
+            eventos.publicar("music.confirmation.not_spoken", correlation_id=correlacao,
+                             status=resultado.get("status"), operation=resultado.get("operation"))
+        return texto
+
+    def _atender_musica_do_chat(self, pedido: musica_pedido.PedidoMusica, correlacao: str) -> str | None:
+        """O mesmo atendimento, pelo chat do painel: responde por escrito."""
+        if self.controlador is None:
+            return None
+        return self._atender_musica(pedido, correlacao, "chat", self.controlador.eventos)
+
+    def _executar_musica(self, pedido: musica_pedido.PedidoMusica, correlacao: str, origem: str,
+                         eventos, falar=None) -> dict | None:
+        requisicao = musica.pedido_da_ferramenta(pedido.operacao, pedido.consulta, pedido.volume,
+                                                 correlacao, origem)
+        if falar is not None and pedido.operacao in _MUSICA_SEGUE:
+            # Abaixar a música para a confirmação é pedido junto: o PC abaixa
+            # DEPOIS de conferir que tocou, e o robô devolve o volume ao terminar.
+            requisicao["duck"] = True
+        eventos.publicar("music.command.received", correlation_id=correlacao, operation=pedido.operacao,
+                         source=origem)
+        inicio = time.monotonic()
+        futuro = self._pool_da_musica().submit(self._cliente_da_musica().comando, requisicao)
+        resultado = None
+        try:
+            if falar is not None:
+                try:
+                    resultado = futuro.result(timeout=MUSICA_AVISO_S)
+                except FuturesTimeout:
+                    falar(musica.aviso(pedido.operacao))
+                    resultado = futuro.result(timeout=max(1.0, MUSICA_PRAZO_S - (time.monotonic() - inicio)))
+            else:
+                resultado = futuro.result(timeout=MUSICA_PRAZO_S)
+        except FuturesTimeout:
+            resultado = None
+        except Exception:
+            self.logger.exception("Falha inesperada no pedido de música")
+            resultado = None
+        r = resultado or {}
+        eventos.publicar("music.command.result", correlation_id=correlacao, operation=pedido.operacao,
+                         status=r.get("status", "bridge_unreachable"), reason=r.get("reason"),
+                         verified=bool(r.get("verified")), evidence=r.get("evidence"),
+                         duplicate=bool(r.get("duplicate")), device=r.get("device"),
+                         duration_ms=int((time.monotonic() - inicio) * 1000))
+        self._lembrar_musica(resultado)
+        return resultado
+
+    def _lembrar_musica(self, r: dict | None) -> None:
+        if not r or r.get("status") in (None, "pending", "unavailable", "failed"):
+            return
+        self._musica_ate = time.monotonic() + MUSICA_ASSUNTO_S
+        visto = r.get("observed") or {}
+        self._musica_tocando = (r.get("status") == "playing"
+                                or (visto.get("state") == "playing" and visto.get("device") == r.get("device")))
+
     def medida_do_detector(self) -> dict | None:
         """O que o detector de fala está medindo agora, ou `None` sem laço de
         voz de pé. Só números: piso de ruído, limiares e contagens."""
@@ -465,6 +582,11 @@ class GarraReachyMini(ReachyMiniApp):
     _falar_texto = None
     _calar = None
     _trocar_sessao = None
+    # Música: até quando um comando solto ainda é sobre música, e se a última
+    # coisa que a ferramenta viu foi música tocando no aparelho alvo.
+    _musica_ate = 0.0
+    _musica_tocando = False
+    _executor_musica: ThreadPoolExecutor | None = None
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
         cfg = Config.carregar()
@@ -522,6 +644,10 @@ class GarraReachyMini(ReachyMiniApp):
         pode segurar o encerramento (o daemon mata o app em 20 s), mas também
         não se abandona o pool sem tentar drenar.
         """
+        do_som = self._executor_musica
+        if do_som is not None:
+            self._executor_musica = None
+            do_som.shutdown(wait=False, cancel_futures=True)
         atual = getattr(self, "_executor", None)
         if atual is None:
             return
@@ -931,14 +1057,12 @@ class GarraReachyMini(ReachyMiniApp):
                         falar(intencao.resposta_imediata)
                     return
 
-            # Música por voz: a política da Spotify proíbe assistente de voz, e
-            # a recusa é fixa — não passa pelo modelo, que nem fica sabendo.
-            # Depois dos atalhos locais: "pare" vale mais que qualquer pedido.
-            if musica.pede_controle(texto):
-                controlador.eventos.publicar(
-                    "chat.message", correlation_id=correlacao, role="assistant",
-                    content=musica.RECUSA_POR_VOZ, source="garra")
-                falar(musica.RECUSA_POR_VOZ)
+            # Música: o comando é entendido aqui, sem modelo, e executado pelo
+            # spotatui do PC. O pedido não vai ao modelo, e nada da Spotify vai
+            # (III.14). Depois dos atalhos locais: "pare" vale mais que tudo.
+            pedido_musica = musica_pedido.interpretar(texto)
+            if pedido_musica is not None and self._atender_musica(
+                    pedido_musica, correlacao, "voz", controlador.eventos, falar=falar) is not None:
                 gestos.ouvindo()
                 return
 
@@ -1003,11 +1127,22 @@ class GarraReachyMini(ReachyMiniApp):
             situacao_casa = None
             if casa.pede_casa(texto):
                 situacao_casa = casa.situacao(self._cliente_da_casa().estado())
+            # Falou de música sem dar um comando: o modelo fica sabendo que a
+            # capacidade existe e como se pede — nada da Spotify.
+            situacao_musica = None
+            if musica.fala_de_musica(texto):
+                situacao_musica = musica.situacao(conf_agora.conversa.get("music_voice_enabled") is True)
             mensagem = self.acompanhamento.montar(texto, time.monotonic(),
                                                   conf_agora.conversa,
                                                   correlacao=correlacao, visao=visto,
-                                                  pessoas=pessoas, situacao_casa=situacao_casa)
+                                                  pessoas=pessoas, situacao_casa=situacao_casa,
+                                                  situacao_musica=situacao_musica)
             futuro = executor.submit(cerebro.perguntar, mensagem + complemento)
+            # Música tocando no PC: abaixa enquanto o modelo pensa e o robô fala,
+            # e devolve no fim do turno. Cortesia — falhar não muda nada.
+            musica_baixa = (self._musica_tocando and conf_agora.conversa.get("music_voice_enabled") is True)
+            if musica_baixa:
+                self._pool_da_musica().submit(self._cliente_da_musica().abafar, correlacao)
 
             # Prazos ABSOLUTOS a partir do início do turno. Encadear as esperas
             # daria ack+progresso, e um progresso de 10 s viraria 14 s.
@@ -1092,6 +1227,8 @@ class GarraReachyMini(ReachyMiniApp):
                 controlador.eventos.publicar(
                     "voice.turn.cancelled", correlation_id=correlacao,
                     turn_id=turno.id, reason="late_response", brain_ms=cerebro_ms)
+                if musica_baixa:
+                    self._pool_da_musica().submit(self._cliente_da_musica().restaurar, correlacao)
                 return
 
             # Primeiro o caderno, depois a limpeza para a voz: a diretiva de
@@ -1107,13 +1244,17 @@ class GarraReachyMini(ReachyMiniApp):
                 "chat.message", correlation_id=correlacao, role="assistant",
                 content=fala, source="garra", brain=resposta.modo,
             )
-            if fala:
-                falar(fala, turno=turno)
-            else:
-                # A frase de espera já saiu pelo alto-falante: drena o eco, senão
-                # o próprio robô vira "fala do usuário" no próximo ciclo.
-                drenar_mic(0.4)
-                gestos.ouvindo()
+            try:
+                if fala:
+                    falar(fala, turno=turno)
+                else:
+                    # A frase de espera já saiu pelo alto-falante: drena o eco, senão
+                    # o próprio robô vira "fala do usuário" no próximo ciclo.
+                    drenar_mic(0.4)
+                    gestos.ouvindo()
+            finally:
+                if musica_baixa:
+                    self._pool_da_musica().submit(self._cliente_da_musica().restaurar, correlacao)
             controlador.eventos.publicar(
                 "voice.turn.completed", correlation_id=correlacao,
                 turn_id=turno.id, mode=politica.modo, brain_ms=cerebro_ms,

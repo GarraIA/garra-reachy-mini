@@ -45,6 +45,7 @@ import urllib.parse
 import httpx
 
 from . import agente, casa as casa_mod, familia as familia_mod, modo, musica as musica_mod, visao
+from . import musica_comandos, spotatui
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -275,6 +276,7 @@ def _preferencias_da_query(q) -> visao.Preferencias | None:
 
 _casa = None
 _musica = None
+_comandos: musica_comandos.Comandos | None = None
 _familia = None
 _STATUS_DA_FAMILIA = {"not_found": 404, "consent_required": 400, "guardian_required": 400, "invalid_name": 400,
                       "bad_image": 400, "bad_request": 400, "service_offline": 503, "timeout": 504,
@@ -287,12 +289,15 @@ _STATUS_DA_MUSICA = {"invalid_client_id": 400, "bad_request": 400, "not_configur
                      "auth_failed": 401, "auth_expired": 401, "premium_required": 402,
                      "no_active_device": 404, "rate_limited": 429, "unreachable": 502,
                      "timeout": 504, "spotify_error": 502}
+_STATUS_DO_SPOTATUI = {"not_installed": 409, "player_off": 409, "no_playback": 409, "auth_expired": 401,
+                       "unreachable": 502, "timeout": 504, "not_found": 404, "bad_request": 400,
+                       "provider_error": 502}
 _STATUS_DA_CASA = {"invalid_url": 400, "invalid_token": 400, "unreachable": 502, "unauthorized": 401,
                    "not_configured": 409, "config_error": 500, "gateway_restart_failed": 502}
 
 
 def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None,
-           casa=None, musica=None, familia=None) -> FastAPI:
+           casa=None, musica=None, familia=None, comandos=None) -> FastAPI:
     """Devolve o app da ponte já com o token e a chave real do gateway.
 
     `visao_local`/`visao_nuvem` são os provedores de visão; sem eles, os de
@@ -301,11 +306,20 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
     """
     # Módulo, não closure: o `app` é um só e as rotas ficam registradas na
     # primeira chamada; o que `montar` decide depois precisa valer também.
-    global _olho_local, _olho_nuvem, _casa, _musica, _familia
+    global _olho_local, _olho_nuvem, _casa, _musica, _comandos, _familia
     _olho_local = visao_local or visao.Local()
     _olho_nuvem = visao_nuvem or visao.Nuvem(chave=os.environ.get("OPENROUTER_API_KEY"))
     _casa = casa or casa_mod.Casa(chave_gateway=chave_gateway)
     _musica = musica or musica_mod.Spotify()
+    # A ferramenta de música é o spotatui deste PC, quando instalado. Quem passa
+    # só o provedor da Web API (testes dele) fica só com ele.
+    if comandos is not None:
+        _comandos = comandos
+    elif musica is None:
+        sp = spotatui.Spotatui()
+        _comandos = musica_comandos.Comandos(sp) if sp.executavel else None
+    else:
+        _comandos = None
     _familia = familia or familia_mod.Familia()
 
     @app.api_route("/ping", methods=["GET", "HEAD"])
@@ -596,9 +610,109 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
         except musica_mod.ErroMusica as e:
             return _erro_da_musica(e)
 
+    # Com o spotatui, as rotas de sempre falam com ele NO MESMO FORMATO de antes;
+    # as rotas novas são as que só a ferramenta tem.
+    def _reproducao_spotatui() -> dict:
+        est = _comandos.provedor.reproducao()
+        if est is None:
+            return {}
+        t = est["track"]
+        return {"is_playing": est["state"] == "playing", "plays_on": est["device"], "plays_on_robot": False,
+                "device": {"id": None, "name": est["device"], "type": None,
+                           "volume_percent": est["volume_percent"]},
+                "progress_ms": est["progress_s"] * 1000, "shuffle": None, "repeat": None,
+                "playlist": est["playlist"], "provider": "spotatui",
+                "item": {"name": t["name"], "artists": t["artists"], "album": t["album"],
+                         "duration_ms": t["duration_s"] * 1000 if t["duration_s"] is not None else None,
+                         "image": None}}
+
+    def _dispositivos_spotatui() -> dict:
+        alvo = _comandos.alvo
+        est = _comandos.provedor.reproducao()
+        ativo = est["device"] if est else None
+        return {"devices": [{"id": None, "name": d["name"], "type": None, "is_active": d["name"] == ativo,
+                             "volume_percent": d["volume_percent"], "is_restricted": False,
+                             "supports_volume": True, "is_target": d["name"] == alvo}
+                            for d in _comandos.provedor.dispositivos()]}
+
+    async def _spotatui_rota(request: Request, chamada, *args) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            return JSONResponse(await asyncio.to_thread(chamada, *args), headers={"Cache-Control": "no-store"})
+        except musica_comandos.PedidoInvalido:
+            return JSONResponse({"erro": "bad_request"}, status_code=400)
+        except spotatui.ErroSpotatui as e:
+            log.info("musica: %s", e.codigo)
+            return JSONResponse({"erro": e.codigo}, status_code=_STATUS_DO_SPOTATUI.get(e.codigo, 502),
+                                headers={"Cache-Control": "no-store"})
+
+    async def _corpo_json(request: Request) -> object:
+        try:
+            return json.loads(await request.body())
+        except ValueError:
+            return None
+
     @app.get("/api/musica/estado")
     async def musica_estado(request: Request) -> Response:
-        return await _musica_rota(request, _musica.estado)
+        if _comandos is not None:
+            return await _spotatui_rota(request, _comandos.estado)
+        return await _musica_rota(request, lambda: {**_musica.estado(), "provider": "spotify_web"})
+
+    @app.post("/api/musica/comando")
+    async def musica_comando(request: Request) -> Response:
+        """O pedido tipado de música, com id — o que a voz e o chat do robô mandam."""
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        corpo = await _corpo_json(request)
+        if _comandos is None:
+            try:
+                pedido = musica_comandos.Comandos.validar(corpo)
+            except musica_comandos.PedidoInvalido:
+                return JSONResponse({"erro": "bad_request"}, status_code=400)
+            return JSONResponse({"request_id": pedido["request_id"], "provider": None,
+                                 "operation": pedido["operation"], "status": "unavailable",
+                                 "reason": "not_installed", "device": None, "track": None, "playlist": None,
+                                 "observed": None, "verified": False, "already": False, "duplicate": False},
+                                headers={"Cache-Control": "no-store"})
+        return await _spotatui_rota(request, _comandos.executar, corpo)
+
+    @app.post("/api/musica/abafar")
+    async def musica_abafar(request: Request) -> Response:
+        if _comandos is None:
+            return await _spotatui_rota(request, lambda: {"ducked": False, "reason": "not_installed"})
+        corpo = await _corpo_json(request)
+        rid = corpo.get("request_id") if isinstance(corpo, dict) else None
+        return await _spotatui_rota(request, _comandos.abafar, rid if isinstance(rid, str) else None)
+
+    @app.post("/api/musica/restaurar")
+    async def musica_restaurar(request: Request) -> Response:
+        if _comandos is None:
+            return await _spotatui_rota(request, lambda: {"restored": False, "reason": "not_installed"})
+        corpo = await _corpo_json(request)
+        rid = corpo.get("request_id") if isinstance(corpo, dict) else None
+        return await _spotatui_rota(request, _comandos.restaurar, rid if isinstance(rid, str) else None)
+
+    @app.get("/api/musica/preferencias")
+    async def musica_preferencias(request: Request) -> Response:
+        if _comandos is None:
+            return await _spotatui_rota(request, lambda: {})
+        return await _spotatui_rota(request, _comandos.preferencias.ler)
+
+    @app.post("/api/musica/preferencias")
+    async def musica_gravar_preferencias(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        if _comandos is None:
+            return JSONResponse({"erro": "not_installed"}, status_code=409)
+        corpo = await _corpo_json(request)
+        return await _spotatui_rota(request, _comandos.preferencias.gravar, corpo)
+
+    @app.get("/api/musica/playlists")
+    async def musica_playlists(request: Request) -> Response:
+        if _comandos is None:
+            return await _spotatui_rota(request, lambda: {"playlists": []})
+        return await _spotatui_rota(request, lambda: {"playlists": _comandos.provedor.playlists(50)})
 
     @app.post("/api/musica/configurar")
     async def musica_configurar(request: Request) -> Response:
@@ -618,10 +732,14 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
 
     @app.get("/api/musica/dispositivos")
     async def musica_dispositivos(request: Request) -> Response:
+        if _comandos is not None:
+            return await _spotatui_rota(request, _dispositivos_spotatui)
         return await _musica_rota(request, lambda: {"devices": _musica.dispositivos()})
 
     @app.get("/api/musica/reproducao")
     async def musica_reproducao(request: Request) -> Response:
+        if _comandos is not None:
+            return await _spotatui_rota(request, _reproducao_spotatui)
         return await _musica_rota(request, lambda: _musica.reproducao() or {})
 
     @app.post("/api/musica/acao")
@@ -635,6 +753,18 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
         acao = corpo.get("action") if isinstance(corpo, dict) else None
         if acao not in musica_mod.ACOES:
             return JSONResponse({"erro": "bad_request"}, status_code=400)
+        if _comandos is not None:
+            # Os botões do painel viram o mesmo comando conferido da voz. Não há
+            # "transferir" aqui: o aparelho é o alvo configurado nas preferências.
+            pedido: dict = {"request_id": f"painel_{time.time_ns()}", "source": "painel",
+                            "operation": {"play": "play_generic", "pause": "pause", "next": "next",
+                                          "previous": "previous", "volume": "set_volume"}.get(acao)}
+            if pedido["operation"] is None:
+                return JSONResponse({"erro": "bad_request"}, status_code=400)
+            if acao == "volume":
+                pedido["volume_percent"] = corpo.get("percent")
+            return await _spotatui_rota(request, lambda: {"requested": acao, "accepted": True,
+                                                          **_comandos.executar(pedido)})
         args: dict = {}
         if acao == "volume":
             pct = corpo.get("percent")

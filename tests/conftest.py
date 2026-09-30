@@ -114,4 +114,11 @@ def controlador_simulado():
     ctrl.encerrar(timeout=2.0)
 
 
+@pytest.fixture(autouse=True)
+def _sem_spotatui_de_verdade(monkeypatch):
+    """Nenhum teste alcança o spotatui instalado neste PC por descuido: quem
+    precisa de um passa o executável (ou o falso) explicitamente."""
+    monkeypatch.setenv("GARRA_SPOTATUI", "off")
+
+
 __all__ = ["BackendFalso", "DATASET_DANCAS", "DATASET_EMOCOES"]

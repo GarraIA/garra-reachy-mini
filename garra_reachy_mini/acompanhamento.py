@@ -70,7 +70,8 @@ class Acompanhamento:
     # ── o pedido ─────────────────────────────────────────────────────────────
     def montar(self, pedido: str, agora: float, conversa: dict,
                correlacao: str | None = None, com_ambiente: bool = True,
-               visao: Any = None, pessoas: Any = None, situacao_casa: str | None = None) -> str:
+               visao: Any = None, pessoas: Any = None, situacao_casa: str | None = None,
+               situacao_musica: str | None = None) -> str:
         """A mensagem que vai ao modelo.
 
         `com_ambiente=False` é o chat do painel: quem digita não estava sendo
@@ -92,7 +93,8 @@ class Acompanhamento:
         if conversa.get("clock_enabled"):
             hora = relogio.por_extenso(relogio.agora(conversa.get("clock_timezone")))
         return envelope.compor(pedido, falas=falas, agora=agora, listas=listas,
-                               relogio=hora, visao=visao, pessoas=pessoas, situacao_casa=situacao_casa)
+                               relogio=hora, visao=visao, pessoas=pessoas, situacao_casa=situacao_casa,
+                               situacao_musica=situacao_musica)
 
     # ── a resposta ───────────────────────────────────────────────────────────
     def receber(self, resposta: str, conversa: dict,

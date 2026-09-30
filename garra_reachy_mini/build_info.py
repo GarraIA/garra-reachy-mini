@@ -77,6 +77,11 @@ CAPACIDADES: dict[str, bool] = {
     # companion e do que a pessoa configurou, e o registro diz qual é qual.
     "home": True,
     "music": True,
+    # Comando de música por voz e pelo chat (`music_voice_enabled`, opt-in do
+    # dono): o robô entende o pedido sem modelo e o spotatui do PC toca e
+    # confere (`/api/musica/comando`). O que a ferramenta faz de fato — player,
+    # aparelho alvo, estado — é o PC que diz, em /api/robot/musica/estado.
+    "music_voice": True,
     "family": True,
     # Diagnóstico do gateway (GET /api/robot/diagnostico) e as cinco telas.
     "diagnostics": True,

@@ -11,7 +11,8 @@ testes seguram:
 - a Web API comanda um aparelho que já toca Spotify (celular, computador):
   o robô não é aparelho de reprodução, e o estado devolvido diz ONDE toca;
 - "aceito" (204) não é "tocando": depois de cada comando se lê o estado;
-- nada da Spotify vai para o modelo, e voz não controla (política III.3).
+- nada da Spotify vai para o modelo, e a voz não passa por este provedor (vai
+  pelo spotatui do PC, opt-in do dono — política III.3).
 """
 
 from __future__ import annotations
@@ -131,7 +132,7 @@ def test_nasce_sem_nada_e_diz_onde_o_navegador_tem_de_estar(sp) -> None:
     assert e["configured"] is False and e["connected"] is False and e["user"] is None
     assert e["redirect_uri"] == "http://127.0.0.1:8125/spotify/callback"
     assert e["connect_url"] == "http://127.0.0.1:8125/spotify/conectar"
-    assert e["voice_control"] == "blocked_by_policy"
+    assert e["voice_control"] == "spotatui_only"
 
 
 @pytest.mark.parametrize("ruim", ["", "curto", "com espaço 12345678901234567890123456", "x" * 100, "../../etc"])
@@ -321,22 +322,3 @@ def test_estado_e_log_nao_trazem_tokens(sp, caplog) -> None:
     texto = json.dumps(sp.estado()) + json.dumps(sp.reproducao()) + caplog.text
     for segredo in ("acc-1", "acc-2", "ref-1", sp._falso.codigo_verificador_visto or "x" * 50):
         assert segredo not in texto
-
-
-# ─── a voz e a política ──────────────────────────────────────────────────────
-@pytest.mark.parametrize("pedido", [
-    "toca uma música", "Fala Garra, coloca o Spotify", "pausa a música", "pause a musica",
-    "próxima faixa", "pula essa música", "aumenta o volume", "toca Toquinho no spotify",
-    "play some music", "que música é essa?",
-])
-def test_pedido_de_musica_por_voz_e_reconhecido_para_ser_recusado(pedido) -> None:
-    assert musica.pede_controle(pedido) is True
-
-
-@pytest.mark.parametrize("pedido", ["que horas são?", "acende a luz", "toca a campainha?", "qual o volume do tanque?"])
-def test_pedido_comum_nao_e_musica(pedido) -> None:
-    assert musica.pede_controle(pedido) is False
-
-
-def test_a_recusa_diz_o_motivo_e_aponta_o_painel() -> None:
-    assert "Spotify" in musica.RECUSA_POR_VOZ and "painel" in musica.RECUSA_POR_VOZ.lower()

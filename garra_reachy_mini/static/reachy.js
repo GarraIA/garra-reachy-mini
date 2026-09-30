@@ -710,6 +710,7 @@ function pintarConversa(d) {
   $('conversa-caderno').checked = c.notebook_enabled === true;
   pintarVisaoCampos(c);
   $('familia-ligada').checked = c.family_recognition_enabled === true;
+  $('musica-voz').checked = c.music_voice_enabled === true;
   sincronizarMestre();
   sincronizarWake();
   sincronizarConferir();
@@ -990,7 +991,7 @@ function pintarResumo() {
                     casa ? (casa.state === 'ok' ? true : casa.state === 'not_configured' ? null : false) : null));
   const mus = integracoes.musica;
   linhas.push(linha(t('resumo.musica'), mus ? t(`musica.estado_${mus.state}`) : t('resumo.abra'),
-                    mus ? (mus.state === 'connected' ? true : mus.state === 'not_configured' ? null : false) : null));
+                    mus ? (MUSICA_PRONTA.has(mus.state) ? true : ['not_configured', 'not_installed'].includes(mus.state) ? null : false) : null));
   const fam = integracoes.familia;
   linhas.push(linha(t('resumo.familia'), c.family_recognition_enabled === true ? t('resumo.ligada') : t('resumo.desligada'),
                     c.family_recognition_enabled === true ? (fam && fam.service && fam.service.state === 'ok') : null));
@@ -1202,26 +1203,61 @@ async function vozCasa(ligar) {
 }
 
 // ─── música (Spotify) ────────────────────────────────────────────────────────
+// Dois provedores falam pelas mesmas rotas: o spotatui do computador (o que a
+// voz usa) e a Web API com conta conectada no navegador do computador.
+const MUSICA_PRONTA = new Set(['connected', 'ready']);
+
 function estadoDaMusica(d) {
+  if (d.provider === 'spotatui') return d.state || 'error';
   return !d.configured ? 'not_configured' : d.connected ? 'connected' : 'not_connected';
 }
 
 function pintarMusica(d) {
   const st = estadoDaMusica(d);
+  const spot = d.provider === 'spotatui';
   integracoes.musica = { ...d, state: st };
-  const classe = { connected: 'success', not_connected: 'warning', expired: 'danger', not_configured: '' }[st] || '';
-  pill($('p-musica'), st === 'connected', t(`musica.estado_${st}`), classe);
+  const classe = { connected: 'success', ready: 'success', not_connected: 'warning', player_off: 'warning',
+                   not_configured: '', not_installed: '' }[st] ?? 'danger';
+  pill($('p-musica'), MUSICA_PRONTA.has(st), t(`musica.estado_${st}`), classe);
   $('musica-estado-texto').textContent = t(`musica.estado_${st}_dica`);
-  if (d.connect_url) $('musica-conectar-url').textContent = d.connect_url;
-  $('musica-conectar-dica').hidden = st === 'connected' || st === 'not_configured';
-  if (d.configured && !$('musica-client-id').value) $('musica-client-id').placeholder = '••••••••';
-  if (st === 'connected' && d.user && d.user.display_name) {
-    $('musica-estado-texto').textContent += ` · ${d.user.display_name}${d.premium === false ? ' · ' + t('musica.sem_premium') : ''}`;
+  $('musica-spotatui').hidden = !spot;
+  $('musica-configurar').hidden = spot;
+  if (spot) {
+    $('musica-player-texto').textContent = t('musica.player', { versao: d.version || '?', alvo: d.target_device || '?' });
+    pintarAlvos(d);
+  } else {
+    if (d.connect_url) $('musica-conectar-url').textContent = d.connect_url;
+    $('musica-conectar-dica').hidden = st === 'connected' || st === 'not_configured';
+    if (d.configured && !$('musica-client-id').value) $('musica-client-id').placeholder = '••••••••';
+    if (st === 'connected' && d.user && d.user.display_name) {
+      $('musica-estado-texto').textContent += ` · ${d.user.display_name}${d.premium === false ? ' · ' + t('musica.sem_premium') : ''}`;
+    }
+    $('btn-musica-desconectar').disabled = st === 'not_configured';
   }
-  $('btn-musica-desconectar').disabled = st === 'not_configured';
-  for (const b of document.querySelectorAll('[data-musica]')) b.disabled = st !== 'connected';
-  $('musica-volume').disabled = st !== 'connected';
+  for (const b of document.querySelectorAll('[data-musica]')) b.disabled = !MUSICA_PRONTA.has(st);
+  $('musica-volume').disabled = !MUSICA_PRONTA.has(st);
   pintarResumo();
+}
+
+function pintarAlvos(d) {
+  const abertos = (d.devices || []).map((x) => x.name);
+  const nomes = d.target_device && !abertos.includes(d.target_device) ? [d.target_device, ...abertos] : abertos;
+  $('musica-alvo').innerHTML = nomes.map((n) => `<option value="${esc(n)}"${n === d.target_device ? ' selected' : ''}>${esc(n)}${abertos.includes(n) ? '' : ' ' + esc(t('musica.fechado'))}</option>`).join('');
+}
+
+// O estado do spotatui já traz reprodução e aparelhos: o painel desenha com UMA
+// ida ao computador (cada leitura do spotatui custa ~1 s, medido).
+function reproducaoDoSpotatui(d) {
+  const pb = d.playback;
+  if (!pb || !pb.track) return null;
+  return { is_playing: pb.state === 'playing', item: { name: pb.track.name, artists: pb.track.artists },
+           device: { name: pb.device, volume_percent: pb.volume_percent } };
+}
+
+function aparelhosDoSpotatui(d) {
+  const ativo = d.playback ? d.playback.device : null;
+  return (d.devices || []).map((x) => ({ name: x.name, volume_percent: x.volume_percent,
+                                         is_active: x.name === ativo, is_target: x.name === d.target_device }));
 }
 
 function pintarReproducao(r) {
@@ -1241,22 +1277,43 @@ function pintarReproducao(r) {
   }
 }
 
-function pintarDispositivos(lista) {
+function pintarDispositivos(lista, spot = false) {
   const caixa = $('musica-dispositivos');
-  caixa.innerHTML = lista.length ? lista.map((d) => `<div class="item">
-      <span class="badge ${d.is_active ? 'ok' : 'muted'}">${esc(d.is_active ? t('musica.ativo') : d.type || '')}</span>
-      <div class="meio"><div class="nome">${esc(d.name)}</div></div>
-      <div class="acoes"><button class="mini" data-transferir="${esc(d.id)}" ${d.is_active || d.is_restricted ? 'disabled' : ''}>${esc(t('musica.transferir'))}</button></div>
-    </div>`).join('') : `<div class="vazio">${esc(t('musica.sem_dispositivos'))}</div>`;
+  caixa.innerHTML = lista.length ? lista.map((d) => {
+    const marcado = spot ? d.is_target : d.is_active;
+    const selo = spot ? (d.is_target ? t('musica.destino') : '') : (d.is_active ? t('musica.ativo') : d.type || '');
+    const botao = spot
+      ? `<button class="mini" data-alvo="${esc(d.name)}" ${d.is_target ? 'disabled' : ''}>${esc(t('musica.usar_destino'))}</button>`
+      : `<button class="mini" data-transferir="${esc(d.id)}" ${d.is_active || d.is_restricted ? 'disabled' : ''}>${esc(t('musica.transferir'))}</button>`;
+    return `<div class="item">
+      <span class="badge ${marcado ? 'ok' : 'muted'}">${esc(selo)}</span>
+      <div class="meio"><div class="nome">${esc(d.name)}${spot && d.is_active ? ' · ' + esc(t('musica.tocando')) : ''}</div></div>
+      <div class="acoes">${botao}</div>
+    </div>`;
+  }).join('') : `<div class="vazio">${esc(t('musica.sem_dispositivos'))}</div>`;
   caixa.querySelectorAll('[data-transferir]').forEach((b) =>
     b.addEventListener('click', () => acaoMusica('transfer', { device_id: b.dataset.transferir })));
+  caixa.querySelectorAll('[data-alvo]').forEach((b) =>
+    b.addEventListener('click', () => salvarPreferenciasMusica({ target_device: b.dataset.alvo })));
+}
+
+async function carregarPlaylists(padrao) {
+  try {
+    const r = await api('/api/robot/musica/playlists');
+    $('musica-playlist').innerHTML = `<option value="">${esc(t('musica.playlist_nenhuma'))}</option>` +
+      (r.playlists || []).map((p) => `<option value="${esc(p.uri)}"${p.uri === padrao ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  } catch (e) { /* a lista fica como está: escolher playlist é opcional */ }
 }
 
 async function carregarMusica() {
   try {
     const d = await api('/api/robot/musica/estado');
     pintarMusica(d);
-    if (estadoDaMusica(d) === 'connected') {
+    if (d.provider === 'spotatui') {
+      pintarReproducao(reproducaoDoSpotatui(d));
+      pintarDispositivos(aparelhosDoSpotatui(d), true);
+      if (MUSICA_PRONTA.has(estadoDaMusica(d)) || d.state === 'player_off') carregarPlaylists(d.default_playlist);
+    } else if (estadoDaMusica(d) === 'connected') {
       const [rep, disp] = await Promise.all([
         api('/api/robot/musica/reproducao').catch(() => null),
         api('/api/robot/musica/dispositivos').catch(() => ({ devices: [] })),
@@ -1273,6 +1330,17 @@ async function carregarMusica() {
     pill($('p-musica'), false, erroDaPonte(e, 'musica'), 'danger');
     $('musica-estado-texto').textContent = `${erroDaPonte(e, 'musica')} — ${t('musica.sem_ponte')}`;
   }
+}
+
+async function salvarPreferenciasMusica(corpo) {
+  const prefs = corpo || { target_device: $('musica-alvo').value, default_playlist: $('musica-playlist').value || null };
+  try {
+    await api('/api/robot/musica/preferencias', { method: 'POST', body: JSON.stringify(prefs) });
+    registrarLog(t('musica.preferencias_salvas'), 'ok');
+  } catch (e) {
+    registrarLog(`${t('musica.titulo')}: ${erroDaPonte(e, 'musica')}`, 'err');
+  }
+  carregarMusica();
 }
 
 async function salvarClientId() {
@@ -1295,6 +1363,14 @@ async function desconectarMusica() {
 async function acaoMusica(acao, args = {}) {
   try {
     const r = await api('/api/robot/musica/acao', { method: 'POST', body: JSON.stringify({ action: acao, ...args }) });
+    if (r && r.provider === 'spotatui') {
+      // O resultado já vem conferido; o que falhou é dito, não escondido.
+      if (r.status === 'failed' || r.status === 'unavailable') {
+        registrarLog(`${t('musica.titulo')}: ${t(`musica.motivo_${r.reason}`)}`, 'err');
+      }
+      carregarMusica();
+      return;
+    }
     pintarReproducao(r ? r.state : null);
     if (acao === 'transfer') carregarMusica();
   } catch (e) {
@@ -1486,7 +1562,7 @@ function pintarDiagnostico(d) {
   const locais = [
     ['vision', integracoes.visao ? ((integracoes.visao.settings || {}).vision_enabled ? ((integracoes.visao.providers || {}).effective && integracoes.visao.providers.effective !== 'none' ? 'ok' : 'unavailable') : 'not_configured') : null, 'diag.origem_robo'],
     ['home', integracoes.casa ? ({ ok: 'ok', pending: 'unavailable', broken: 'unavailable', not_configured: 'not_configured' }[integracoes.casa.state] || 'unavailable') : null, 'diag.origem_companion'],
-    ['music', integracoes.musica ? (integracoes.musica.state === 'connected' ? 'ok' : integracoes.musica.state === 'not_configured' ? 'not_configured' : 'unavailable') : null, 'diag.origem_companion'],
+    ['music', integracoes.musica ? (MUSICA_PRONTA.has(integracoes.musica.state) ? 'ok' : ['not_configured', 'not_installed'].includes(integracoes.musica.state) ? 'not_configured' : 'unavailable') : null, 'diag.origem_companion'],
     ['family', integracoes.familia ? (integracoes.familia.service && integracoes.familia.service.state === 'ok' ? (integracoes.familia.enabled ? 'ok' : 'not_configured') : 'unavailable') : null, 'diag.origem_companion'],
   ];
   for (const [nome, estadoItem, origem] of locais) {
@@ -1729,6 +1805,14 @@ function ligar() {
   }
   $('musica-volume').addEventListener('input', (e) => $('v-musica-volume').textContent = `${e.target.value}%`);
   $('musica-volume').addEventListener('change', (e) => acaoMusica('volume', { percent: Number(e.target.value) }));
+  $('btn-musica-preferencias').addEventListener('click', () => salvarPreferenciasMusica());
+  $('btn-musica-reconectar').addEventListener('click', carregarMusica);
+  // O comando por voz é decisão do dono: grava sozinho, e volta ao que o robô
+  // tem de verdade se a gravação falhar.
+  $('musica-voz').addEventListener('change', async (e) => {
+    const ok = await salvarConversa({ music_voice_enabled: e.target.checked });
+    if (!ok) await carregarConversa();
+  });
 
   // Família. O interruptor grava sozinho: é uma decisão, não um ajuste fino.
   $('familia-ligada').addEventListener('change', async (e) => {

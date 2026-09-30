@@ -32,7 +32,7 @@ class SpotifyFalso:
                 "user": {"id": "michel", "display_name": "Michel", "product": "premium"} if self.conectado else None,
                 "premium": True if self.conectado else None, "scopes": [], "expires_in_s": None,
                 "redirect_uri": musica.REDIRECT_URI, "connect_url": musica.CONNECT_URL,
-                "voice_control": "blocked_by_policy"}
+                "voice_control": "spotatui_only"}
 
     def estado(self):
         return self._estado()

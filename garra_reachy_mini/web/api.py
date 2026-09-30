@@ -42,6 +42,7 @@ from .. import caderno as caderno_mod
 from .. import casa as casa_mod
 from .. import familia as familia_mod
 from .. import musica as musica_mod
+from .. import musica_pedido
 from .. import visao as visao_mod
 from ..acompanhamento import Acompanhamento
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
@@ -62,6 +63,10 @@ SEM_TOKEN = frozenset({"/api/robot/stop"})
 LIMITE_MJPEG = "quadro-garraia-reachy"
 INTERVALO_POLL_EVENTOS_S = 0.05
 PING_WS_S = 20.0
+
+
+# O id de pedido que a ferramenta de música aceita (o do painel é `painel_<ms>`).
+_ID_DE_PEDIDO = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 
 
 @dataclass
@@ -96,6 +101,9 @@ class ContextoWeb:
     # Abre uma sessão limpa no gateway. Registrado pelo loop de voz, porque é
     # ele que tem o cérebro; sem isto, a retomada de sessão não tem escape.
     nova_sessao: Callable[[], Awaitable[str | None]] | None = None
+    # O atendimento de música do app (`_atender_musica_do_chat`): o chat usa o
+    # mesmo caminho da voz — mesmo parser, mesma ferramenta, mesmas frases.
+    atender_musica: Callable[[Any, str], str | None] | None = None
     # O que o detector de fala está medindo: piso de ruído, limiares e
     # contagens. Só números. `None` quando não há laço de voz de pé.
     detector: Callable[[], dict[str, Any] | None] | None = None
@@ -418,7 +426,24 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
             if not isinstance(alvo, str) or not alvo:
                 raise _erro(400, "informe device_id", "bad_request")
             pedido["device_id"] = alvo
-        return await repassar("POST", "/api/musica/acao", pedido)
+        # O PC confere o efeito antes de responder (até ~10 s medidos).
+        return await repassar("POST", "/api/musica/acao", pedido, timeout_s=40.0)
+
+    @r.get("/musica/preferencias")
+    async def musica_preferencias() -> Any:
+        return await repassar("GET", "/api/musica/preferencias")
+
+    @r.post("/musica/preferencias")
+    async def musica_gravar_preferencias(corpo: dict[str, Any] = Body(...)) -> Any:
+        # Aparelho alvo, playlist padrão e quanto abaixar; o PC valida de novo.
+        permitidas = {"target_device", "default_playlist", "duck_percent"}
+        if not corpo or set(corpo) - permitidas:
+            raise _erro(400, "preferência desconhecida", "bad_request")
+        return await repassar("POST", "/api/musica/preferencias", corpo)
+
+    @r.get("/musica/playlists")
+    async def musica_playlists() -> Any:
+        return await repassar("GET", "/api/musica/playlists")
 
     return r
 
@@ -964,12 +989,18 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         # a mensagem montada é entre o app e o modelo.
         ac = ctx.acompanhamento
         conf = await asyncio.to_thread(_conversa_atual)
-        if musica_mod.pede_controle(texto):
-            # Política da Spotify: assistente não controla por voz nem por
-            # modelo. A recusa é fixa e não passa pelo modelo.
-            ctx.eventos.publicar("chat.message", correlation_id=correlacao, role="assistant",
-                                 content=musica_mod.RECUSA_POR_VOZ, source="garra")
-            return {"content": musica_mod.RECUSA_POR_VOZ, "refused": "spotify_policy"}
+        # Música: o mesmo atendimento da voz — entendido sem modelo, executado
+        # pelo spotatui do PC, respondido com o que ele conferiu. Nada disso vai
+        # ao modelo (Developer Policy III.14).
+        pedido_musica = musica_pedido.interpretar(texto)
+        if pedido_musica is not None and ctx.atender_musica is not None:
+            rid = correlacao if isinstance(correlacao, str) and _ID_DE_PEDIDO.fullmatch(correlacao) \
+                else f"chat_{time.time_ns()}"
+            dito = await asyncio.to_thread(ctx.atender_musica, pedido_musica, rid)
+            if dito is not None:
+                if bool(corpo.get("speak")) and ctx.falar is not None:
+                    asyncio.create_task(_falar_seguro(ctx, dito))
+                return {"content": dito, "music": True}
         visto = None
         if ctx.olho is not None and visao_mod.pede_visao(texto):
             visto = await asyncio.to_thread(ctx.olho.olhar, texto, conf, correlacao, "chat")
@@ -979,8 +1010,12 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         situacao_casa = None
         if casa_mod.pede_casa(texto):
             situacao_casa = casa_mod.situacao(await _estado_da_casa())
+        situacao_musica = None
+        if musica_mod.fala_de_musica(texto):
+            situacao_musica = musica_mod.situacao(conf.get("music_voice_enabled") is True)
         mensagem = await asyncio.to_thread(
-            ac.montar, texto, time.monotonic(), conf, correlacao, False, visto, pessoas, situacao_casa)
+            ac.montar, texto, time.monotonic(), conf, correlacao, False, visto, pessoas, situacao_casa,
+            situacao_musica)
         try:
             resposta = await ponte().enviar(mensagem)
         except ErroChat as e:

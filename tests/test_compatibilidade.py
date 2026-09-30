@@ -46,7 +46,7 @@ def test_a_identidade_tem_o_contrato_inteiro():
     assert d["capabilities"]["audio_barge_in"] is True
     # 1.4.1: o painel de cinco telas e as integrações anunciam-se aqui, para um
     # console mais velho saber o que este build oferece antes de desenhar.
-    for chave in ("vision", "home", "music", "family", "diagnostics", "panel_screens"):
+    for chave in ("vision", "home", "music", "music_voice", "family", "diagnostics", "panel_screens"):
         assert d["capabilities"][chave] is True, chave
     assert isinstance(d["api_version"], int)
 

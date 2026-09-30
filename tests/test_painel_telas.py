@@ -113,16 +113,26 @@ def test_a_casa_configura_e_mostra_mas_nao_executa() -> None:
     assert "'/api/robot/casa/voz'" in JS
 
 
-def test_a_musica_aponta_o_loopback_do_pc_e_nao_promete_voz() -> None:
+def test_a_musica_diz_onde_toca_e_a_voz_e_opt_in_com_a_politica_a_vista() -> None:
     bloco = HTML[HTML.index('id="musica-bloco"'):HTML.index('id="tela-apps"')]
+    # Web API: a conta se conecta no navegador DO COMPUTADOR, por loopback.
     assert "http://127.0.0.1:8125/spotify/conectar" in bloco
     assert 'data-musica="play"' in bloco and 'data-musica="pause"' in bloco
     assert 'id="musica-volume"' in bloco and 'id="musica-dispositivos"' in bloco
+    # spotatui: destino, playlist padrão, reconectar e o interruptor da voz —
+    # com o aviso da política no mesmo lugar em que se liga.
+    for i in ("musica-spotatui", "musica-voz", "musica-alvo", "musica-playlist", "btn-musica-preferencias",
+              "btn-musica-reconectar"):
+        assert f'id="{i}"' in bloco, i
+    voz = bloco[bloco.index('id="linha-musica-voz"'):]
+    assert voz.index('data-i18n="musica.voz_politica"') < voz.index('id="musica-alvo"')
     for idioma in ("en", "pt"):
         inicio = I18N.index(f"  {idioma}: {{")
         trecho = I18N[inicio:I18N.index("\n  },", inicio)]
-        politica = re.search(r"'musica\.politica': '((?:[^'\\]|\\.)*)'", trecho).group(1)
-        assert "Spotify" in politica and ("Voice control" in politica or "Comando por voz" in politica)
+        politica = re.search(r"'musica\.voz_politica': '((?:[^'\\]|\\.)*)'", trecho).group(1)
+        assert "III.3" in politica and "Spotify" in politica
+        onde = re.search(r"'musica\.politica': '((?:[^'\\]|\\.)*)'", trecho).group(1)
+        assert ("not on the robot" in onde or "não no robô" in onde) and ("AI model" in onde or "modelo de IA" in onde)
 
 
 def test_a_familia_exige_consentimento_na_tela_e_no_js() -> None:

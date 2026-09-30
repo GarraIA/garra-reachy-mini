@@ -248,13 +248,35 @@
   </div>
 
   <!-- ── música (Spotify) ─────────────────────────────────────────────────────
-       Conectar a conta é no navegador do COMPUTADOR (loopback, como a Spotify
-       exige). Aqui: estado, onde toca, aparelhos e os botões. Por voz, não:
-       política da Spotify, e o painel diz isso em vez de fingir. -->
+       Com o spotatui no computador, é ele que toca: a sessão é a dele, e o
+       aparelho é o destino configurado aqui. Sem ele, o provedor da Web API
+       (conta conectada no navegador DO COMPUTADOR, por loopback). O comando
+       por voz é opt-in do dono, com a política da Spotify dita onde se liga. -->
   <div class="sub" id="sub-musica" data-sub="musica" hidden>
     <section class="card glass-panel largo" id="musica-bloco">
       <h2><span data-i18n="musica.titulo"></span> <span class="pill" id="p-musica">—</span></h2>
       <div class="dica" id="musica-estado-texto"></div>
+      <div id="musica-spotatui" hidden>
+        <div class="dica" id="musica-player-texto"></div>
+        <label class="caixa" id="linha-musica-voz">
+          <input type="checkbox" id="musica-voz">
+          <span data-i18n="musica.voz"></span>
+        </label>
+        <div class="aviso-caixa" data-i18n="musica.voz_politica"></div>
+        <div class="campo">
+          <label for="musica-alvo" data-i18n="musica.alvo"></label>
+          <select id="musica-alvo"></select>
+        </div>
+        <div class="campo">
+          <label for="musica-playlist" data-i18n="musica.playlist_padrao"></label>
+          <select id="musica-playlist"><option value="" data-i18n="musica.playlist_nenhuma"></option></select>
+        </div>
+        <div class="dica" data-i18n="musica.playlist_dica"></div>
+        <div class="linha">
+          <button id="btn-musica-preferencias" class="primario" data-i18n="musica.salvar"></button>
+          <button id="btn-musica-reconectar" data-i18n="musica.reconectar"></button>
+        </div>
+      </div>
       <div id="musica-configurar">
         <div class="campo">
           <label for="musica-client-id" data-i18n="musica.client_id"></label>
