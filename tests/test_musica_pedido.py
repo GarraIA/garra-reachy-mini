@@ -37,10 +37,10 @@ def test_generico(texto) -> None:
     ("coloca Hotel California dos Eagles no Spotify", "Hotel California dos Eagles"),
     ("toque Garota de Ipanema", "Garota de Ipanema"),
     ("toca a música Evidências", "Evidências"),
-    ("põe Evidências do Chitãozinho e Xororó", "Evidências do Chitãozinho e Xororó"),
+    ("toca Evidências do Chitãozinho e Xororó", "Evidências do Chitãozinho e Xororó"),
     ("use o Spotify e dê play na música Hotel California", "Hotel California"),
     ("dá play em Bohemian Rhapsody", "Bohemian Rhapsody"),
-    ("quero ouvir Hotel California", "Hotel California"),
+    ("quero ouvir a música Hotel California", "Hotel California"),
     ("toca algo do Queen", "Queen"),
     ("toca uma música do Queen", "Queen"),
     ("toca alguma coisa da Anitta", "Anitta"),
@@ -53,7 +53,7 @@ def test_generico(texto) -> None:
     ('toca "Evidências"', "Evidências"),
     ("toca Não Quero Dinheiro", "Não Quero Dinheiro"),
     ("Toque Hotel California dos Eagles.", "Hotel California dos Eagles"),
-    ("coloca aí Hotel California", "Hotel California"),
+    ("toca aí Hotel California", "Hotel California"),
     ("Toca Hotel Califórnia.", "Hotel Califórnia"),
 ])
 def test_faixa_por_nome(texto, consulta) -> None:
@@ -96,10 +96,10 @@ def test_fila(texto, consulta) -> None:
 @pytest.mark.parametrize("texto,consulta", [
     ("procura a música Hotel California", "Hotel California"),
     ("procura Hotel California no Spotify", "Hotel California"),
-    ("pesquisa Hotel California", "Hotel California"),
+    ("pesquisa a música Hotel California", "Hotel California"),
     ("busca a música Evidências", "Evidências"),
     ("acha a música Evidências", "Evidências"),
-    ("search for Hotel California", "Hotel California"),
+    ("search for the song Hotel California", "Hotel California"),
 ])
 def test_pesquisa_sem_tocar(texto, consulta) -> None:
     assert interpretar(texto) == P("search_track", consulta), texto
@@ -228,7 +228,75 @@ def test_texto_enorme_e_rapido() -> None:
 
 def test_toda_operacao_e_conhecida() -> None:
     amostra = ["toca uma música", "toca Hotel California", "coloca minha playlist X", "toca essa",
-               "adiciona X na fila", "procura X", "pausa", "retoma", "próxima música", "volta a música",
+               "adiciona X na fila", "procura a música X", "pausa", "retoma", "próxima música", "volta a música",
                "que música é essa?", "volume 30", "aumenta o volume", "você toca música?"]
     ops = {interpretar(t).operacao for t in amostra}
     assert ops == set(OPERACOES)
+
+
+# ── o que a revisão independente e o teste real acharam (30/09) ──────────────
+
+@pytest.mark.parametrize("texto", [
+    # "pôr" normalizado vira "por": pergunta com "por que" não é pedido
+    "Por que o céu é azul?", "por que você não respondeu?", "Você pode, por favor, me dizer as horas?",
+    # "coloca/põe/bota" sem nada de música é colocar coisa em lugar
+    "Coloca leite na lista de compras", "Coloca a luz da sala no azul", "põe o casaco no armário",
+    "bota o celular pra carregar",
+    # "quero ouvir" sem música pode ser qualquer coisa
+    "Quero ouvir uma piada", "quero ouvir sua opinião",
+    # pesquisa sem música é pesquisa na internet
+    "Pesquisa o preço do dólar", "procura um restaurante perto daqui", "busca a previsão do tempo",
+    # negação no fim, convite
+    "Toca isso não", "pausa não", "Você quer tocar comigo?", "vamos tocar juntos",
+])
+def test_nao_e_comando_achados_da_revisao(texto) -> None:
+    assert interpretar(texto) is None, texto
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    # com música dita, os verbos genéricos valem
+    ("coloca Hotel California no Spotify", P("play_track", "Hotel California")),
+    ("coloca a música Hotel California", P("play_track", "Hotel California")),
+    ("põe a música Evidências", P("play_track", "Evidências")),
+    ("quero ouvir a música Hotel California", P("play_track", "Hotel California")),
+    ("quero ouvir Hotel California no Spotify", P("play_track", "Hotel California")),
+    ("procura Hotel California no Spotify", P("search_track", "Hotel California")),
+    ("pesquisa a música Evidências", P("search_track", "Evidências")),
+    # o que o STT do robô escreveu de verdade
+    ("toca o Hotel California", P("play_track", "o Hotel California")),
+    ("coloque evidências na fila.", P("queue_track", "evidências")),
+    ("aumento de volume.", P("change_volume", volume=15, contextual=True)),
+    ("mais volume", P("change_volume", volume=15, contextual=True)),
+    ("menos volume", P("change_volume", volume=-15, contextual=True)),
+    ("volume mais alto", P("change_volume", volume=15, contextual=True)),
+    ("volume mais baixo", P("change_volume", volume=-15, contextual=True)),
+    ("abaixa o som", P("change_volume", volume=-15)),
+    ("sobe o som", P("change_volume", volume=15)),
+    ("qual é a música que está tocando?", P("now_playing")),
+    ("qual música é essa?", P("now_playing")),
+])
+def test_variantes_reais(texto, esperado) -> None:
+    assert interpretar(texto) == esperado, texto
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    ("coloca Hotel California", True), ("quero ouvir Hotel California", True), ("põe Evidências", True),
+    ("procura Hotel California", True), ("Por que o céu é azul?", False), ("que horas são?", False),
+    # lista, caderno e casa têm dono: não ganham a situação da música
+    ("coloca leite na lista de compras", False), ("coloca a luz da sala no azul", False),
+])
+def test_talvez_seja_musica_para_o_modelo_saber(texto, esperado) -> None:
+    from garra_reachy_mini.musica_pedido import talvez
+    assert talvez(texto) is esperado, texto
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    # Com a sessão de ativação aberta, a frase chega inteira — e a frase de
+    # ativação estropiada pela música vem junto (medido no robô em 30/09).
+    ("fala gata pausa a música", P("pause")),
+    ("Fala galera, toca Hotel California", P("play_track", "Hotel California")),
+    ("fala gana próxima música", P("next")),
+    ("ela agarra que música está tocando", P("now_playing")),
+])
+def test_frase_de_ativacao_estropiada_no_comeco(texto, esperado) -> None:
+    assert interpretar(texto) == esperado, texto

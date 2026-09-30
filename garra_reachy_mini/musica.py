@@ -25,7 +25,8 @@ import requests
 
 from .robo.intencoes import normalizar
 
-TIMEOUT_S = 30.0
+# Menor que o teto do laço de voz (main.MUSICA_PRAZO_S): o robô não fica surdo esperando.
+TIMEOUT_S = 25.0
 TIMEOUT_ABAFAR_S = 6.0
 
 DESLIGADO = ("O comando de música por voz está desligado. Dá para ligar no painel do robô, "
@@ -179,11 +180,24 @@ def pedido_da_ferramenta(operacao: str, consulta: str | None, volume: int | None
 # ── o que o modelo fica sabendo ──────────────────────────────────────────────
 _FALA_DE_MUSICA = re.compile(r"\b(spotify|musica|musicas|playlist|playlists|faixa|cancao|album|cantor|cantora|"
                              r"banda|music|song|songs)\b")
+# Com música no assunto, "volume", "som", "alto" também são sobre ela.
+_NO_ASSUNTO = re.compile(r"\b(volume|som|alto|baixo|tocar|toca|tocando|pausa|proxima|anterior)\b")
+# Com a música tocando e a frase de ativação perdida nela: sinal de que alguém
+# tentou chamar o robô ("fala gata pausa a música", "ela agarra…").
+_ATENCAO = re.compile(r"\b(garra|pausa|pause|pare|para|proxima|pula|volta|volume|abaixa|aumenta|diminui|musica|"
+                      r"spotify|toca|som)\b")
 
 
-def fala_de_musica(texto: str) -> bool:
-    """Falou de música sem dar um comando? Então o modelo precisa da situação."""
-    return bool(_FALA_DE_MUSICA.search(normalizar(texto or "")))
+def fala_de_musica(texto: str, no_assunto: bool = False) -> bool:
+    """Falou de música sem dar um comando? Então o modelo precisa da situação —
+    senão ele conclui "não controlo música" (medido em 30/09 com "aumento de volume")."""
+    n = normalizar(texto or "")
+    return bool(_FALA_DE_MUSICA.search(n)) or (no_assunto and bool(_NO_ASSUNTO.search(n)))
+
+
+def pede_atencao(texto: str) -> bool:
+    """Com a música tocando, o que foi ouvido sem a frase de ativação parece alguém chamando?"""
+    return bool(_ATENCAO.search(normalizar(texto or "")))
 
 
 def situacao(habilitada: bool) -> str:
@@ -234,7 +248,10 @@ class ClienteMusica:
         for tentativa in (1, 2):
             try:
                 return self._post("/api/musica/comando", pedido, self.timeout_s)
-            except (requests.ConnectionError, requests.Timeout):
+            except requests.Timeout:
+                # O PC está executando: reenviar só dobraria a espera.
+                return None
+            except requests.ConnectionError:
                 if tentativa == 2:
                     return None
             except (requests.RequestException, ValueError):
@@ -258,4 +275,4 @@ class ClienteMusica:
 
 
 __all__ = ["ClienteMusica", "DESLIGADO", "SEM_COMPUTADOR", "artistas_falados", "aviso", "capacidade",
-           "fala_de_musica", "frase", "pedido_da_ferramenta", "situacao", "titulo_falado"]
+           "fala_de_musica", "frase", "pede_atencao", "pedido_da_ferramenta", "situacao", "titulo_falado"]

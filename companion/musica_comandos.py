@@ -13,8 +13,10 @@ que fazem a confirmação falada ser verdade:
   um play recomeça a música; repetir um toggle desfaz o primeiro.
 - O mesmo `request_id` executa uma vez só. Quem chegar de novo (reconexão,
   reenvio) recebe o mesmo resultado, marcado `duplicate`.
-- O aparelho é o configurado. Música tocando em outro (celular, TV) não é
-  mexida nem puxada para cá.
+- O aparelho é o configurado, e nenhum outro é escolhido por conta própria.
+  Pausar, pular, voltar e enfileirar não mexem em música que toca em outro
+  aparelho (celular, TV): dizem onde ela toca. Pedir para TOCAR toca no alvo —
+  e, como em qualquer app da Spotify, a conta passa a tocar nele.
 - Abaixar a música enquanto o robô fala devolve o volume de antes, e só se
   ninguém mexeu nele nesse meio-tempo.
 """
@@ -50,11 +52,13 @@ _INDISPONIVEL = {"not_installed", "player_off", "auth_expired", "unreachable"}
 
 VERIFICAR_S = 8.0
 INTERVALO_S = 0.4
-FILA_REPETIDA_S = 600.0
+FILA_REPETIDA_S = 90.0
 FILA_EXTRA = 3
-ESPERA_DUPLICADO_S = 30.0
+ESPERA_DUPLICADO_S = 20.0
 TRAVA_S = 20.0
 ABAFAR_MAX_S = 40.0
+# Restaurar que falhou por coisa passageira (rede, player, trava) tenta de novo.
+ABAFAR_DE_NOVO_S = 10.0
 ACHADO_VALIDADE_S = 600.0
 PEDIDOS_MAX = 200
 ARQUIVO = Path(os.environ.get("GARRA_REACHY_CONF", "~/.config/garra-reachy")).expanduser() / "musica.json"
@@ -203,14 +207,20 @@ class Comandos:
         pedido = self.validar(pedido)
         self._recuperar_abafado()
         rid = pedido["request_id"]
+        assinatura = (pedido["operation"], pedido.get("query"), pedido.get("volume_percent"),
+                      pedido.get("volume_delta"))
         with self._trava_pedidos:
             reg = self._pedidos.get(rid)
             dono = reg is None
             if dono:
-                reg = {"feito": threading.Event(), "resultado": None}
+                reg = {"feito": threading.Event(), "resultado": None, "assinatura": assinatura}
                 self._pedidos[rid] = reg
                 while len(self._pedidos) > PEDIDOS_MAX:
                     self._pedidos.popitem(last=False)
+            elif reg["assinatura"] != assinatura:
+                # O mesmo id com outro pedido é engano de quem chamou: devolver o
+                # resultado antigo diria "Pausei." a um "continua".
+                raise PedidoInvalido("request_id reutilizado")
         if not dono:
             if reg["feito"].wait(ESPERA_DUPLICADO_S) and reg["resultado"] is not None:
                 return {**reg["resultado"], "duplicate": True}
@@ -506,10 +516,16 @@ class Comandos:
                           "track": self._faixa(est)}
         return est, None
 
+    def _desconhecido(self, pedido: dict, est: dict) -> dict[str, Any]:
+        """O ícone do player não bateu com o do config: sem estado, sem toggle."""
+        return {**self._falha(pedido, "unknown_state"), "observed": self._observado(est), "track": self._faixa(est)}
+
     def _op_pause(self, pedido: dict, alvo: str) -> dict[str, Any]:
         est, pronto = self._no_player(pedido, alvo)
         if pronto:
             return pronto
+        if est["state"] not in ("playing", "paused"):
+            return self._desconhecido(pedido, est)
         if est["state"] == "paused":
             return self._pronto(pedido, "paused", est, False, verified=True, already=True)
         self.provedor.alternar(alvo)
@@ -530,6 +546,8 @@ class Comandos:
         est, pronto = self._no_player(pedido, alvo)
         if pronto:
             return pronto
+        if est["state"] not in ("playing", "paused"):
+            return self._desconhecido(pedido, est)
         if est["state"] == "playing":
             return self._pronto(pedido, "playing", est, None, verified=True, already=True)
         return self._retomar(pedido, alvo, est)
@@ -562,8 +580,7 @@ class Comandos:
                                                 and a["track"]["uri"] == antes and self._avancou(ant, a))
             return self._pronto(pedido, "playing" if ok2 else (fim2 or fim)["state"], fim2 or fim, avancou2,
                                 verified=True, reason="no_next")
-        status = (fim["state"] if fim and fim["state"] in ("playing", "paused") else "playing") if ok else "failed"
-        return self._pronto(pedido, status, fim, avancou, verified=ok, reason=None if ok else "not_verified")
+        return self._depois_de_pular(pedido, ok, fim, avancou)
 
     def _op_previous(self, pedido: dict, alvo: str) -> dict[str, Any]:
         est, pronto = self._no_player(pedido, alvo)
@@ -573,15 +590,22 @@ class Comandos:
         self.provedor.anterior(alvo)
         ok, fim, avancou = self._esperar(lambda a, _ant: self._no_alvo(a, alvo)
                                          and (a["track"]["uri"] != antes or a["progress_s"] < 3))
-        status = (fim["state"] if fim and fim["state"] in ("playing", "paused") else "playing") if ok else "failed"
-        return self._pronto(pedido, status, fim, avancou, verified=ok, reason=None if ok else "not_verified")
+        return self._depois_de_pular(pedido, ok, fim, avancou)
+
+    def _depois_de_pular(self, pedido: dict, ok: bool, fim: dict | None, avancou: bool) -> dict[str, Any]:
+        if not ok:
+            return self._pronto(pedido, "failed", fim, avancou, reason="not_verified")
+        if fim["state"] not in ("playing", "paused"):
+            return self._pronto(pedido, "failed", fim, avancou, reason="unknown_state")
+        return self._pronto(pedido, fim["state"], fim, avancou, verified=True)
 
     def _op_now_playing(self, pedido: dict, alvo: str) -> dict[str, Any]:
         est = self.provedor.reproducao()
         if est is None:
             return self._falha(pedido, "no_playback")
-        status = est["state"] if est["state"] in ("playing", "paused") else "playing"
-        return self._pronto(pedido, status, est, None, verified=True)
+        if est["state"] not in ("playing", "paused"):
+            return self._desconhecido(pedido, est)
+        return self._pronto(pedido, est["state"], est, None, verified=True)
 
     def _volume_do_alvo(self, alvo: str) -> int | None:
         for d in self.provedor.dispositivos():
@@ -630,29 +654,41 @@ class Comandos:
             log.warning("musica: não deu para registrar o volume abaixado")
 
     def _esquecer_abafado(self) -> dict | None:
+        """Esquece o volume guardado — só depois de devolvido, ou de a pessoa ter mudado."""
         ab, self._abafado = self._abafado, None
-        if self._timer_abafar is not None:
-            self._timer_abafar.cancel()
-            self._timer_abafar = None
+        self._cancelar_timer()
         if ab is not None:
             self._gravar_abafado(None)
         return ab
 
+    def _cancelar_timer(self) -> None:
+        if self._timer_abafar is not None:
+            self._timer_abafar.cancel()
+            self._timer_abafar = None
+
+    def _armar_timer(self, segundos: float) -> None:
+        self._cancelar_timer()
+        self._timer_abafar = self.temporizador(segundos, self._restaurar_sozinho)
+
+    def iniciar(self) -> None:
+        """Na partida do companion: um volume que ficou abaixado volta sem esperar pedido."""
+        self.segundo_plano(self._recuperar_abafado)
+
     def _recuperar_abafado(self) -> None:
         """Um companion que caiu com a música abaixada devolve o volume ao voltar."""
-        if self._recuperou:
-            return
-        self._recuperou = True
+        with self._trava_pedidos:
+            if self._recuperou:
+                return
+            self._recuperou = True
         try:
             dados = json.loads(self._arquivo_abafado.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
         if isinstance(dados, dict) and isinstance(dados.get("antes"), int) and isinstance(dados.get("abafado"), int):
             self._abafado = dados
-            try:
-                self.restaurar(dados.get("id"))
-            except ErroSpotatui:
-                pass
+            r = self.restaurar(dados.get("id"))
+            if not r.get("restored") and self._abafado is not None:
+                self._armar_timer(ABAFAR_DE_NOVO_S)
         else:
             self._gravar_abafado(None)
 
@@ -662,6 +698,8 @@ class Comandos:
             return {"ducked": False, "reason": "busy"}
         try:
             return self._abafar(pedido_id, self.provedor.reproducao())
+        except ErroSpotatui as e:
+            return {"ducked": False, "reason": e.codigo}
         finally:
             self._trava.release()
 
@@ -676,7 +714,11 @@ class Comandos:
             return {"ducked": False, "reason": e.codigo}
 
     def _abafar(self, pedido_id: str | None, est: dict | None) -> dict[str, Any]:
-        """Com a trava já tomada. Abaixa só a música que toca no alvo, e guarda o de antes."""
+        """Com a trava já tomada. Abaixa só a música que toca no alvo, e guarda o de antes.
+
+        Guarda ANTES de mandar: um comando que estoura o prazo mas chega deixa a
+        música baixa, e o timer precisa saber para onde devolver.
+        """
         if self._abafado is not None:
             return {"ducked": True, "already": True, "from": self._abafado["antes"], "to": self._abafado["abafado"]}
         alvo = self.alvo
@@ -688,30 +730,44 @@ class Comandos:
         d = max(3, round(v * self.preferencias.ler()["duck_percent"] / 100))
         if d >= v:
             return {"ducked": False, "reason": "already_low"}
-        self.provedor.volume(d, alvo)
         self._abafado = {"id": pedido_id, "antes": v, "abafado": d, "alvo": alvo}
         self._gravar_abafado(self._abafado)
-        self._timer_abafar = self.temporizador(ABAFAR_MAX_S, self._restaurar_sozinho)
+        self._armar_timer(ABAFAR_MAX_S)
+        try:
+            self.provedor.volume(d, alvo)
+        except ErroSpotatui as e:
+            if e.codigo != "timeout":
+                # Não chegou: não há o que devolver.
+                self._esquecer_abafado()
+            raise
         return {"ducked": True, "from": v, "to": d}
 
     def _restaurar_sozinho(self) -> None:
-        try:
-            self.restaurar(None)
-        except ErroSpotatui:
-            log.warning("musica: não deu para devolver o volume sozinho")
+        r = self.restaurar(None)
+        if not r.get("restored") and r.get("reason") == "busy" and self._abafado is not None:
+            self._armar_timer(ABAFAR_DE_NOVO_S)
 
     def restaurar(self, pedido_id: str | None = None) -> dict[str, Any]:
+        """Devolve o volume de antes — se ninguém mexeu nele. Falha passageira
+        (rede, player, prazo) guarda o estado e tenta de novo mais tarde."""
         if not self._trava.acquire(timeout=5.0):
             return {"restored": False, "reason": "busy"}
         try:
-            ab = self._esquecer_abafado()
+            ab = self._abafado
             if ab is None:
                 return {"restored": False, "reason": "not_ducked"}
             alvo = ab.get("alvo") or self.alvo
-            atual = self._volume_do_alvo(alvo)
-            if atual != ab["abafado"]:
-                return {"restored": False, "reason": "changed_by_user", "volume_percent": atual}
-            self.provedor.volume(ab["antes"], alvo)
+            try:
+                atual = self._volume_do_alvo(alvo)
+                # A Spotify arredonda: 1 ponto de diferença ainda é o volume que se pôs.
+                if atual is None or abs(atual - ab["abafado"]) > 1:
+                    self._esquecer_abafado()
+                    return {"restored": False, "reason": "changed_by_user", "volume_percent": atual}
+                self.provedor.volume(ab["antes"], alvo)
+            except ErroSpotatui as e:
+                self._armar_timer(ABAFAR_DE_NOVO_S)
+                return {"restored": False, "reason": e.codigo}
+            self._esquecer_abafado()
             return {"restored": True, "volume_percent": ab["antes"]}
         finally:
             self._trava.release()

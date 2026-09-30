@@ -1011,7 +1011,7 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         if casa_mod.pede_casa(texto):
             situacao_casa = casa_mod.situacao(await _estado_da_casa())
         situacao_musica = None
-        if musica_mod.fala_de_musica(texto):
+        if musica_mod.fala_de_musica(texto) or musica_pedido.talvez(texto):
             situacao_musica = musica_mod.situacao(conf.get("music_voice_enabled") is True)
         mensagem = await asyncio.to_thread(
             ac.montar, texto, time.monotonic(), conf, correlacao, False, visto, pessoas, situacao_casa,

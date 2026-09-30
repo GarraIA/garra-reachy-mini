@@ -44,14 +44,23 @@ class PedidoMusica:
 _CONTROLE = re.compile(r"[\x00-\x1f\x7f]")
 _BORDA = "\"'“”‘’«».,;:!?()[]{}<> \t"
 
+# O vocativo e a cortesia no começo saem — e também a frase de ativação que a
+# música estropiou ("fala gata", "fala galera", "ela agarra", medidos em 30/09),
+# que numa sessão de ativação aberta chega junto com o pedido.
 _INICIO = re.compile(r"^(?:(?:ei|hey|oi|ok|ola|opa|garra|garraia|robo|reachy|mini|por favor|please|entao|"
+                     r"falar? g\w*|fala a garra|ela agarra|"
                      r"(?:use|usa|abre|abra|liga|ligue) o spotify e)(?:\s+|$))+")
 _FIM = re.compile(r"(?:\s+(?:por favor|please|agora|ai|pra mim|para mim|pra gente|para a gente|garra|"
                   r"obrigado|obrigada|now|for me|no spotify|pelo spotify|on spotify))+$")
 
-_PEDIR = r"(?:(?:voce |vc )?(?:pode|poderia|podia|consegue|conseguiria|quer|queria|vai)\s+)?"
-_TOCAR = (r"(?:toca|toque|tocar|poe|ponha|por|bota|bote|botar|coloca|coloque|colocar|solta|solte|"
-          r"reproduz|reproduza|reproduzir)(?: ai| la| pra mim| para mim| pra gente| para a gente)?")
+# "Quer/vai tocar?" é convite, não pedido; "pôr" sai porque, sem acento, é "por".
+_PEDIR = r"(?:(?:voce |vc )?(?:pode|poderia|podia|consegue|conseguiria)\s+)?"
+_ENFEITE = r"(?: ai| la| pra mim| para mim| pra gente| para a gente)?"
+# "Toca X" é música. "Coloca/põe/bota X" é pôr qualquer coisa em qualquer lugar —
+# só vira música com música dita ("a música X", "X no Spotify").
+_TOCAR_FORTE = r"(?:toca|toque|tocar|reproduz|reproduza|reproduzir|solta|solte)" + _ENFEITE
+_POR = r"(?:coloca|coloque|colocar|poe|ponha|bota|bote|botar)" + _ENFEITE
+_TOCAR = r"(?:" + _TOCAR_FORTE + r"|" + _POR + r")"
 _DAR_PLAY = r"(?:da|de|dar|manda|mande|aperta|aperte)\s+(?:um\s+|o\s+)?play"
 _OUVIR = r"(?:(?:eu\s+)?(?:quero|queria|gostaria de)\s+ouvir|bora ouvir|vamos ouvir)"
 _NUMEROS = {"zero": 0, "cinco": 5, "dez": 10, "quinze": 15, "vinte": 20, "trinta": 30, "quarenta": 40,
@@ -80,10 +89,10 @@ _REGRAS: list[tuple[re.Pattern[str], str, bool]] = [
     (_c(r"(?:enfileira|enfileire) (?P<q>.+)"), "queue_track", False),
     (_c(r"add (?P<q>.+?) to (?:the |my )?queue"), "queue_track", False),
     (_c(r"queue (?P<q>.+)"), "queue_track", False),
-    # pesquisa sem tocar
+    # pesquisa sem tocar — só com música dita: "pesquisa o preço do dólar" é internet
     (_c(r"(?:procura|procure|procurar|pesquisa|pesquise|pesquisar|busca|busque|buscar|acha|ache|achar|encontra|"
-        r"encontre|search for|search|find)(?: a musica| a cancao| a faixa| uma musica chamada| a musica chamada)?"
-        r" (?P<q>.+)"), "search_track", False),
+        r"encontre)(?: a| uma)(?: musica| cancao| faixa)(?: chamada)? (?P<q>.+)"), "search_track", False),
+    (_c(r"(?:search for|search|find) (?:the |a )?(?:song|track) (?P<q>.+)"), "search_track", False),
     # o que a pesquisa achou
     (_c(_PEDIR + r"(?:" + _TOCAR + r"|play) (?:essa|esta|ela|isso|essa musica|esta musica|it|that|this one)"),
      "play_found", False),
@@ -128,6 +137,7 @@ _REGRAS: list[tuple[re.Pattern[str], str, bool]] = [
     # o que está tocando
     (_c(r"(?:que|qual) (?:musica|cancao|faixa) (?:e essa|e esta|esta tocando|ta tocando|toca agora)"),
      "now_playing", False),
+    (_c(r"(?:que|qual) (?:e )?a (?:musica|cancao) que (?:esta|ta) tocando"), "now_playing", False),
     (_c(r"(?:o )?que (?:esta|ta) tocando"), "now_playing", False),
     (_c(r"qual (?:e |eh )?(?:essa|esta) (?:musica|cancao)"), "now_playing", False),
     (_c(r"quem (?:canta|esta cantando|ta cantando) (?:essa|esta) (?:musica|cancao)|quem (?:esta|ta) cantando"),
@@ -135,28 +145,46 @@ _REGRAS: list[tuple[re.Pattern[str], str, bool]] = [
     (_c(r"de quem e (?:essa|esta) (?:musica|cancao)"), "now_playing", False),
     (_c(r"qual (?:e )?o nome (?:dessa|desta) (?:musica|cancao)"), "now_playing", False),
     (_c(r"what s playing|what (?:song|track) is (?:this|playing)"), "now_playing", False),
-    # faixa pelo nome — por último, é o padrão mais largo
-    (_c(_PEDIR + r"(?:" + _TOCAR + r"|" + _OUVIR + r"|" + _DAR_PLAY + r"(?: n[ao]s?| em)?|play)\s+"
+    # faixa pelo nome, com verbo genérico E música dita
+    (_c(_PEDIR + r"(?:" + _POR + r"|" + _OUVIR + r")\s+(?:a|uma)\s+(?:musica|cancao|faixa)\s+(?P<q>.+)"),
+     "play_track", False),
+    # faixa pelo nome — por último, é o padrão mais largo; só com verbo de tocar
+    (_c(_PEDIR + r"(?:" + _TOCAR_FORTE + r"|" + _DAR_PLAY + r"(?: n[ao]s?| em)?|play)\s+"
         r"(?:(?:(?:a|na|o|no)\s+)?(?:musica|cancao|faixa)\s+)?(?P<q>.+)"), "play_track", False),
 ]
+# Com "no Spotify" dito, os verbos genéricos também pedem música.
+_COM_SPOTIFY: list[tuple[re.Pattern[str], str, bool]] = [
+    (_c(r"(?:procura|procure|procurar|pesquisa|pesquise|pesquisar|busca|busque|buscar|acha|ache|achar|encontra|"
+        r"encontre|search for|search|find)(?: a musica| a cancao| a faixa)? (?P<q>.+)"), "search_track", False),
+    (_c(_PEDIR + r"(?:" + _POR + r"|" + _OUVIR + r")\s+(?:(?:a|uma)\s+(?:musica|cancao|faixa)\s+)?(?P<q>.+)"),
+     "play_track", False),
+]
+_SPOTIFY_DITO = re.compile(r"\b(?:no|pelo|on) spotify\b")
+# O que talvez seja música e não deu comando: o modelo recebe a situação da
+# música para não dizer que não tem esse recurso.
+_TALVEZ = re.compile(r"^(?:" + _POR + r"|" + _OUVIR + r"|procura|procure|pesquisa|pesquise|busca|busque|acha|"
+                     r"ache)\s+\S")
+_TEM_DONO = re.compile(r"\b(?:lista|listas|caderno|anota|anote|lembra|lembre|lembrete|luz|luzes|lampada|"
+                       r"tomada|ar condicionado|tv|televisao|ventilador|cortina|termostato)\b")
 
 _VOLUME_ABSOLUTO = _c(r"(?:(?:coloca|coloque|poe|ponha|bota|bote|deixa|deixe|muda|mude|ajusta|ajuste|set|put)\s+)?"
                       r"(?:o |a |the )?volume(?P<mus> da musica| do spotify| do som| da cancao)?\s+"
                       r"(?:(?:em|no|na|para|pra|pro|a|to|at)\s+)?" + _NUMERO +
                       r"(?: por cento| porcento| percent)?")
-_VOLUME_RELATIVO = _c(r"(?P<v>aumenta|aumente|aumentar|sobe|suba|subir|abaixa|abaixe|abaixar|baixa|baixe|baixar|"
-                      r"diminui|diminua|diminuir|reduz|reduza|reduzir)(?P<p1> um pouco| um pouquinho)?"
-                      r"(?: o| a)? (?P<obj>volume|som)(?P<mus> da musica| do spotify| do som| da cancao)?"
+_VOLUME_RELATIVO = _c(r"(?P<v>aumenta|aumente|aumentar|aumento|sobe|suba|subir|abaixa|abaixe|abaixar|baixa|baixe|"
+                      r"baixar|diminui|diminua|diminuir|reduz|reduza|reduzir)(?P<p1> um pouco| um pouquinho)?"
+                      r"(?: o| a| de| do)? (?P<obj>volume|som)(?P<mus> da musica| do spotify| do som| da cancao)?"
                       r"(?P<p2> um pouco| um pouquinho)?")
-_VOLUME_SOLTO = _c(r"mais (?P<d>alto|baixo)|volume (?P<e>up|down)|turn (?:it |the volume )?(?P<t>up|down)")
-_SOBE = ("aumenta", "aumente", "aumentar", "sobe", "suba", "subir")
+_VOLUME_SOLTO = _c(r"mais (?P<d>alto|baixo)|volume (?P<e>up|down)|turn (?:it |the volume )?(?P<t>up|down)|"
+                   r"(?P<m>mais|menos) volume|volume mais (?P<vm>alto|baixo)")
+_SOBE = ("aumenta", "aumente", "aumentar", "aumento", "sobe", "suba", "subir")
 
 # O que vem depois de "toca" e não é música: tocar em alguém, no sino, no violão.
 _NAO_E_MUSICA = re.compile(
     r"^(?:(?:n[ao]s?|em|pelo|pela)\b.*|aqui|ai|la|isso aqui|de novo|"
     r"(?:(?:o|a|um|uma|no|na|meu|minha)\s+)?(?:campainha|sino|sinos|telefone|celular|interfone|alarme|buzina|"
     r"sirene|violao|guitarra|piano|bateria|flauta|teclado|sanfona|pandeiro|instrumento|tambor|corneta|trompete|"
-    r"saxofone|cavaquinho|ukulele)(?:\s.*)?)$")
+    r"saxofone|cavaquinho|ukulele)(?:\s.*)?|comigo|contigo|com voce|com a gente|junto|juntos|pra gente)$")
 
 
 def _consulta(original: list[str], palavras: list[tuple[str, int]], inicio: int, fim: int) -> str | None:
@@ -210,10 +238,16 @@ def interpretar(texto: str) -> PedidoMusica | None:
         return PedidoMusica("change_volume", volume=sinal * passo, contextual=not musical)
     m = _VOLUME_SOLTO.match(n)
     if m:
-        sobe = (m.group("d") == "alto") or (m.group("e") == "up") or (m.group("t") == "up")
+        sobe = "alto" in (m.group("d"), m.group("vm")) or "up" in (m.group("e"), m.group("t")) or m.group("m") == "mais"
         return PedidoMusica("change_volume", volume=15 if sobe else -15, contextual=True)
+    # "toca isso não", "pausa não": a negação no fim desfaz o pedido.
+    if n.endswith(" nao") or n == "nao":
+        return None
 
-    for padrao, operacao, contextual in _REGRAS:
+    # Com "no Spotify" dito, os verbos genéricos entram — antes só do padrão largo.
+    regras = (_REGRAS[:-1] + _COM_SPOTIFY + _REGRAS[-1:]
+              if _SPOTIFY_DITO.search(" ".join(w for w, _ in palavras)) else _REGRAS)
+    for padrao, operacao, contextual in regras:
         m = padrao.match(n)
         if not m:
             continue
@@ -230,4 +264,16 @@ def interpretar(texto: str) -> PedidoMusica | None:
     return None
 
 
-__all__ = ["CONSULTA_MAX", "OPERACOES", "PedidoMusica", "interpretar"]
+def talvez(texto: str) -> bool:
+    """Começa como pedido de música ("coloca X", "quero ouvir X") mas não deu
+    comando: o modelo precisa saber que a música existe e como se pede."""
+    if not isinstance(texto, str) or len(texto) > TEXTO_MAX or interpretar(texto) is not None:
+        return False
+    n = normalizar(_CONTROLE.sub(" ", texto))
+    m = _INICIO.match(n)
+    if m:
+        n = n[m.end():]
+    return bool(_TALVEZ.match(n)) and not _TEM_DONO.search(n)
+
+
+__all__ = ["CONSULTA_MAX", "OPERACOES", "PedidoMusica", "interpretar", "talvez"]

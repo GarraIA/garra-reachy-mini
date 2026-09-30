@@ -205,3 +205,36 @@ def test_quando_o_modelo_precisa_da_situacao(texto, esperado) -> None:
 def test_resposta_de_capacidade() -> None:
     assert "toca Hotel California" in musica.capacidade(True)
     assert "desligado" in musica.capacidade(False) and "Controle › Música" in musica.capacidade(False)
+
+
+# ── o que a revisão e o teste real acharam (30/09) ───────────────────────────
+
+def test_cliente_nao_reenvia_quando_o_pc_so_demorou(monkeypatch) -> None:
+    # Reenviar depois de um prazo estourado só dobrava a espera (o PC esperava o
+    # primeiro terminar): o laço de voz ficava surdo por até 65 s.
+    chamadas = []
+
+    def post(self, url, json=None, headers=None, timeout=None, allow_redirects=True):
+        chamadas.append(timeout)
+        raise requests.Timeout("demorou")
+
+    monkeypatch.setattr(musica.requests.Session, "post", post)
+    assert musica.ClienteMusica("http://ponte", "tok").comando({"request_id": "v", "operation": "pause"}) is None
+    assert len(chamadas) == 1 and chamadas[0] <= 25
+
+
+@pytest.mark.parametrize("texto,no_assunto,esperado", [
+    ("aumento de volume", True, True), ("aumento de volume", False, False),
+    ("tá muito alto esse som", True, True), ("que horas são?", True, False),
+    ("você sabe mexer no meu spotify?", False, True),
+])
+def test_fala_de_musica_com_musica_no_assunto(texto, no_assunto, esperado) -> None:
+    assert musica.fala_de_musica(texto, no_assunto) is esperado
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    ("fala gata pausa a música", True), ("ela agarra que música está tocando", True),
+    ("abaixa o volume", True), ("que dia bonito", False), ("a gente vai sair mais tarde", False),
+])
+def test_quem_tentou_chamar_com_a_musica_tocando(texto, esperado) -> None:
+    assert musica.pede_atencao(texto) is esperado

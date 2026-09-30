@@ -212,3 +212,50 @@ def test_pedido_comum_continua_indo_ao_modelo(montar) -> None:
     cena = montar(LIGADA, ["Fala Garra, que horas são?"], ["São três."])
     cena.alguem_fala()
     assert cena.cerebro.recebidas == ["que horas são?"] and cena.cliente.pedidos == []
+
+
+# ── o que a revisão e o teste real acharam (30/09) ───────────────────────────
+
+def test_confirmacao_falada_vira_evento(montar) -> None:
+    cena = montar(LIGADA, ["Fala Garra, toca Hotel California"])
+    falar_e_esperar_resposta(cena)
+    [c] = cena.eventos("music.confirmation")
+    assert c["spoken"] is True and c["status"] == "playing" and c["operation"] == "play_track"
+
+
+def test_pedido_ambiguo_vai_ao_modelo_com_a_situacao(montar) -> None:
+    cena = montar(LIGADA, ["Fala Garra, coloca Hotel California"], ["Quer que eu toque?"])
+    cena.alguem_fala()
+    [mensagem] = cena.cerebro.recebidas
+    assert mensagem.startswith("[MÚSICA — situação do sistema") and cena.cliente.pedidos == []
+
+
+def test_volume_com_musica_no_assunto_vai_a_ferramenta_e_nao_ao_modelo(montar) -> None:
+    cena = montar(LIGADA, ["Fala Garra, toca Hotel California", "Fala Garra, aumento de volume"])
+    falar_e_esperar_resposta(cena)
+    falar_e_esperar_resposta(cena)
+    assert [p["operation"] for p in cena.cliente.pedidos] == ["play_track", "change_volume"]
+    assert cena.cerebro.recebidas == []
+
+
+def test_com_musica_tocando_quem_tenta_chamar_abaixa_a_musica(montar, monkeypatch) -> None:
+    from garra_reachy_mini import main as principal
+    monkeypatch.setattr(principal, "ESCUTA_ABAFADA_S", 0.5)
+    # a frase de ativação se perdeu na música, mas "pausa" foi ouvido — com a
+    # sessão de ativação já fechada (janela mínima de 3 s)
+    cena = montar({**LIGADA, "wake_phrase_window_s": 3, "wake_second_listen_enabled": False},
+                  ["Fala Garra, toca Hotel California", "ela agarra pausa a música"])
+    falar_e_esperar_resposta(cena)
+    time.sleep(3.5)
+    cena.alguem_fala()
+    esperar(lambda: any(r.startswith("escuta_") for r in cena.cliente.restaurados), 5)
+    assert any(r.startswith("escuta_") for r in cena.cliente.abafados)
+    assert [p["operation"] for p in cena.cliente.pedidos] == ["play_track"], "abaixar não é executar o comando"
+    assert cena.eventos("music.listen_duck")
+
+
+def test_sem_musica_tocando_ninguem_abaixa_nada(montar) -> None:
+    cena = montar(LIGADA, ["fala gata pausa a música"])
+    cena.alguem_fala()
+    time.sleep(0.5)
+    assert cena.cliente.abafados == [] and not cena.eventos("music.listen_duck")

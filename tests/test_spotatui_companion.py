@@ -247,3 +247,35 @@ def test_posicionar(sp, falso) -> None:
 def test_desligado_pelo_ambiente(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("GARRA_SPOTATUI", "off")
     assert spotatui.Spotatui(dir_temp=tmp_path).executavel is None
+
+
+def test_so_a_linha_de_erro_conta(sp, falso) -> None:
+    # "401" no nome do log ou na consulta não vira conta desconectada.
+    falso.falha = "no tracks with name 'Área 401'"
+    with pytest.raises(spotatui.ErroSpotatui) as e:
+        sp.dispositivos()
+    assert e.value.codigo == "not_found"
+
+
+def test_erro_de_nao_le_a_linha_do_log() -> None:
+    e = spotatui._erro_de("Logging to: /tmp/x/spotatui_logs/spotatuilog4011\nError: no device with name 'x'\n")
+    assert e.codigo == "player_off"
+    e = spotatui._erro_de("Logging to: /tmp/x/spotatui_logs/spotatuilog401\nError: something odd\n")
+    assert e.codigo == "provider_error"
+
+
+def test_o_spotatui_recebe_ambiente_minimo(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "nao-deve-passar")
+    monkeypatch.setenv("HF_TOKEN", "nao-deve-passar")
+    script = _script(tmp_path, "import json, os\nprint(json.dumps(dict(os.environ)))\n")
+    sp = spotatui.Spotatui(executavel=str(script), dir_temp=tmp_path / "p")
+    _, out, _ = sp._rodar(["list", "--devices"])
+    env = json.loads(out)
+    assert "OPENROUTER_API_KEY" not in env and "HF_TOKEN" not in env
+    assert env["HOME"] == os.environ["HOME"] and env["TMPDIR"] == str(tmp_path / "p")
+
+
+def test_icone_com_comentario_no_config(tmp_path) -> None:
+    cfg = tmp_path / "config.yml"
+    cfg.write_text("behavior:\n  playing_icon: '▶' # tocando\n  paused_icon: ⏸  # pausado\n")
+    assert spotatui.icones_do_config(cfg) == ("▶", "⏸")

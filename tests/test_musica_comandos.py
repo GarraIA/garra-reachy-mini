@@ -502,3 +502,76 @@ def test_pausa_com_abafar_nao_abaixa(cmd) -> None:
     cmd.falso.por_para_tocar(cmd.falso.catalogo[0], "spotatui")
     r = pedir(cmd, "pause", duck=True)
     assert r["status"] == "paused" and r["ducked"]["ducked"] is False
+
+
+# ── o que a revisão independente achou (30/09) ───────────────────────────────
+
+def test_estado_desconhecido_nunca_alterna(cmd) -> None:
+    cmd.falso.por_para_tocar(cmd.falso.catalogo[0], "spotatui")
+    cmd.falso.icone_tocando = "??"          # o ícone do player não bate com o do config
+    for op in ("pause", "resume"):
+        r = pedir(cmd, op)
+        assert (r["status"], r["reason"]) == ("failed", "unknown_state"), op
+    assert comandos_enviados(cmd.falso) == [], "com estado desconhecido, toggle às cegas não"
+    r = pedir(cmd, "now_playing")
+    assert (r["status"], r["reason"]) == ("failed", "unknown_state")
+
+
+def test_mesmo_id_com_outro_pedido_e_recusado(cmd) -> None:
+    cmd.falso.por_para_tocar(cmd.falso.catalogo[0], "spotatui")
+    pedir(cmd, "pause", rid="voz_900")
+    with pytest.raises(mc.PedidoInvalido):
+        pedir(cmd, "resume", rid="voz_900")
+    assert comandos_enviados(cmd.falso) == ["--toggle"]
+
+
+def test_fila_repetida_so_na_janela_curta(cmd) -> None:
+    cmd.falso.por_para_tocar(cmd.falso.catalogo[3], "spotatui")
+    pedir(cmd, "queue_track", query="Evidências")
+    cmd.falso.relogio.dormir(mc.FILA_REPETIDA_S + 1)
+    assert pedir(cmd, "queue_track", query="Evidências")["already"] is False
+    assert mc.FILA_REPETIDA_S <= 120
+
+
+def test_abafado_e_guardado_antes_do_volume_e_um_prazo_estourado_ainda_restaura(cmd) -> None:
+    cmd.falso.por_para_tocar(cmd.falso.catalogo[0], "spotatui")
+    volume = cmd.provedor.volume
+
+    def aplicou_mas_estourou(pct, alvo):
+        volume(pct, alvo)
+        raise spotatui.ErroSpotatui("timeout")
+
+    cmd.provedor.volume = aplicou_mas_estourou
+    assert cmd.abafar("voz_1")["ducked"] is False
+    assert cmd.falso.aparelhos["spotatui"] == 18, "o volume baixou apesar do prazo"
+    cmd.provedor.volume = volume
+    cmd.temporizador.disparar()
+    assert cmd.falso.aparelhos["spotatui"] == 60, "o estado estava guardado: o timer devolve"
+
+
+def test_restaurar_com_falha_passageira_guarda_o_estado_e_tenta_de_novo(cmd) -> None:
+    cmd.falso.por_para_tocar(cmd.falso.catalogo[0], "spotatui")
+    cmd.abafar("voz_1")
+    cmd.falso.falha, cmd.falso.falhas_restantes = "offline", 1
+    r = cmd.restaurar("voz_1")
+    assert r["restored"] is False and r["reason"] == "unreachable"
+    assert cmd.falso.aparelhos["spotatui"] == 18
+    cmd.temporizador.disparar()
+    assert cmd.falso.aparelhos["spotatui"] == 60, "a nova tentativa devolveu o volume"
+
+
+def test_volume_arredondado_pela_spotify_nao_e_mudanca_da_pessoa(cmd) -> None:
+    cmd.falso.por_para_tocar(cmd.falso.catalogo[0], "spotatui")
+    cmd.abafar("voz_1")
+    cmd.falso.aparelhos["spotatui"] = 17          # a Spotify devolveu 17 para 18
+    assert cmd.restaurar("voz_1")["restored"] is True and cmd.falso.aparelhos["spotatui"] == 60
+
+
+def test_companion_novo_recupera_sozinho_na_partida(cmd, tmp_path) -> None:
+    cmd.falso.por_para_tocar(cmd.falso.catalogo[0], "spotatui")
+    cmd.abafar("voz_1")
+    novo = mc.Comandos(cmd.provedor, mc.Preferencias(tmp_path / "musica.json"), agora=cmd.falso.relogio.agora,
+                       dormir=cmd.falso.relogio.dormir, temporizador=Temporizador(),
+                       segundo_plano=lambda funcao, *args: funcao(*args))
+    novo.iniciar()
+    assert cmd.falso.aparelhos["spotatui"] == 60

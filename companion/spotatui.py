@@ -58,6 +58,8 @@ CONFIG_YML = Path("~/.config/spotatui/config.yml").expanduser()
 DIR_TEMP = Path(os.environ.get("GARRA_REACHY_CACHE", "~/.cache/garra-reachy")).expanduser() / "spotatui-tmp"
 
 Executor = Callable[[list[str], float, dict], tuple[int, str, str]]
+_AMBIENTE = {"HOME", "USER", "LOGNAME", "PATH", "LANG", "LANGUAGE", "SHELL", "SSL_CERT_FILE", "SSL_CERT_DIR",
+             "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy"}
 
 
 class ErroSpotatui(Exception):
@@ -76,7 +78,7 @@ def icones_do_config(caminho: Path = CONFIG_YML) -> tuple[str, str]:
     except OSError:
         return tocando, pausado
     for chave, valor in re.findall(r"^\s+(playing_icon|paused_icon):\s*(.+?)\s*$", texto, re.M):
-        valor = valor.strip().strip("'\"")
+        valor = re.sub(r"\s+#.*$", "", valor).strip().strip("'\"")
         if valor:
             if chave == "playing_icon":
                 tocando = valor
@@ -100,8 +102,14 @@ def _executar_processo(argv: list[str], timeout_s: float, env: dict) -> tuple[in
 
 
 def _erro_de(stderr: str) -> ErroSpotatui:
-    """Traduz a mensagem da CLI num código. A mensagem bruta nunca sai daqui."""
-    t = stderr.lower()
+    """Traduz a mensagem da CLI num código. A mensagem bruta nunca sai daqui.
+
+    Só a linha do erro conta: a do log ("Logging to: …spotatuilog4011") e o
+    texto que a pessoa pediu não podem virar "conta desconectada" por conter 401.
+    """
+    linhas = [linha for linha in stderr.splitlines() if linha.strip() and not linha.startswith("Logging to:")]
+    erros = [linha for linha in linhas if "error" in linha.lower()]
+    t = "\n".join(erros or linhas).lower()
     if "no device with name" in t or "no active device" in t or "device not found" in t:
         return ErroSpotatui("player_off")
     if "no context available" in t:
@@ -110,12 +118,14 @@ def _erro_de(stderr: str) -> ErroSpotatui:
         return ErroSpotatui("no_playback", "no_context")
     if "nothing is playing" in t or "no playback" in t:
         return ErroSpotatui("no_playback")
-    if "401" in t or "unauthorized" in t or "invalid_grant" in t or "invalid access token" in t \
-            or "token expired" in t or "refresh token" in t:
-        return ErroSpotatui("auth_expired")
+    # "Não achei" vem antes da conta: a mensagem traz o texto pedido, e um "401"
+    # no nome da música não é conta desconectada.
     if "no tracks found" in t or "could not find" in t or "no tracks with name" in t \
             or "no playlists with name" in t:
         return ErroSpotatui("not_found")
+    if re.search(r"\b401\b[^\n]*unauthorized|status(?: code)?:? 401\b", t) or "unauthorized" in t \
+            or "invalid_grant" in t or "invalid access token" in t or "token expired" in t or "refresh token" in t:
+        return ErroSpotatui("auth_expired")
     if ("failed to get response" in t or "error sending request" in t or "dns error" in t
             or "connection" in t or "unreachable" in t or "timed out" in t):
         return ErroSpotatui("unreachable")
@@ -149,10 +159,13 @@ class Spotatui:
 
     # ── o processo ────────────────────────────────────────────────────────
     def _ambiente(self) -> dict:
+        """O mínimo que a CLI precisa. O ambiente do companion tem chave de API
+        (OpenRouter), e o spotatui não tem nada que fazer com ela."""
         self.dir_temp.mkdir(parents=True, exist_ok=True)
         os.chmod(self.dir_temp, 0o700)
         self._podar()
-        return {**os.environ, "TMPDIR": str(self.dir_temp), "NO_COLOR": "1"}
+        env = {k: v for k, v in os.environ.items() if k in _AMBIENTE or k.startswith(("LC_", "XDG_"))}
+        return {**env, "TMPDIR": str(self.dir_temp), "NO_COLOR": "1"}
 
     def _podar(self) -> None:
         logs = self.dir_temp / "spotatui_logs"

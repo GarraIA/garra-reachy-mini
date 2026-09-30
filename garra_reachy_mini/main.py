@@ -87,9 +87,12 @@ MUSICA_ASSUNTO_S = 30 * 60.0
 # O pedido ao PC leva de 2 a 8 s (busca, play e a conferência, medidos em
 # 30/09). Passou disto sem resposta, o robô avisa que está indo.
 MUSICA_AVISO_S = 1.5
-# Teto do pedido inteiro, reentrega incluída: sem resposta, a fala é a de
-# falha, e ninguém toca "de novo" por cima.
-MUSICA_PRAZO_S = 65.0
+# Teto do pedido inteiro: sem resposta, a fala é a de falha, e ninguém toca
+# "de novo" por cima. Acima do prazo do cliente (musica.TIMEOUT_S).
+MUSICA_PRAZO_S = 30.0
+# Música tocando e alguém tentando chamar o robô (a frase de ativação se perdeu
+# nela, medido em 30/09): a música fica baixa este tanto, para a repetição ser ouvida.
+ESCUTA_ABAFADA_S = 10.0
 # O que abaixa a música e mantém o laço vivo se a música estiver tocando.
 _MUSICA_SEGUE = ("play_generic", "play_track", "play_playlist", "play_found", "resume", "next", "previous",
                  "now_playing", "queue_track", "search_track")
@@ -460,8 +463,36 @@ class GarraReachyMini(ReachyMiniApp):
         return casa.ClienteCasa(cfg.gateway_url, cfg.gateway_key)
 
     def _cliente_da_musica(self) -> musica.ClienteMusica:
+        """Um cliente (uma sessão HTTP) por destino, e não um por chamada."""
         cfg = Config.carregar()
-        return musica.ClienteMusica(cfg.gateway_url, cfg.gateway_key)
+        chave = (cfg.gateway_url, cfg.gateway_key)
+        guardado = self._cliente_musica
+        if guardado is None or guardado[0] != chave:
+            if guardado is not None:
+                guardado[1].sessao.close()
+            guardado = (chave, musica.ClienteMusica(cfg.gateway_url, cfg.gateway_key))
+            self._cliente_musica = guardado
+        return guardado[1]
+
+    def _talvez_chamaram_com_musica(self, texto: str, perto, eventos) -> None:
+        """A frase de ativação se perdeu na música, mas alguém tentou: a música
+        fica baixa por ESCUTA_ABAFADA_S, para a repetição ser ouvida. Só abaixa
+        — o que foi dito sem a frase não é executado."""
+        agora = time.monotonic()
+        if (not self._musica_tocando or agora >= self._musica_ate or agora < self._escuta_abafada_ate
+                or Config.carregar().conversa.get("music_voice_enabled") is not True):
+            return
+        if perto is None and not musica.pede_atencao(texto):
+            return
+        self._escuta_abafada_ate = agora + ESCUTA_ABAFADA_S
+        rid = f"escuta_{int(time.time() * 1000)}"
+        cliente, pool = self._cliente_da_musica(), self._pool_da_musica()
+        pool.submit(cliente.abafar, rid)
+        devolver = threading.Timer(ESCUTA_ABAFADA_S, lambda: pool.submit(cliente.restaurar, rid))
+        devolver.daemon = True
+        devolver.start()
+        eventos.publicar("music.listen_duck", reason="near_miss" if perto is not None else "keyword",
+                         seconds=ESCUTA_ABAFADA_S)
 
     def _pool_da_musica(self) -> ThreadPoolExecutor:
         """Um pool só, criado uma vez — pelo mesmo motivo do pool do cérebro."""
@@ -503,12 +534,10 @@ class GarraReachyMini(ReachyMiniApp):
         finally:
             if resultado and (resultado.get("ducked") or {}).get("ducked"):
                 self._pool_da_musica().submit(self._cliente_da_musica().restaurar, correlacao)
-        if resultado and resultado.get("status") in ("playing", "paused", "queued", "volume_set") \
-                and falada is not ResultadoFala.FALADA:
-            # A música mudou e a confirmação não saiu: fica registrado assim, e a
-            # faixa NÃO é recomeçada para tentar de novo.
-            eventos.publicar("music.confirmation.not_spoken", correlation_id=correlacao,
-                             status=resultado.get("status"), operation=resultado.get("operation"))
+        # Se a música mudou e a confirmação não saiu, fica registrado assim — e a
+        # faixa NÃO é recomeçada para tentar de novo.
+        eventos.publicar("music.confirmation", correlation_id=correlacao, spoken=falada is ResultadoFala.FALADA,
+                         status=(resultado or {}).get("status"), operation=pedido.operacao)
         return texto
 
     def _atender_musica_do_chat(self, pedido: musica_pedido.PedidoMusica, correlacao: str) -> str | None:
@@ -535,7 +564,11 @@ class GarraReachyMini(ReachyMiniApp):
                 try:
                     resultado = futuro.result(timeout=MUSICA_AVISO_S)
                 except FuturesTimeout:
-                    falar(musica.aviso(pedido.operacao))
+                    try:
+                        falar(musica.aviso(pedido.operacao))
+                    except Exception:
+                        # O aviso é cortesia: sem ele, o resultado segue valendo.
+                        self.logger.warning("O aviso de espera da música não saiu.", exc_info=True)
                     resultado = futuro.result(timeout=max(1.0, MUSICA_PRAZO_S - (time.monotonic() - inicio)))
             else:
                 resultado = futuro.result(timeout=MUSICA_PRAZO_S)
@@ -587,6 +620,8 @@ class GarraReachyMini(ReachyMiniApp):
     _musica_ate = 0.0
     _musica_tocando = False
     _executor_musica: ThreadPoolExecutor | None = None
+    _escuta_abafada_ate = 0.0
+    _cliente_musica: tuple | None = None
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
         cfg = Config.carregar()
@@ -1002,6 +1037,7 @@ class GarraReachyMini(ReachyMiniApp):
                 # foi dito, e o registro do app segue sem uma linha sobre isto.
                 if veredicto.motivo == "wake_phrase_required":
                     self.acompanhamento.ouviu(texto, capturado_em, conf_wake.conversa)
+                    self._talvez_chamaram_com_musica(texto, perto, controlador.eventos)
                 agora_r = time.monotonic()
                 if agora_r - rejeicoes["ultimo"] >= REJEICAO_INTERVALO_S:
                     # Evento redigido: faixa de duração, nunca o valor exato, e
@@ -1130,7 +1166,8 @@ class GarraReachyMini(ReachyMiniApp):
             # Falou de música sem dar um comando: o modelo fica sabendo que a
             # capacidade existe e como se pede — nada da Spotify.
             situacao_musica = None
-            if musica.fala_de_musica(texto):
+            if (musica.fala_de_musica(texto, time.monotonic() < self._musica_ate)
+                    or musica_pedido.talvez(texto)):
                 situacao_musica = musica.situacao(conf_agora.conversa.get("music_voice_enabled") is True)
             mensagem = self.acompanhamento.montar(texto, time.monotonic(),
                                                   conf_agora.conversa,

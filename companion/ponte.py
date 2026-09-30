@@ -318,6 +318,8 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
     elif musica is None:
         sp = spotatui.Spotatui()
         _comandos = musica_comandos.Comandos(sp) if sp.executavel else None
+        if _comandos is not None:
+            _comandos.iniciar()      # volume que ficou abaixado numa queda volta já
     else:
         _comandos = None
     _familia = familia or familia_mod.Familia()
