@@ -222,13 +222,15 @@ def test_o_evento_de_status_nao_apaga_camera_voz_e_chat() -> None:
     """`robot.status` pelo WebSocket é o status do controlador, sem câmera,
     voz, chat e recursos; o painel tem de fundi-lo com o último status
     completo em vez de pintar "indisponível" a cada ação (medido no robô)."""
-    assert "pintarStatus({ ...(estado.status || {}), ...e }); break;" in JS
+    evento = JS[JS.index("case 'robot.status':"):]
+    evento = evento[:evento.index("break;")]
+    assert "pintarStatus({ ...(estado.status || {}), ...e });" in evento
     assert "case 'robot.status':\n      pintarStatus(e); break;" not in JS
 
 
 def test_o_painel_diz_se_a_visao_local_esta_pronta_carrega_ou_espera_a_gpu() -> None:
     trecho = JS[JS.index("function pintarVisaoEstado"):JS.index("async function carregarVisao")]
-    assert "l.loaded === 'gpu'" in trecho and "!l.admissible" in trecho
+    assert "l.ready" in trecho and "!l.admissible" in trecho
     for chave in ("visao.pronto_gpu", "visao.gpu_ocupada", "visao.carrega_no_pedido", "visao.carregando_e_olhando"):
         assert chave in JS and f"'{chave}':" in I18N, chave
 
@@ -251,6 +253,34 @@ def test_no_celular_a_camera_vem_primeiro_e_ajustes_tem_atalhos() -> None:
 def test_o_resumo_do_inicio_carrega_os_estados_leves_no_arranque() -> None:
     trecho = JS[JS.index("async function carregarResumo"):]
     trecho = trecho[:trecho.index("\n}\n")]
-    assert "carregarCasa()" in trecho and "estadoDaMusicaSo()" in trecho and "carregarFamilia()" in trecho
+    assert "carregarCasa(true)" in trecho and "estadoDaMusicaSo()" in trecho and "carregarFamiliaEstado()" in trecho
     assert "carregarMusica()" not in trecho, "o arranque não pede player nem aparelhos à Spotify"
+    assert "carregarFamilia()" not in trecho, "nem a lista de perfis (nomes) no arranque"
     assert "carregarResumo();" in JS
+
+
+
+def test_ocupada_vem_antes_de_pronta_e_pronta_e_o_runner_inteiro() -> None:
+    """Revisão de 30/09: com o runner só em parte na GPU o painel dizia
+    "pronto" enquanto a ponte respondia `provider_busy`."""
+    trecho = JS[JS.index("function pintarVisaoEstado"):JS.index("async function carregarVisao")]
+    assert trecho.index("!l.admissible") < trecho.index("l.ready")
+    assert "visaoCarregada = !!l.ready" in trecho
+    assert "l.blocker === '?'" in trecho and "'visao.ollama_sem_ps'" in JS
+
+
+def test_o_evento_de_servicos_atualiza_o_status_guardado_e_o_resto_e_relido() -> None:
+    trecho = JS[JS.index("case 'robot.services':"):]
+    trecho = trecho[:trecho.index("break;")]
+    assert "estado.status = { ...(estado.status || {}), services: e.services }" in trecho
+    assert "function atualizarStatusLogo" in JS
+    evento = JS[JS.index("case 'robot.status':"):]
+    assert "atualizarStatusLogo()" in evento[:evento.index("break;")]
+
+
+def test_o_texto_da_gpu_ocupada_diz_o_que_acontece() -> None:
+    for idioma in ("en", "pt"):
+        inicio = I18N.index(f"  {idioma}: {{")
+        trecho = I18N[inicio:I18N.index("\n  },", inicio)]
+        texto = re.search(r"'visao\.gpu_ocupada': '([^']*)'", trecho).group(1)
+        assert "espera" not in texto and "waits" not in texto, texto

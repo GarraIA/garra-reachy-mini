@@ -30,7 +30,7 @@ class LocalFalso:
                 "vision": self.erro != "model_without_vision", "endpoint": p.local_endpoint,
                 "model": p.local_modelo}
 
-    def descrever(self, jpeg, pergunta, p):
+    def descrever(self, jpeg, pergunta, p, prazo_s=None):
         self.recebidos.append((jpeg, pergunta, p))
         if self.erro:
             raise visao.ErroDeVisao(self.erro, "de mentira")
@@ -45,7 +45,7 @@ class NuvemFalsa:
     def estado(self, p):
         return {"enabled": p.nuvem_permitida, "key_present": bool(self.chave), "model": p.nuvem_modelo}
 
-    def descrever(self, jpeg, pergunta, p):
+    def descrever(self, jpeg, pergunta, p, prazo_s=None):
         if not p.nuvem_permitida:
             raise visao.ErroDeVisao("cloud_disabled")
         self.recebidos.append((jpeg, pergunta, p))

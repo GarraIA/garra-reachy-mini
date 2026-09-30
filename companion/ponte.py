@@ -516,8 +516,9 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
     async def casa_estado(request: Request) -> Response:
         if not _autorizado(request, token):
             return JSONResponse({"erro": "token inválido"}, status_code=401)
+        rapido = request.query_params.get("rapido") in ("1", "true")
         try:
-            return JSONResponse(await asyncio.to_thread(_casa.estado),
+            return JSONResponse(await asyncio.to_thread(_casa.estado, rapido),
                                 headers={"Cache-Control": "no-store"})
         except casa_mod.ErroCasa as e:
             return _erro_da_casa(e)

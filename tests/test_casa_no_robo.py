@@ -26,6 +26,11 @@ from garra_reachy_mini import casa, envelope
     "liga o ar condicionado", "desliga a tomada da cozinha", "abre a cortina", "liga o ventilador",
     "qual a temperatura do termostato?", "a lâmpada da varanda está ligada?", "turn on the living room light",
     "você consegue controlar os aparelhos da casa?",
+    # os que a revisão achou de fora
+    "você consegue controlar a minha casa", "você consegue mexer nas luzes da casa",
+    "tem integração com a casa inteligente?", "liga o ar", "desliga o ar", "liga a tv", "tranca a porta",
+    "tem alguma luz acesa?", "deixei a luz ligada?", "turn the lights off", "open the blinds",
+    "set the thermostat to 22", "is the light on",
 ])
 def test_pedidos_sobre_a_casa(pedido) -> None:
     assert casa.pede_casa(pedido) is True
@@ -34,6 +39,10 @@ def test_pedidos_sobre_a_casa(pedido) -> None:
 @pytest.mark.parametrize("pedido", [
     "que horas são?", "acende uma ideia", "o que você está vendo?", "liga pra minha mãe",
     "toca uma música", "a luz do sol está forte hoje", "", "desliga o cronômetro",
+    # lembrete e anotação são do caderno, não da casa
+    "me lembra de apagar a luz antes de dormir", "anota: desligar o ventilador",
+    "não esquece de fechar a cortina", "liga pra Maria da Luz", "abre a tomada de decisão",
+    "liga para o meu pai",
 ])
 def test_pedidos_que_nao_sao_sobre_a_casa(pedido) -> None:
     assert casa.pede_casa(pedido) is False
@@ -66,6 +75,15 @@ def test_sem_resposta_da_ponte_nao_vira_nao_existe() -> None:
     assert "não foi possível conferir" in frase
     # a instrução ao modelo é justamente não concluir que o recurso falta
     assert "e não que o recurso não existe" in frase
+    # e não culpa o computador: pode ter sido só o prazo curto do turno
+    assert "não respondeu" not in frase
+
+
+def test_configurado_sem_conferencia_recente_e_dito_assim() -> None:
+    frase = casa.situacao(estado("unknown", voz=False))
+    assert "configurado" in frase and "não deu para confirmar" in frase
+    frase_voz = casa.situacao(estado("unknown", voz=True))
+    assert "não deu para confirmar" in frase_voz
 
 
 def test_o_bloco_entra_citado_antes_do_pedido() -> None:
@@ -91,16 +109,17 @@ def test_o_cliente_pergunta_a_ponte_com_o_token_e_sem_proxy(monkeypatch) -> None
         def json(self):
             return estado("not_configured")
 
-    def get(self, url, headers=None, timeout=None, allow_redirects=True):
-        chamadas.append((url, headers, timeout, allow_redirects))
+    def get(self, url, params=None, headers=None, timeout=None, allow_redirects=True):
+        chamadas.append((url, params, headers, timeout, allow_redirects))
         return R()
 
     monkeypatch.setattr(casa.requests.Session, "get", get)
     c = casa.ClienteCasa("http://10.0.0.24:8126/", "tok")
     assert c.sessao.trust_env is False
     assert c.estado()["state"] == "not_configured"
-    [(url, cab, timeout, redir)] = chamadas
+    [(url, params, cab, timeout, redir)] = chamadas
     assert url == "http://10.0.0.24:8126/api/casa/estado" and cab == {"Authorization": "Bearer tok"}
+    assert params == {"rapido": "1"}, "no turno de voz, só o estado rápido (sem sondar o Home Assistant)"
     assert timeout <= 5 and redir is False
 
 
@@ -147,7 +166,7 @@ def painel_casa(backend, tmp_path, monkeypatch):
     pedidos = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        pedidos.append(request.url.path)
+        pedidos.append(request.url.path + ("?" + request.url.query.decode() if request.url.query else ""))
         return httpx.Response(200, json=estado("not_configured"))
 
     chat = ChatFalso()
@@ -169,9 +188,16 @@ def test_no_chat_o_pedido_da_casa_leva_a_situacao_real(painel_casa) -> None:
     [mensagem] = painel_casa.chat.recebidas
     assert mensagem.startswith("[CONTROLE DA CASA") and "nenhum aparelho" in mensagem
     assert envelope.pedido_de(mensagem) == "você consegue acender a luz da sala?"
-    assert painel_casa.pedidos == ["/api/casa/estado"]
+    assert painel_casa.pedidos == ["/api/casa/estado?rapido=1"]
 
 
 def test_no_chat_pedido_que_nao_e_da_casa_nao_consulta_nada(painel_casa) -> None:
     painel_casa.post("/api/chat/enviar", json={"content": "que horas são?"})
     assert painel_casa.pedidos == [] and "CONTROLE DA CASA" not in painel_casa.chat.recebidas[0]
+
+
+
+def test_o_painel_pode_pedir_o_estado_rapido(painel_casa) -> None:
+    assert painel_casa.get("/api/robot/casa/estado?rapido=1").status_code == 200
+    assert painel_casa.get("/api/robot/casa/estado").status_code == 200
+    assert painel_casa.pedidos[-2:] == ["/api/casa/estado?rapido=1", "/api/casa/estado"]

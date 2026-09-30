@@ -30,8 +30,8 @@ class CasaFalsa:
                 "gateway": {"devices_visible": False, "reachable": True},
                 "voice_control": False, "state": "pending" if self.configurada else "not_configured"}
 
-    def estado(self):
-        self.chamadas.append(("estado",))
+    def estado(self, rapido=False):
+        self.chamadas.append(("estado", rapido))
         return self._estado()
 
     def configurar(self, url, token):
@@ -124,3 +124,11 @@ def test_o_token_do_home_assistant_nao_vai_ao_log(montar, caplog) -> None:
     c.erro = "unauthorized"
     cliente.post("/api/casa/configurar", json={"url": "http://ha.local:8123", "token": HA_TOKEN}, headers=AUT)
     assert HA_TOKEN not in caplog.text and HA_TOKEN[:12] not in caplog.text
+
+
+
+def test_estado_rapido_passa_pela_ponte(montar) -> None:
+    cliente, c = montar()
+    assert cliente.get("/api/casa/estado?rapido=1", headers=AUT).status_code == 200
+    assert cliente.get("/api/casa/estado", headers=AUT).status_code == 200
+    assert [x for x in c.chamadas if x[0] == "estado"] == [("estado", True), ("estado", False)]

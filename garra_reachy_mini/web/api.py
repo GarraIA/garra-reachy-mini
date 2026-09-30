@@ -242,15 +242,16 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
                             status_code=503)
 
     async def repassar(metodo: str, caminho: str, corpo: Any = None,
-                       timeout_s: float | None = None) -> Any:
+                       timeout_s: float | None = None, params: dict | None = None) -> Any:
         if ctx.integracoes is None:
             return sem_ponte()
-        return await ctx.integracoes.pedir(metodo, caminho, corpo, timeout_s=timeout_s)
+        return await ctx.integracoes.pedir(metodo, caminho, corpo, params=params, timeout_s=timeout_s)
 
     # ── casa ─────────────────────────────────────────────────────────────────
     @r.get("/casa/estado")
-    async def casa_estado() -> Any:
-        return await repassar("GET", "/api/casa/estado")
+    async def casa_estado(rapido: bool = False) -> Any:
+        # `rapido` não sonda o Home Assistant: é o que o resumo do INÍCIO usa.
+        return await repassar("GET", "/api/casa/estado", params={"rapido": "1"} if rapido else None)
 
     @r.post("/casa/configurar")
     async def casa_configurar(corpo: dict[str, Any] = Body(...)) -> Any:
@@ -919,7 +920,8 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         """O estado da casa pela ponte, para o envelope; None se não deu."""
         if ctx.integracoes is None:
             return None
-        resposta = await ctx.integracoes.pedir("GET", "/api/casa/estado", timeout_s=casa_mod.TIMEOUT_S)
+        resposta = await ctx.integracoes.pedir("GET", "/api/casa/estado", params={"rapido": "1"},
+                                               timeout_s=casa_mod.TIMEOUT_S)
         try:
             dados = json.loads(bytes(resposta.body))
         except (ValueError, TypeError, AttributeError):

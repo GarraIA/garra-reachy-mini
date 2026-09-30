@@ -63,20 +63,62 @@ GRANDE_BYTES = 10 * 2 ** 30
 MARGEM_VRAM_MB = 1400
 
 
-def vram_livre_mb() -> int | None:
-    """VRAM livre na GPU 0, pelo nvidia-smi; None se não houver como saber."""
-    import shutil
+# Modelos residentes que o Ollama despeja sem espera real: embeddings (atendem
+# em milissegundos) e modelos minúsculos. Um modelo de conversa médio pode estar
+# gerando por dezenas de segundos — esperar por ele trava a fila igual.
+MINUSCULO_BYTES = int(1.5 * 2 ** 30)
+# Pronto na GPU = o runner inteiro (ou quase) na VRAM, com o nosso contexto.
+FRACAO_NA_GPU = 0.9
+
+_vram_cache: dict[str, Any] = {}
+_nvidia: dict[str, bool] = {}
+
+
+def _rodar_nvidia_smi(args: list[str], prazo: float) -> str:
+    """Roda sem nunca esperar um nvidia-smi travado: no prazo, mata e larga."""
     import subprocess
 
-    exe = shutil.which("nvidia-smi")
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        saida, _ = proc.communicate(timeout=prazo)
+        return saida
+    except subprocess.TimeoutExpired:
+        proc.kill()             # sem wait(): um processo preso no driver não sai nem com SIGKILL
+        raise TimeoutError("nvidia-smi não respondeu")
+
+
+def vram_livre_mb(executar=None) -> tuple[int, int] | None:
+    """(livre, total) em MiB da GPU mais livre deste PC; None se não houver
+    como saber. Guarda por 2 s, e depois de um nvidia-smi travado não chama
+    mais — cada chamada presa seria uma thread perdida na ponte."""
+    import shutil
+
+    if _nvidia.get("travou"):
+        return None
+    agora = time.monotonic()
+    if "em" in _vram_cache and agora - _vram_cache["em"] < 2.0:
+        return _vram_cache["valor"]
+    exe = shutil.which("nvidia-smi") if executar is None else "nvidia-smi"
     if not exe:
         return None
     try:
-        r = subprocess.run([exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-                           capture_output=True, text=True, timeout=3)
-        return int(r.stdout.strip().splitlines()[0])
-    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        saida = (executar or _rodar_nvidia_smi)(
+            [exe, "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"], 3.0)
+    except TimeoutError:
+        _nvidia["travou"] = True
         return None
+    except OSError:
+        return None
+    gpus = []
+    for linha in (saida or "").strip().splitlines():
+        try:
+            livre, total = (int(x.strip()) for x in linha.split(","))
+            gpus.append((livre, total))
+        except ValueError:
+            continue
+    valor = max(gpus) if gpus else None
+    _vram_cache.update(em=agora, valor=valor)
+    return valor
 OPENROUTER = "https://openrouter.ai/api/v1"
 
 # O que se pede ao modelo. A instrução do fim não é enfeite: o que está escrito
@@ -158,15 +200,50 @@ class Local:
         self._vram_livre = vram_livre
 
     @staticmethod
-    def _e_o_modelo(m: dict, modelo: str) -> bool:
-        return modelo in (m.get("name"), m.get("model")) or f"{modelo}:latest" in (m.get("name"), m.get("model"))
+    def _e_o_modelo(m: dict, modelo: str, digest: str | None = None) -> bool:
+        nomes = (m.get("name"), m.get("model"))
+        return (modelo in nomes or f"{modelo}:latest" in nomes
+                or (digest is not None and m.get("digest") == digest))
 
-    def admissao(self, p: Preferencias, tamanho_bytes: int | None = None) -> dict[str, Any]:
+    def _capacidades(self, p: Preferencias, nome: str) -> list | None:
+        try:
+            r = self.http.post(f"{p.local_endpoint}/api/show", json={"model": nome}, timeout=5.0)
+            return r.json().get("capabilities") if r.status_code == 200 else None
+        except Exception:       # noqa: BLE001
+            return None
+
+    def _despejavel(self, p: Preferencias, m: dict) -> bool:
+        """O Ollama o despeja sem espera: embedding (só isso) ou minúsculo.
+        Sem tamanho declarado, não se arrisca."""
+        try:
+            tamanho = int(m.get("size") or 0)
+        except (TypeError, ValueError):
+            return False
+        if tamanho <= 0 or tamanho >= GRANDE_BYTES:
+            return False
+        if tamanho < MINUSCULO_BYTES:
+            return True
+        caps = self._capacidades(p, str(m.get("name") or m.get("model") or ""))
+        return bool(caps) and "embedding" in caps and "completion" not in caps
+
+    @staticmethod
+    def _local(endpoint: str) -> bool:
+        import urllib.parse
+
+        try:
+            host = urllib.parse.urlsplit(endpoint).hostname or ""
+        except ValueError:
+            return False
+        return host in ("127.0.0.1", "localhost", "::1")
+
+    def admissao(self, p: Preferencias, tamanho_bytes: int | None = None,
+                 digest: str | None = None) -> dict[str, Any]:
         """Pode pedir agora sem fazer o Ollama esperar por um modelo ocupado?
 
-        `loaded` é onde o modelo de visão está: "gpu" (pronto, com as nossas
-        opções), "cpu" (não serve: lento, e recarregar exige VRAM) ou None."""
-        saida: dict[str, Any] = {"loaded": None, "admissible": False, "blocker": None,
+        `loaded` é onde o modelo de visão está: "gpu" (ao menos em parte na
+        VRAM), "cpu" ou None; `ready` é pronto de verdade — inteiro na GPU com
+        o nosso contexto, e aí nem precisa carregar."""
+        saida: dict[str, Any] = {"loaded": None, "ready": False, "admissible": False, "blocker": None,
                                  "free_mb": None, "needed_mb": None}
         try:
             r = self.http.get(f"{p.local_endpoint}/api/ps", timeout=5.0)
@@ -175,43 +252,57 @@ class Local:
         except Exception:       # noqa: BLE001 — sem /api/ps não há como saber: não arrisca a fila
             saida["blocker"] = "?"
             return saida
-        outros = [m for m in residentes if not self._e_o_modelo(m, p.local_modelo)]
-        meu = next((m for m in residentes if self._e_o_modelo(m, p.local_modelo)), None)
+        meu = next((m for m in residentes if self._e_o_modelo(m, p.local_modelo, digest)), None)
+        outros = [m for m in residentes if m is not meu]
+        meu_vram = 0
         if meu is not None:
-            na_gpu = int(meu.get("size_vram") or 0) > 0
-            saida["loaded"] = "gpu" if na_gpu else "cpu"
-            if na_gpu and int(meu.get("context_length") or CONTEXTO) == CONTEXTO:
-                saida["admissible"] = True
+            meu_vram = int(meu.get("size_vram") or 0)
+            meu_total = int(meu.get("size") or 0) or meu_vram
+            saida["loaded"] = "gpu" if meu_vram > 0 else "cpu"
+            inteiro = meu_total > 0 and meu_vram >= FRACAO_NA_GPU * meu_total
+            if inteiro and int(meu.get("context_length") or CONTEXTO) == CONTEXTO:
+                saida.update(ready=True, admissible=True)
                 return saida
-        grandes = [m for m in outros if int(m.get("size") or 0) >= GRANDE_BYTES]
-        despejavel_mb = sum(int(m.get("size_vram") or 0) for m in outros
-                            if int(m.get("size") or 0) < GRANDE_BYTES) // 2 ** 20
+        despejaveis = [m for m in outros if self._despejavel(p, m)]
+        bloqueadores = [m for m in outros if m not in despejaveis]
+        # Recarregar o nosso runner (outro contexto, ou em parte na CPU) libera a
+        # VRAM que ele já tem; os despejáveis saem sem espera.
+        despejavel_mb = (sum(int(m.get("size_vram") or 0) for m in despejaveis) + meu_vram) // 2 ** 20
         precisa_mb = (int(tamanho_bytes) // 2 ** 20 + MARGEM_VRAM_MB) if tamanho_bytes else None
-        livre = self._vram_livre() if self._vram_livre else None
+        medida = self._vram_livre() if (self._vram_livre and self._local(p.local_endpoint)) else None
+        livre = None
+        if isinstance(medida, tuple):
+            livre_nvidia, total = medida
+            # O CUDA atrasa durante uma carga; o que o Ollama já contou não está livre.
+            contado = sum(int(m.get("size_vram") or 0) for m in residentes) // 2 ** 20
+            livre = min(livre_nvidia, total - contado)
+        elif isinstance(medida, int):
+            livre = medida
         saida.update(free_mb=livre, needed_mb=precisa_mb)
         if livre is not None and precisa_mb is not None:
             saida["admissible"] = livre + despejavel_mb >= precisa_mb
         else:
-            # Sem nvidia-smi: só entra se nenhum modelo grande estiver residente.
-            saida["admissible"] = not grandes
+            # Sem medida da VRAM: só entra se nada que possa estar ocupado estiver residente.
+            saida["admissible"] = not bloqueadores
         if not saida["admissible"]:
-            saida["blocker"] = (grandes[0].get("name") if grandes else
-                                (outros[0].get("name") if outros else "vram"))
+            saida["blocker"] = bloqueadores[0].get("name") if bloqueadores else "vram"
         return saida
 
-    def _tamanho(self, p: Preferencias, modelos: list[dict]) -> int | None:
+    def _do_modelo(self, p: Preferencias, modelos: list[dict]) -> tuple[int | None, str | None]:
+        """(tamanho, digest) do modelo de visão na lista de `/api/tags`."""
         for m in modelos:
             if isinstance(m, dict) and self._e_o_modelo(m, p.local_modelo):
                 try:
-                    return int(m.get("size") or 0) or None
+                    tamanho = int(m.get("size") or 0) or None
                 except (TypeError, ValueError):
-                    return None
-        return None
+                    tamanho = None
+                return tamanho, m.get("digest")
+        return None, None
 
     def estado(self, p: Preferencias) -> dict[str, Any]:
         saida: dict[str, Any] = {"reachable": False, "model_present": False, "vision": False,
                                  "endpoint": p.local_endpoint, "model": p.local_modelo,
-                                 "loaded": None, "admissible": False, "blocker": None,
+                                 "loaded": None, "ready": False, "admissible": False, "blocker": None,
                                  "free_mb": None, "needed_mb": None}
         try:
             r = self.http.get(f"{p.local_endpoint}/api/tags", timeout=5.0)
@@ -225,7 +316,8 @@ class Local:
             return saida
         saida["model_present"] = True
         saida["vision"] = self._enxerga(p)
-        saida.update(self.admissao(p, self._tamanho(p, modelos)))
+        tamanho, digest = self._do_modelo(p, modelos)
+        saida.update(self.admissao(p, tamanho, digest))
         return saida
 
     def _enxerga(self, p: Preferencias) -> bool:
@@ -241,22 +333,23 @@ class Local:
         # com a lista e sem "vision", não enxerga.
         return capacidades is None or "vision" in capacidades
 
-    def _carregar(self, p: Preferencias) -> None:
-        """Sobe o modelo (ou confirma que já está de pé) sem mandar a imagem:
-        `/api/generate` sem prompt só carrega. Se não subir em `CARGA_S`, a GPU
-        está com outro modelo — e isso tem nome, não é "demorou"."""
+    def _carregar(self, p: Preferencias, prazo_s: float = CARGA_S) -> None:
+        """Sobe o modelo sem mandar a imagem: `/api/generate` sem prompt só
+        carrega. Se não subir no prazo, a GPU está com outro modelo — e isso tem
+        nome, não é "demorou"."""
         try:
             r = self.http.post(f"{p.local_endpoint}/api/generate",
                                json={"model": p.local_modelo, "keep_alive": MANTER_QUENTE, "options": OPCOES},
-                               timeout=CARGA_S)
+                               timeout=max(0.1, prazo_s))
         except httpx.TimeoutException as e:
-            raise ErroDeVisao("provider_busy", f"o modelo não carregou em {CARGA_S:.0f} s") from e
+            raise ErroDeVisao("provider_busy", f"o modelo não carregou em {prazo_s:.0f} s") from e
         except httpx.HTTPError as e:
             raise ErroDeVisao("provider_offline", str(e)) from e
         if r.status_code != 200:
             raise ErroDeVisao("provider_error", f"HTTP {r.status_code} ao carregar")
 
-    def descrever(self, jpeg: bytes, pergunta: str, p: Preferencias) -> Observacao:
+    def descrever(self, jpeg: bytes, pergunta: str, p: Preferencias, prazo_s: float | None = None) -> Observacao:
+        fim = time.monotonic() + (prazo_s if prazo_s is not None else CARGA_S + self.timeout_s)
         estado = self.estado(p)
         if not estado["reachable"]:
             raise ErroDeVisao("provider_offline", p.local_endpoint)
@@ -267,7 +360,11 @@ class Local:
         if not estado["admissible"]:
             # Não entra na fila do Ollama: esperar aqui trava todo mundo.
             raise ErroDeVisao("provider_busy", f"GPU ocupada por {estado['blocker']}")
-        self._carregar(p)
+        if not estado.get("ready"):
+            self._carregar(p, min(CARGA_S, fim - time.monotonic()))
+        resta = fim - time.monotonic()
+        if resta <= 0:
+            raise ErroDeVisao("timeout", "sem tempo para descrever")
         corpo = {
             "model": p.local_modelo,
             "stream": False,
@@ -278,7 +375,7 @@ class Local:
         }
         inicio = time.monotonic()
         try:
-            r = self.http.post(f"{p.local_endpoint}/api/chat", json=corpo, timeout=self.timeout_s)
+            r = self.http.post(f"{p.local_endpoint}/api/chat", json=corpo, timeout=min(self.timeout_s, resta))
         except httpx.TimeoutException as e:
             raise ErroDeVisao("timeout", str(e)) from e
         except httpx.HTTPError as e:
@@ -307,7 +404,7 @@ class Nuvem:
         return {"enabled": bool(p.nuvem_permitida), "key_present": bool(self.chave),
                 "model": p.nuvem_modelo}
 
-    def descrever(self, jpeg: bytes, pergunta: str, p: Preferencias) -> Observacao:
+    def descrever(self, jpeg: bytes, pergunta: str, p: Preferencias, prazo_s: float | None = None) -> Observacao:
         if not p.nuvem_permitida:
             raise ErroDeVisao("cloud_disabled")
         if not self.chave:
@@ -324,7 +421,7 @@ class Nuvem:
         try:
             r = self.http.post(f"{self.base}/chat/completions", json=corpo,
                                headers={"Authorization": f"Bearer {self.chave}"},
-                               timeout=self.timeout_s)
+                               timeout=min(self.timeout_s, prazo_s) if prazo_s is not None else self.timeout_s)
         except httpx.TimeoutException as e:
             raise ErroDeVisao("timeout", str(e)) from e
         except httpx.HTTPError as e:
@@ -359,7 +456,14 @@ def _ordem(p: Preferencias, local: Local, nuvem: Nuvem) -> list:
     return [local, nuvem] if p.nuvem_permitida else [local]
 
 
-def descrever(jpeg: bytes, pergunta: str, p: Preferencias, local: Local, nuvem: Nuvem) -> Observacao:
+# Um prazo para a cadeia inteira: o robô desiste em 50 s. A nuvem só começa se
+# sobrar tempo para ela responder — subir o quadro depois é mandá-lo a ninguém.
+PRAZO_S = 40.0
+MINIMO_PARA_TENTAR_S = 8.0
+
+
+def descrever(jpeg: bytes, pergunta: str, p: Preferencias, local: Local, nuvem: Nuvem,
+              prazo_s: float = PRAZO_S) -> Observacao:
     """O texto sobre o quadro, pelo primeiro provedor da ordem que funcionar.
 
     Levanta o erro do PRIMEIRO provedor tentado quando nenhum funciona: é o
@@ -368,10 +472,14 @@ def descrever(jpeg: bytes, pergunta: str, p: Preferencias, local: Local, nuvem: 
     validar_jpeg(jpeg)
     if p.provedor not in PROVEDORES:
         raise ErroDeVisao("no_provider", p.provedor)
+    fim = time.monotonic() + prazo_s
     primeiro: ErroDeVisao | None = None
     for provedor in _ordem(p, local, nuvem):
+        resta = fim - time.monotonic()
+        if primeiro is not None and resta < MINIMO_PARA_TENTAR_S:
+            break
         try:
-            return provedor.descrever(jpeg, pergunta, p)
+            return provedor.descrever(jpeg, pergunta, p, prazo_s=max(0.1, resta))
         except ErroDeVisao as e:
             primeiro = primeiro or e
     raise primeiro or ErroDeVisao("no_provider")

@@ -31,5 +31,16 @@ def test_limite_de_reinicios_fica_em_unit(unidade) -> None:
     cp = ler(unidade)
     for chave in ("StartLimitIntervalSec", "StartLimitBurst"):
         assert not cp.has_option("Service", chave), f"{chave} em [Service] é ignorado"
-        assert cp.has_option("Unit", chave), f"{chave} faltando em [Unit]"
+    assert cp.has_option("Unit", "StartLimitIntervalSec"), "StartLimitIntervalSec faltando em [Unit]"
+    if cp.get("Unit", "StartLimitIntervalSec") != "0":      # 0 = sem limite; aí não há rajada
+        assert cp.has_option("Unit", "StartLimitBurst"), "StartLimitBurst faltando em [Unit]"
     assert cp.get("Service", "Restart") in ("always", "on-failure")
+
+
+
+def test_o_companion_nao_desiste_de_subir() -> None:
+    """O companion é o único caminho do robô ao cérebro: cinco quedas
+    rápidas (uma porta ocupada por um teste manual) não podem deixá-lo
+    `failed` até alguém rodar reset-failed."""
+    cp = ler(PASTA / "garra-reachy-companion.service")
+    assert cp.get("Unit", "StartLimitIntervalSec") == "0"

@@ -340,3 +340,53 @@ def test_o_token_nao_volta_nem_vai_ao_log(ambiente, caplog) -> None:
     e2 = c.estado()
     for saida in (json.dumps(e), json.dumps(e2), caplog.text):
         assert TOKEN not in saida and TOKEN[:12] not in saida
+
+
+# ─── estado rápido e cache (achado da revisão, 30/09) ───────────────────────
+def montar_contando(ha=None, gw=None, relogio=None):
+    ha = ha or HomeAssistant()
+    gw = gw or Gateway("11 visivel(is) · indisponivel: device_execute (no_devices), device_read (no_devices)")
+    chamadas_gw: list[str] = []
+    original = gw.handler
+    gw.handler = lambda r: chamadas_gw.append(r.url.path) or original(r)
+    c = casa.Casa(http_casa=httpx.Client(transport=httpx.MockTransport(ha.handler)),
+                  http_gateway=httpx.Client(transport=httpx.MockTransport(gw.handler), base_url="http://gw"),
+                  agora=relogio or (lambda: 1000.0))
+    return c, ha, chamadas_gw
+
+
+def test_estado_rapido_sem_casa_nao_consulta_ninguem(ambiente) -> None:
+    """O robô pergunta no meio de um turno de voz, com 4 s: sem Home
+    Assistant configurado, a resposta sai do arquivo, sem rede."""
+    c, ha, chamadas_gw = montar_contando()
+    e = c.estado(rapido=True)
+    assert e["state"] == "not_configured" and e["configured"] is False
+    assert ha.pedidos == [] and chamadas_gw == []
+
+
+def test_estado_rapido_usa_o_ultimo_estado_completo_enquanto_fresco(ambiente) -> None:
+    t = [1000.0]
+    c, ha, _ = montar_contando(relogio=lambda: t[0])
+    c.configurar(URL, TOKEN)
+    sondas = len(ha.pedidos)
+    e = c.estado(rapido=True)
+    assert e["configured"] is True and e["state"] in ("ok", "pending") and len(ha.pedidos) == sondas
+    t[0] += casa.FRESCO_S + 1
+    e = c.estado(rapido=True)
+    assert e["state"] == "unknown" and len(ha.pedidos) == sondas, "rápido nunca sonda"
+
+
+def test_estado_completo_fica_em_cache_e_a_mudanca_o_invalida(ambiente) -> None:
+    t = [1000.0]
+    c, ha, _ = montar_contando(relogio=lambda: t[0])
+    c.configurar(URL, TOKEN)
+    antes = len(ha.pedidos)
+    c.estado(); c.estado()
+    assert len(ha.pedidos) == antes, "dentro do cache não sonda de novo"
+    t[0] += casa.CACHE_S + 1
+    c.estado()
+    assert len(ha.pedidos) > antes
+    depois = len(ha.pedidos)
+    c.voz(True)
+    c.estado()
+    assert len(ha.pedidos) > depois, "mudar a voz invalida o cache"

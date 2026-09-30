@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -143,13 +144,24 @@ def _token_do_env(caminho: Path) -> str | None:
     return None
 
 
+# O estado completo sonda o Home Assistant (até 8 s por sonda) e o diagnóstico
+# do gateway: caro demais para cada turno de voz, que espera no máximo 4 s.
+# Fica em cache por CACHE_S; o "rápido" responde do arquivo, e só repete o
+# último estado completo se ele tiver no máximo FRESCO_S.
+CACHE_S = 20.0
+FRESCO_S = 120.0
+
+
 class Casa:
     def __init__(self, http_casa: httpx.Client | None = None,
-                 http_gateway: httpx.Client | None = None, chave_gateway: str | None = None) -> None:
+                 http_gateway: httpx.Client | None = None, chave_gateway: str | None = None,
+                 agora=time.monotonic) -> None:
         self.http = http_casa or httpx.Client(timeout=10.0)
         cabecalhos = {"Authorization": f"Bearer {chave_gateway}"} if chave_gateway else {}
         self.gateway = http_gateway or httpx.Client(base_url="http://127.0.0.1:3888", timeout=10.0,
                                                     headers=cabecalhos)
+        self._agora = agora
+        self._ultimo: tuple[float, dict[str, Any]] | None = None
 
     # ── config ───────────────────────────────────────────────────────────────
     def _config(self) -> dict:
@@ -214,11 +226,25 @@ class Casa:
         return {"devices_visible": not sem, "reachable": True}
 
     # ── o que o painel vê ────────────────────────────────────────────────────
-    def estado(self) -> dict[str, Any]:
+    def estado(self, rapido: bool = False) -> dict[str, Any]:
+        """O estado da casa. `rapido` não sonda nada: responde do arquivo, e
+        repete o último estado completo se ele for recente — senão "unknown"."""
+        agora = self._agora()
         dados = self._config()
         url = self._url_configurada(dados)
         token = _token_do_env(ARQUIVO_ENV)
         configurada = url is not None
+        if rapido or (self._ultimo is not None and agora - self._ultimo[0] < CACHE_S):
+            base = {"configured": configurada, "url": url, "token_present": bool(token),
+                    "home_assistant": None, "gateway": None, "voice_control": voz_liberada()}
+            if not configurada:
+                return dict(base, state="not_configured")
+            if self._ultimo is not None and agora - self._ultimo[0] < (FRESCO_S if rapido else CACHE_S):
+                anterior = self._ultimo[1]
+                return dict(base, home_assistant=anterior.get("home_assistant"), gateway=anterior.get("gateway"),
+                            state=anterior.get("state", "unknown"))
+            if rapido:
+                return dict(base, state="unknown")
         ha = self._sondar(url, token or "") if configurada else None
         gw = self._gateway()
         if not configurada:
@@ -229,9 +255,14 @@ class Casa:
             estado = "ok"
         else:
             estado = "pending"
-        return {"configured": configurada, "url": url, "token_present": bool(token),
-                "home_assistant": ha, "gateway": gw, "voice_control": voz_liberada(),
-                "state": estado}
+        completo = {"configured": configurada, "url": url, "token_present": bool(token),
+                    "home_assistant": ha, "gateway": gw, "voice_control": voz_liberada(),
+                    "state": estado}
+        self._ultimo = (agora, completo)
+        return completo
+
+    def _invalidar(self) -> None:
+        self._ultimo = None
 
     def configurar(self, url: str, token: str) -> dict[str, Any]:
         url = str(url or "").strip().rstrip("/")
@@ -253,10 +284,12 @@ class Casa:
         _gravar_env(ARQUIVO_ENV, token)
         self._gravar_config(dados)
         self._reiniciar()
+        self._invalidar()
         log.info("casa: Home Assistant configurado em %s (versão %s)", url, sonda.get("version"))
         return self.estado()
 
     def remover(self) -> dict[str, Any]:
+        self._invalidar()
         dados = self._config()
         hw = dados.get("hardware")
         if isinstance(hw, dict):
@@ -308,6 +341,7 @@ class Casa:
         """Liga ou desliga o controle da casa por voz: muda a lista branca do
         modo restrito no gateway e guarda a escolha, para `modo.garantir` não a
         desfazer no próximo arranque."""
+        self._invalidar()
         if liberar and self._url_configurada() is None:
             raise ErroCasa("not_configured")
         r = self.gateway.get("/api/modes/custom", timeout=10.0)

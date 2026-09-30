@@ -3,10 +3,10 @@ Description=Garra Reachy — companion (administra a voz e a conexão com o rob�
 Documentation=https://github.com/GarraIA/garra-reachy-mini
 After=network-online.target
 Wants=network-online.target
-# Cinco quedas em cinco minutos = problema real; em [Unit], porque em
-# [Service] o systemd ignora estas chaves.
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# Sem limite de reinícios: o companion é o único caminho do robô ao cérebro, e
+# cinco quedas rápidas (uma porta ocupada por um teste manual) o deixariam
+# `failed` até alguém rodar reset-failed. Em [Unit], onde o systemd lê isto.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

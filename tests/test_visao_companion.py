@@ -28,7 +28,7 @@ PERGUNTA = "o que você está vendo?"
 
 
 def prefs(**mudancas) -> visao.Preferencias:
-    base = dict(provedor="auto", local_endpoint="http://ollama.local:11434",
+    base = dict(provedor="auto", local_endpoint="http://127.0.0.1:11434",
                 local_modelo="qwen2.5vl:7b", nuvem_modelo="google/gemini-3.8-flash",
                 nuvem_permitida=False)
     base.update(mudancas)
@@ -39,7 +39,12 @@ class Ollama:
     """Um Ollama de mentira: sabe quais modelos tem e o que cada um enxerga."""
 
     def __init__(self, modelos=None, resposta="Uma mesa com um copo.", falha=None, residentes=None) -> None:
-        self.modelos = modelos if modelos is not None else {"qwen2.5vl:7b": ["completion", "vision"]}
+        self.modelos = modelos if modelos is not None else {
+            "qwen2.5vl:7b": ["completion", "vision"],
+            "qwen3-embedding:0.6b": ["embedding"],
+            "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL": ["completion"],
+            "llama3.1:8b": ["completion", "tools"],
+        }
         self.resposta, self.falha = resposta, falha
         self.pedidos: list[dict] = []           # só /api/chat: o que levou imagem
         self.cargas: list[dict] = []            # /api/generate sem prompt: só carregar
@@ -59,7 +64,8 @@ class Ollama:
         if request.url.path == "/api/ps":
             return httpx.Response(200, json={"models": self.residentes})
         if request.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": [{"name": m, "size": int(5.97e9)} for m in self.modelos]})
+            return httpx.Response(200, json={"models": [{"name": m, "size": int(5.97e9), "digest": f"d-{m}"}
+                                                        for m in self.modelos]})
         if request.url.path == "/api/show":
             nome = json.loads(request.content)["model"]
             if nome not in self.modelos:
@@ -100,9 +106,12 @@ class OpenRouter:
 GiB = 2 ** 30
 
 
-def residente(nome: str, total_gb: float, vram_gb: float, ctx: int = 4096) -> dict:
-    return {"name": nome, "model": nome, "size": int(total_gb * GiB), "size_vram": int(vram_gb * GiB),
-            "context_length": ctx, "expires_at": "2026-09-30T10:00:00-04:00"}
+def residente(nome: str, total_gb: float | None, vram_gb: float, ctx: int = 4096, digest: str | None = None) -> dict:
+    m = {"name": nome, "model": nome, "size_vram": int(vram_gb * GiB), "digest": digest or f"d-{nome}",
+         "context_length": ctx, "expires_at": "2026-09-30T10:00:00-04:00"}
+    if total_gb is not None:
+        m["size"] = int(total_gb * GiB)
+    return m
 
 
 HERA_27B = residente("hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL", 20.2, 11.2, 32768)
@@ -110,7 +119,7 @@ EMBEDDING = residente("qwen3-embedding:0.6b", 5.8, 5.8, 32768)
 
 
 def montar(ollama: Ollama | None = None, openrouter: OpenRouter | None = None, chave="sk-or-teste",
-           vram_livre_mb: int | None = 16000):
+           vram_livre_mb=16000):
     ollama = ollama or Ollama()
     openrouter = openrouter or OpenRouter()
     local = visao.Local(http=ollama.cliente(), vram_livre=lambda: vram_livre_mb)
@@ -365,8 +374,8 @@ def test_o_estado_diz_o_que_cada_provedor_consegue() -> None:
                                                  "qwen3.5:0.8b": ["completion"]}))
     estado = visao.estado(prefs(), local, nuvem)
     assert estado["local"] == {"reachable": True, "model_present": True, "vision": True,
-                               "endpoint": "http://ollama.local:11434", "model": "qwen2.5vl:7b",
-                               "loaded": None, "admissible": True, "blocker": None,
+                               "endpoint": "http://127.0.0.1:11434", "model": "qwen2.5vl:7b",
+                               "loaded": None, "ready": False, "admissible": True, "blocker": None,
                                "free_mb": 16000, "needed_mb": int(5.97e9) // 2 ** 20 + visao.MARGEM_VRAM_MB}
     assert estado["cloud"] == {"enabled": False, "key_present": True, "model": "google/gemini-3.8-flash"}
     assert estado["effective"] == "local"
@@ -399,3 +408,121 @@ def test_com_a_gpu_ocupada_o_efetivo_nao_e_o_local(permitida, efetivo) -> None:
     ollama = Ollama(residentes=[HERA_27B])
     _, _, local, nuvem = montar(ollama, vram_livre_mb=1900)
     assert visao.estado(prefs(nuvem_permitida=permitida), local, nuvem)["effective"] == efetivo
+
+
+
+# ─── achados da revisão (30/09, tarde) ───────────────────────────────────────
+def test_residente_so_em_parte_na_gpu_nao_e_pronto_e_nao_passa_pela_admissao() -> None:
+    """O runner de outro cliente, com ctx 4096 mas quase todo fora da GPU:
+    recarregar com todas as camadas exige VRAM que o 27B ocupa."""
+    ollama = Ollama(residentes=[HERA_27B, residente("qwen2.5vl:7b", 5.8, 0.4)])
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=100)
+    e = local.estado(prefs())
+    assert e["admissible"] is False and e["blocker"].startswith("hf.co/unsloth")
+    with pytest.raises(visao.ErroDeVisao) as err:
+        visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+    assert err.value.codigo == "provider_busy" and ollama.pedidos == [] and ollama.cargas == []
+
+
+def test_o_proprio_runner_com_outro_contexto_libera_a_vram_dele_na_recarga() -> None:
+    ollama = Ollama(residentes=[residente("qwen2.5vl:7b", 5.8, 5.8, ctx=8192)])
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=1500)
+    assert local.estado(prefs())["admissible"] is True
+    assert visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem).provedor == "local"
+
+
+def test_o_modelo_residente_e_reconhecido_pelo_digest_mesmo_com_outro_nome() -> None:
+    ollama = Ollama(residentes=[residente("qwen2.5vl:latest", 5.1, 5.1, digest="d-qwen2.5vl:7b")])
+    _, _, local, _ = montar(ollama, vram_livre_mb=500)
+    e = local.estado(prefs())
+    assert e["loaded"] == "gpu" and e["admissible"] is True
+
+
+def test_modelo_de_conversa_medio_residente_nao_e_despejavel() -> None:
+    """Um 8B de conversa pode estar gerando por dezenas de segundos; esperar
+    por ele trava a fila igual. Despejável é embedding ou modelo minúsculo."""
+    ollama = Ollama(residentes=[residente("llama3.1:8b", 5.5, 5.5)])
+    _, _, local, nuvem = montar(ollama, vram_livre_mb=3000)
+    e = local.estado(prefs())
+    assert e["admissible"] is False and e["blocker"] == "llama3.1:8b"
+
+
+def test_residente_sem_tamanho_e_tratado_como_grande() -> None:
+    ollama = Ollama(residentes=[residente("misterio:1b", None, 1.0)])
+    _, _, local, _ = montar(ollama, vram_livre_mb=None)
+    assert local.estado(prefs())["admissible"] is False
+
+
+def test_nvidia_smi_so_vale_para_o_ollama_deste_pc() -> None:
+    """A VRAM que o nvidia-smi mede é a deste PC; com o Ollama em outra
+    máquina, decide só pelo que está residente lá."""
+    ollama = Ollama(residentes=[HERA_27B])
+    consultas = []
+    _, _, local, _ = montar(ollama, vram_livre_mb=16000)
+    local._vram_livre = lambda: consultas.append(1) or 16000
+    e = local.estado(prefs(local_endpoint="http://10.0.0.50:11434"))
+    assert consultas == [] and e["free_mb"] is None and e["admissible"] is False
+
+
+def test_livre_desconta_o_que_o_ollama_ja_contou() -> None:
+    """Durante a carga de um modelo o CUDA ainda mostra a VRAM livre; o total
+    menos o que os residentes ocupam segura a leitura atrasada."""
+    ollama = Ollama(residentes=[residente("qwen3-embedding:0.6b", 5.8, 18.0)])
+    _, _, local, _ = montar(ollama, vram_livre_mb=(16000, 24564))
+    e = local.estado(prefs())
+    assert e["free_mb"] == 24564 - 18 * 1024
+    assert e["admissible"] is (e["free_mb"] + 18 * 1024 >= e["needed_mb"])
+
+
+@pytest.mark.parametrize("saida,esperado", [("1000, 24564\n16000, 24564\n", (16000, 24564)), ("lixo", None), ("", None)])
+def test_vram_livre_le_todas_as_gpus_e_pega_a_mais_livre(saida, esperado) -> None:
+    visao._vram_cache.clear(); visao._nvidia.clear()
+    assert visao.vram_livre_mb(executar=lambda args, prazo: saida) == esperado
+
+
+def test_vram_livre_desiste_depois_de_um_nvidia_smi_travado() -> None:
+    visao._vram_cache.clear(); visao._nvidia.clear()
+    chamadas = []
+
+    def trava(args, prazo):
+        chamadas.append(1)
+        raise TimeoutError("nvidia-smi travou")
+
+    assert visao.vram_livre_mb(executar=trava) is None
+    visao._vram_cache.clear()
+    assert visao.vram_livre_mb(executar=trava) is None
+    assert chamadas == [1], "depois de travar uma vez, não chama de novo"
+    visao._nvidia.clear()
+
+
+def test_modelo_ja_pronto_na_gpu_nao_paga_a_carga() -> None:
+    ollama = Ollama(residentes=[residente("qwen2.5vl:7b", 5.1, 5.1)])
+    _, _, local, nuvem = montar(ollama)
+    visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem)
+    assert ollama.cargas == [] and len(ollama.pedidos) == 1
+
+
+def test_sem_tempo_de_sobra_a_nuvem_nem_comeca() -> None:
+    """Um prazo só para a cadeia inteira: o robô desiste em 50 s, e subir o
+    quadro para a nuvem depois disso é mandar a imagem para ninguém."""
+    ollama = Ollama(falha="timeout")
+    _, openrouter, local, nuvem = montar(ollama)
+    with pytest.raises(visao.ErroDeVisao) as e:
+        visao.descrever(JPEG, PERGUNTA, prefs(nuvem_permitida=True), local, nuvem, prazo_s=0.01)
+    assert e.value.codigo == "timeout" and openrouter.pedidos == []
+
+
+def test_o_prazo_restante_limita_a_espera_da_descricao() -> None:
+    vistos = []
+    ollama = Ollama()
+    original = ollama.handler
+
+    def handler(request):
+        if request.url.path == "/api/chat":
+            vistos.append(request.extensions.get("timeout", {}).get("read"))
+        return original(request)
+
+    ollama.handler = handler          # antes de montar: o cliente captura o handler
+    _, _, local, nuvem = montar(ollama)
+    visao.descrever(JPEG, PERGUNTA, prefs(), local, nuvem, prazo_s=12.0)
+    assert vistos and vistos[0] <= 12.0

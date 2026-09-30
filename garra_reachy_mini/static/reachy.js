@@ -162,6 +162,15 @@ function pintarStatus(s) {
   ).join('');
 }
 
+// No máximo uma releitura completa a cada 10 s puxada por evento.
+let ultimaReleitura = 0;
+function atualizarStatusLogo() {
+  const agora = Date.now();
+  if (agora - ultimaReleitura < 10000) return;
+  ultimaReleitura = agora;
+  atualizarStatus();
+}
+
 async function atualizarStatus() {
   try { pintarStatus(await api('/api/robot/status')); }
   catch (e) { pill($('p-conexao'), false, t('ws.api_fora'), 'danger'); }
@@ -197,9 +206,14 @@ function tratarEvento(e) {
       // câmera, a voz, o chat e os recursos só vêm em GET /api/robot/status.
       // Pintar o evento sozinho apagava tudo isso — medido no robô em 30/09:
       // a cada ação a lista mostrava "câmera indisponível" e "sem escuta".
-      pintarStatus({ ...(estado.status || {}), ...e }); break;
+      pintarStatus({ ...(estado.status || {}), ...e });
+      // Câmera, voz, serviços e recursos só vêm pela rota: relê, sem martelar.
+      atualizarStatusLogo(); break;
     case 'robot.services':
-      pintarServicos(e); break;
+      // Guarda junto do status, senão o próximo `robot.status` repinta a faixa
+      // com a lista velha.
+      estado.status = { ...(estado.status || {}), services: e.services };
+      pintarServicos(estado.status); break;
     case 'robot.action.started':
       $('p-estado').className = 'pill accent';
       $('p-estado').textContent = e.action;
@@ -1041,15 +1055,17 @@ function pintarVisaoEstado(d) {
     // Pronto na GPU, carrega no primeiro pedido, ou a GPU está com outro
     // modelo grande — e aí a visão local espera, sem entrar na fila de ninguém.
     const curto = (n) => String(n || '').split('/').pop().split(':')[0].slice(0, 28);
+    // "Ocupada" antes de "pronta": um runner só em parte na GPU não está pronto,
+    // e o que conta é o que a ponte faria agora (`admissible`).
     const textoLocal = !l.reachable ? t('visao.erro_provider_offline')
       : !l.model_present ? t('visao.erro_model_missing')
       : !l.vision ? t('visao.erro_model_without_vision')
-      : l.loaded === 'gpu' ? t('visao.pronto_gpu', { modelo: l.model || '' })
-      : !l.admissible ? t('visao.gpu_ocupada', { quem: curto(l.blocker) })
+      : !l.admissible ? (l.blocker === '?' ? t('visao.ollama_sem_ps') : t('visao.gpu_ocupada', { quem: curto(l.blocker) }))
+      : l.ready ? t('visao.pronto_gpu', { modelo: l.model || '' })
       : t('visao.carrega_no_pedido', { modelo: l.model || '' });
-    const okLocal = !!(l.reachable && l.model_present && l.vision && (l.admissible || l.loaded === 'gpu'));
+    const okLocal = !!(l.reachable && l.model_present && l.vision && l.admissible);
     itens.push(item(t('visao.estado_local'), textoLocal, okLocal));
-    visaoCarregada = l.loaded === 'gpu';
+    visaoCarregada = !!l.ready;
     const n = p.cloud || {};
     const textoNuvem = !n.enabled ? t('visao.nuvem_desligada')
       : !n.key_present ? t('visao.erro_auth_failed') : (n.model || t('visao.pronto'));
@@ -1125,9 +1141,10 @@ function erroDaPonte(e, prefixo) {
   return texto;
 }
 
-async function carregarCasa() {
+async function carregarCasa(rapido = false) {
   try {
-    pintarCasa(await api('/api/robot/casa/estado'));
+    // `rapido` não sonda o Home Assistant: é o do resumo do INÍCIO.
+    pintarCasa(await api(`/api/robot/casa/estado${rapido ? '?rapido=1' : ''}`));
   } catch (e) {
     integracoes.casa = null;
     if (e.status === 404 || e.status === 405) { $('casa-bloco').hidden = true; return; }
@@ -1341,15 +1358,20 @@ async function chamadaFamilia(caminho, metodo, corpo) {
   } catch (e) { registrarLog(`${t('familia.titulo')}: ${erroDaPonte(e, 'familia')}`, 'err'); }
 }
 
-async function carregarFamilia() {
+async function carregarFamiliaEstado() {
   try {
     pintarFamilia(await api('/api/robot/familia/estado'));
+    return true;
   } catch (e) {
     integracoes.familia = null;
-    if (e.status === 404 || e.status === 405) { $('familia-bloco').hidden = true; return; }
+    if (e.status === 404 || e.status === 405) { $('familia-bloco').hidden = true; return false; }
     pill($('p-familia'), false, erroDaPonte(e, 'familia'), 'danger');
-    return;
+    return false;
   }
+}
+
+async function carregarFamilia() {
+  if (!(await carregarFamiliaEstado())) return;
   try {
     const d = await api('/api/robot/familia/perfis');
     pintarPerfis(d.profiles || []);
@@ -1737,7 +1759,7 @@ function ligar() {
 // O resumo do INÍCIO com o estado de verdade: só os `estado` (leves), uma vez
 // no arranque — nada de player da Spotify nem lista de aparelhos aqui.
 async function carregarResumo() {
-  await Promise.allSettled([carregarCasa(), estadoDaMusicaSo(), carregarFamilia()]);
+  await Promise.allSettled([carregarCasa(true), estadoDaMusicaSo(), carregarFamiliaEstado()]);
   pintarResumo();
 }
 
