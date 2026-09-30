@@ -69,26 +69,72 @@ citado no envelope do pedido, como o contexto do ambiente.
   LAN** inválido; o caminho viável é OAuth no companion (PC) com loopback, e o robô
   usar o companion. A política do Spotify restringe controle por assistente de voz.
 
-## 3. Arquitetura escolhida
+## 2.4 Decisões do Michel (30/09, por pergunta fechada)
+
+1. **Publicação:** nada vai ao GitHub (push/merge/tag/release) nem ao Space
+   público antes de a v1.4.1 estar completa e validada; aí um pedido único de OK.
+   O alvo continua **v1.4.1** (não 1.5.0). Os 13+ commits locais ficam.
+2. **GarraRUST:** estritamente **só leitura** (checkout de outro agente,
+   `feat/1434-presets`). `device_read/device_execute = no_devices` e `bash =
+   not_configured` são **verdade**, não defeito; nada de enfraquecer. O que o core
+   precisaria mudar fica registrado na seção 8 como handoff. O Reachy **não
+   duplica** registro de hardware, gates, capability registry nem dono de config.
+3. **Visão:** local **e** nuvem, com local por padrão; nuvem desligada de fábrica e
+   só com opt-in explícito e aviso; nunca subir um quadro em silêncio porque o
+   local falhou; reaproveitar o `FrameHub`; nunca em laço; distinguir stream,
+   cena, seguir-rosto e reconhecer família; tratar câmera parada, quadro velho,
+   provedor local fora, modelo sem visão, timeout, imagem inválida, nuvem
+   desligada, chave recusada; nunca inventar; testes de dois quadros → duas
+   análises e de falha que não reaproveita; nada de imagem em log, evento, Git,
+   fixture, captura de tela ou crash report.
+4. **Frentes:** abrir Casa, Spotify e Família; credencial ausente **não** é
+   licença para pular implementação. Casa pelo `DeviceRegistry`/gates do Garra;
+   Spotify até a fronteira real de autorização, sem furar a política de voz por
+   outro componente; Família local, consentida, com apagar e "desconhecido", e
+   **nunca** como autorização.
+
+## 3. Arquitetura entregue (commits `a208b72` visão · `14bd432` casa · `fd4096e`
+## Spotify · `ba2c974` família · `5ed595a` painel)
 
 - **Nada de framework novo.** A página continua HTML/JS/CSS servida pelo app.
-- **Visão:** `POST /api/robot/vision/describe` no app → pega `FrameHub.instantaneo`
-  (idade máxima 2 s, senão captura fresca ou erro `stale_frame`) → manda o JPEG ao
-  companion (`POST /api/olhar`, token da ponte) → companion descreve com o modelo
-  de visão configurado (**local por Ollama quando houver; nuvem só com
-  `vision_cloud_enabled` ligado e dito na dica**) → texto volta ao app → entra no
-  envelope como bloco `[O QUE A CÂMERA VÊ — <hora>]` citado (`> `), não confiável.
-  Por voz: pedido cujo texto casa "o que (você) (está|tá) vendo / na sua frente /
-  olha isso" dispara a captura antes do cérebro.
-- **Casa:** pelo `garraia-hardware` (adapter `home_assistant`) — configurado no
-  gateway, exposto ao agente por `device_read/device_execute`, com os gates. O painel
-  do robô só **mostra e aciona pela ponte**, não cria registro paralelo.
-- **Spotify:** OAuth Authorization Code + PKCE no companion (PC), redirect
-  `http://127.0.0.1:<porta>/callback` só do navegador do PC; tokens no PC (0600);
-  o robô consulta/aciona pelo companion. Controle por voz **bloqueado** até haver
-  autorização aplicável.
-- **Família:** serviço local no PC (embeddings ArcFace/InsightFace ONNX) com base
-  cifrada fora do repo; app só captura amostras guiadas e pergunta ao serviço.
+- **Visão:** `visao.py` no robô (`pede_visao`, `Olho.olhar` = um quadro fresco do
+  `FrameHub`, ≤ 2 s) → `POST /api/olhar` na ponte (base64, token) →
+  `companion/visao.py` (`Local` = Ollama `qwen2.5vl:7b`; `Nuvem` = OpenRouter, só
+  com `nuvem_permitida`; ordem auto = local e depois nuvem **se permitida**) →
+  texto volta e entra no envelope como `[O QUE A CÂMERA VÊ — quadro capturado às
+  HH:MM:SS …]` citado; falha vira `[CÂMERA — não há imagem válida agora: motivo]`.
+  Eventos `vision.*` levam só contagens. Painel: `GET /api/robot/vision/status`,
+  `POST /api/robot/vision/analyze`.
+- **Casa:** `companion/casa.py` grava `hardware.home_assistant {url, token_env}` no
+  `config.yml` do gateway (backup + reinício) e o token em `garraia.env` (0600);
+  `estado()` = not_configured/pending/ok/broken (sonda o HA e lê
+  `tools.capabilities`); `entidades()` com risco R0–R3 por domínio; `voz(liberar)`
+  edita a whitelist do modo `reachy-voz` (`device_list/read/execute`) e persiste o
+  opt-in. Rotas `/api/casa/*` na ponte e `/api/robot/casa/*` no robô. O painel só
+  configura e mostra; quem executa é o modelo pelo gateway, com os gates dele.
+- **Spotify:** `companion/musica.py` — PKCE S256 sem secret, redirect
+  `http://127.0.0.1:8125/spotify/callback` (loopback, como a regra exige),
+  tokens em `~/.config/garra-reachy/spotify.json` 0600, refresh 60 s antes,
+  `dispositivos/reproducao/acionar`; `servidor.py` faz `/spotify/conectar` e
+  `/spotify/callback` só no navegador do PC. Por voz e no chat o pedido de
+  controle é **recusado antes do modelo** (`musica.RECUSA_POR_VOZ`, política
+  III.3) e nenhum dado da Spotify vai ao modelo (III.14).
+- **Família:** `companion/rostos.py` (perfis com consentimento; menor exige
+  responsável; só vetor SFace, cifrado Fernet em `~/.config/garra-reachy/rostos`
+  0700/0600; qualidade da amostra; limiar 0,45 + margem 0,10 → "desconhecido";
+  apagar leva os vetores) + `tools/servidor_rostos.py` (YuNet+SFace, OpenCV, CPU,
+  ~7 ms, **só 127.0.0.1:8127**, unidade `garra-reachy-faces.service`) +
+  `companion/familia.py` e `/api/rostos/*` na ponte + `garra_reachy_mini/familia.py`
+  no robô (`pede_reconhecer`, um quadro fresco, `family_recognition_enabled`
+  desligado de fábrica, eventos `family.*` só com contagens, bloco
+  `[PESSOAS RECONHECIDAS …]` com o aviso "não diz quem FALA e não autoriza").
+- **Painel:** cinco telas com endereço (`#inicio … #ajustes`, `#controle/casa`),
+  nav no topo grudado no desktop e barra inferior no celular (5 itens, 44 px),
+  STOP sempre à vista, cartões novos Visão/Casa/Música/Família/Diagnóstico.
+- **Diagnóstico:** `GET /api/diagnostico` na ponte repassa **só**
+  `id/label/status/detail/next_step` do `/api/diagnostics` do gateway; o painel
+  desmonta a frase do `tools.capabilities` em itens (nome, origem, estado,
+  motivo, ação) e separa "não configurado" de "indisponível".
 
 ## 4. Dependências
 
@@ -112,19 +158,23 @@ citado no envelope do pedido, como o contexto do ambiente.
   hoje continuam (suíte de testes do painel verde).
 - Casa/Spotify/Família: ver cada frente ao ser aberta.
 
-## 6. Estado
+## 6. Estado (30/09, 02:40)
 
-| Item | Estado | Evidência |
+| Requisito | Estado | Evidência |
 |---|---|---|
-| Linha de base | feito | seção 1 |
-| Registry — causas | feito (config, não código) | seção 2.1 |
-| Registry — apresentação no core | **bloqueado** (repo de outro agente) | seção 8 |
-| Visão | a fazer | — |
-| Nova página | a fazer | — |
-| Família | a fazer, **pede decisão** | — |
-| Casa | a fazer, **pede Home Assistant/credencial** | — |
-| Spotify | a fazer, **pede app de desenvolvedor** | — |
-| Publicação v1.4.1 | **bloqueado pelo OK do Michel**; e o que está pronto (voz) já é 1.4.1 — o que a missão pede cabe numa 1.5.0 | — |
+| Registry — causas de cada item | feito | §2.1 (config, não código); `tools.capabilities` = 11 visíveis · `device_*` (no_devices) · `bash` (not_configured) |
+| Registry — apresentação item a item no painel | **implementado + validado em teste** | `test_painel_telas.py::test_itens_do_registro_leem_a_frase_do_gateway`; rota viva: `GET :8126/api/diagnostico` → 22 checks |
+| Registry — agregação no core | **bloqueado (handoff, §8)** | GarraRUST só leitura |
+| Visão local | **implementado + validado real (PC)** | `qwen2.5vl:7b` descreveu `cena1/cena2` (30/09 00:43); `test_visao*`, `test_ponte_visao` |
+| Visão nuvem opt-in | implementado + validado em teste | `OPENROUTER_API_KEY` copiada ao `companion.env` (30/09); chamada real fica para a validação no robô |
+| Visão por voz/texto no robô | implementado; **validação real pendente** (instalar RC) | `test_visao_no_laco.py` |
+| Casa | implementado + validado em teste (fakes de HA e gateway) | `test_casa_*`; real **bloqueado**: não há Home Assistant configurado nesta casa |
+| Spotify | implementado até a fronteira de autorização; validado em teste | `test_musica_*`; real **bloqueado**: sem Client ID (app de desenvolvedor do Michel) |
+| Família | implementado + serviço real ativo no PC | `garra-reachy-faces.service` ativo, `/saude` ok, 0 perfis; real **bloqueado pelo consentimento** (cadastro guiado pelo painel, com o Michel) |
+| Painel 5 telas | **implementado + validado real (Chrome headless)** | 320/390/768/1280/1920 × 7 telas: 0 rolagem horizontal, 0 alvo < 44 px no toque, 0 erro JS; capturas em `~/.local/state/garra-reachy/validacao-1.11.0/2026-09-30-painel/` |
+| Suíte | 1502 passed, 1 skipped | `pytest -q` |
+| RC no robô | **a fazer** | `instalar_rc.sh` |
+| Publicação v1.4.1 | **bloqueado pelo OK único do Michel** | decisão 1 |
 
 ## 7. Validação (comandos)
 
@@ -135,19 +185,40 @@ bash ~/.local/state/garra-reachy/validacao-1.11.0/2026-09-29-noite/instalar_rc.s
 curl -s http://10.0.0.142:8042/api/robot/status | jq .version               # o que está no robô
 ```
 
-## 8. Bloqueios externos e recados
+## 8. Bloqueios externos e handoff
 
-- **Core (`GarraRUST`, outro agente):** o check `tools.capabilities` agrega como
-  `warning` itens `not_configured`/`unavailable` de integrações opcionais, e o
-  status global vira "Atenção" sem nada quebrado. Sugestão: `warning` só para
-  `unhealthy` e para `unavailable` de integração **configurada**; opcional não
-  configurada = `ok` com detalhe. Nada foi alterado lá.
-- **Michel:** publicar (GitHub/Space público); Home Assistant existe?; app de
-  desenvolvedor do Spotify; consentimento e alcance do reconhecimento da família;
-  imagens da câmera podem ir para a nuvem ou só local.
+### 8.1 Handoff ao core (`GarraRUST`, outro agente — nada foi alterado lá)
+
+Requisito de integração exato, na ordem em que o painel do robô tropeça:
+
+1. `tools.capabilities` agrega como `warning` itens `not_configured`/`unavailable`
+   de integrações **opcionais**; o status global vira "Atenção" sem nada quebrado.
+   Pedido: `warning` só para `unhealthy` e para `unavailable` de integração
+   **configurada**; opcional não configurada = `ok` com detalhe.
+2. Um endpoint **estruturado** do registro (lista de `{name, source, state,
+   reason, next_step}`) em vez da frase em `detail` — hoje o painel a desmonta com
+   regex (`itensDoRegistro`), que é frágil por construção.
+3. Rotas HTTP de dispositivos para painéis (`list/state/execute`) com os mesmos
+   gates das tools; hoje só existem `device_list/read/execute` como tools.
+4. Confirmação de estado depois de `device_execute` (ler de volta e devolver).
+5. `unhealthy` quando o Home Assistant configurado cai (hoje some em silêncio).
+6. Allowlist de exposição de entidades (o que o modelo pode ver/acionar).
+7. Aplicar `hardware.*` sem reinício completo do gateway (hoje `casa.configurar`
+   reinicia o serviço e o painel espera 90 s).
+
+### 8.2 Do Michel
+
+- **Publicar** (GitHub/Space público): OK único no fim.
+- **Home Assistant:** não há um configurado nesta casa; a tela Casa fica em
+  `not_configured` até existir endereço + token.
+- **Spotify:** Client ID de um app de desenvolvedor (redirect
+  `http://127.0.0.1:8125/spotify/callback`), conta Premium para controlar.
+- **Família:** cadastro só com consentimento, pelo painel (Ajustes › Família).
 
 ## PRÓXIMA AÇÃO EXATA
 
-Perguntar ao Michel as quatro decisões da seção 8 e, sem esperar por elas,
-implementar a visão pela câmera com modelo local-primeiro (TDD, começando por
-`FrameHub` → rota → companion → envelope).
+Publicar o RC no Space privado, instalar no robô por estado
+(`instalar_rc.sh`), validar de verdade: "o que você está vendo?" por voz e pelo
+chat, regressão de voz/frase/relógio/câmera/apps/STOP, o painel no celular,
+e o Diagnóstico com o gateway de verdade. Depois: relatório final e o pedido
+único de OK para publicar.

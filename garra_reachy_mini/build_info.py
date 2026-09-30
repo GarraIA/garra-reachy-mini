@@ -69,6 +69,18 @@ CAPACIDADES: dict[str, bool] = {
     "voice_detector_status": True,
     # Relógio (`clock_enabled`, `clock_timezone`): a hora vai com o pedido.
     "clock": True,
+    # Visão sob demanda (`vision_*`, /api/robot/vision/*): um quadro por pedido,
+    # descrito no companion; nuvem só com opt-in.
+    "vision": True,
+    # Casa, música e família pela ponte (/api/robot/casa|musica|familia/*). O
+    # painel mostra o que a ponte responde; `home` e `music` dependem do
+    # companion e do que a pessoa configurou, e o registro diz qual é qual.
+    "home": True,
+    "music": True,
+    "family": True,
+    # Diagnóstico do gateway (GET /api/robot/diagnostico) e as cinco telas.
+    "diagnostics": True,
+    "panel_screens": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

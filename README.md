@@ -62,6 +62,21 @@ two optional pieces that are not, with what to do about each.
   run yourself (see [Voice](#voice-optional))
 - **Ambient behaviour** — subtle head movement while listening, antennas while
   thinking, audio-reactive wobbling while speaking
+- **Vision on demand (1.4.1)** — "what do you see?" describes one fresh camera
+  frame through a vision model on your computer; local by default, cloud only
+  by explicit opt-in (see [Vision](#vision-141-off-by-default))
+- **Home automation through Garra (1.4.1)** — connect Home Assistant to the
+  gateway from the panel; the gateway's own device registry and risk gates do
+  the work, and voice control of devices is opt-in
+- **Spotify (1.4.1)** — connect your account from the computer, see where it
+  plays, control playback from the panel; no voice control, by Spotify's
+  policy (see [Music](#music-spotify-141))
+- **Family recognition (1.4.1)** — consent-based, local, encrypted, deletable;
+  "who is there?" answers with enrolled names or "unknown", and never uses a
+  face as authorization (see [Family](#family-recognition-141-off-by-default))
+- **Five screens** — HOME · CHAT · CONTROL (Robot · Home · Music) · APPS ·
+  SETTINGS, with a bottom bar on phones, the STOP button always in view, 320 px
+  without horizontal scrolling and 44 px touch targets
 
 ## Requirements
 
@@ -214,6 +229,80 @@ is it?" answerable. The time zone is an app setting, not the system's — the
 robot ships set to London — and the panel offers the browser's. The name of the
 zone is never sent.
 
+### Vision (1.4.1, off by default)
+
+*Settings › Vision.* With **Let the robot look when asked** on, a request that
+asks the robot to look ("what do you see?", "what am I holding?", "describe the
+room") captures **one** camera frame — no older than 2 s, from the same frame
+producer that feeds the panel, never in a loop — and sends it to the companion
+on your computer, which describes it with a vision model. The description is
+quoted to the model together with the capture time, so the answer is about
+*now*; if the camera is stopped, the frame is stale, the model is down, does
+not understand images, times out, or the cloud is off, the robot is told to say
+it cannot see right now — it never describes from memory.
+
+- **Provider:** *Automatic* tries the local model first; *Local* is Ollama on
+  the companion (`qwen2.5vl:7b` by default, `ollama pull qwen2.5vl:7b`);
+  *Cloud* is OpenRouter (`OPENROUTER_API_KEY` in
+  `~/.config/garra-reachy/companion.env`).
+- **Cloud is opt-in.** `vision_cloud_enabled` is the only switch that lets a
+  picture of your home leave it, and the panel shows the warning whenever it is
+  on. A local failure never falls back to the cloud silently.
+- **Test connection** and **Analyze current frame** are in the same card.
+
+### Home (Home Assistant, 1.4.1)
+
+*Control › Home.* Enter the Home Assistant address and a long-lived access
+token. The token crosses once to the companion, is written to the gateway's
+environment and never comes back to the page or the model. The gateway (Garra)
+then sees your devices through its own device registry and risk gates; the
+robot does not keep a second registry and executes nothing from the panel. The
+state is one of *not configured / pending / connected / broken*, each explained.
+**Allow the robot to control devices by voice** is off by default; on, "turn
+on the living room light" goes through the gateway's tools and gates (low-risk
+actions run, riskier ones are refused by policy).
+
+### Music (Spotify, 1.4.1)
+
+*Control › Music.* Create an app at developer.spotify.com with the redirect URI
+`http://127.0.0.1:8125/spotify/callback`, save its Client ID in the panel, and
+connect the account by opening `http://127.0.0.1:8125/spotify/conectar` in a
+browser **on the computer that runs the companion** (Spotify only allows
+loopback redirects; the flow is Authorization Code with PKCE, no secret).
+Tokens stay on the computer (`~/.config/garra-reachy/spotify.json`, 0600). The
+panel shows what is playing and where, lists devices, and offers play, pause,
+next, previous, volume and transfer. Playback control needs Spotify Premium.
+
+**There is no voice control.** Spotify's developer policy forbids voice
+assistants, so "play some music" is refused before it reaches the model, and
+nothing from Spotify is sent to the model. Music plays on your Spotify
+devices, not on the robot.
+
+### Family recognition (1.4.1, off by default)
+
+*Settings › Family.* Enrolling someone requires their explicit consent (or a
+responsible adult's, for a minor); the panel records who consented and when.
+Then capture 3–5 samples from the robot's camera — the panel says why a sample
+is refused (no face, more than one, too small, blurry, too dark, too bright).
+Only a face signature (a 128-number vector) is kept, encrypted, in
+`~/.config/garra-reachy/rostos/` on the computer; no photo is stored, nothing
+goes to the cloud, nothing is in the repository, and deleting a profile deletes
+its signatures. With **Recognize enrolled family members when asked** on,
+"who is there?" compares one fresh frame with the enrolled profiles on the
+computer (a local YuNet + SFace service on 127.0.0.1:8127) and answers with
+names or "unknown" — below the similarity threshold, or with two candidates
+too close, the answer is *unknown* by rule. The vision model is never asked to
+guess a name; the text the model receives states that recognizing a face does
+**not** say who is speaking and does **not** authorize anything; events carry
+counts, never names.
+
+### Diagnostics (1.4.1)
+
+*Settings › Diagnostics* reads the gateway's Capability Registry and lists each
+capability with its name, origin, state, reason and next step, separating
+*not configured* (a choice) from *unavailable* (a fault), plus this panel's own
+integrations and the other gateway checks.
+
 ### Assistant identity (requires a Garra gateway)
 
 The assistant's display name and personality live in the **gateway's**
@@ -341,8 +430,19 @@ advice applies to the robot as a whole, not just to this app.
   personality you configure are part of the agent's context and are sent to
   the AI provider with each conversation — that is what they are for. Do not
   put anything in them you would not send to the provider.
-- **No face recognition.** The camera can *detect* a face for tracking, on the
-  robot; nothing identifies who it is, and no biometric data is stored.
+- **Camera frames leave the robot only for vision, and only when asked.** With
+  vision on, one frame per "what do you see?" goes to the companion on your
+  computer; it reaches a cloud provider **only** with the cloud switch on. The
+  frame is never logged, stored, or kept in events.
+- **Face recognition is off by default, consent-based and local.** Enrolment
+  stores an encrypted face signature on the computer, never a photo; profiles
+  can be deleted; recognition never identifies who is speaking and is never
+  used as authorization. Without enrolment the camera still only *detects* a
+  face for tracking, on the robot.
+- **Home Assistant tokens and Spotify tokens live on the computer**, 0600,
+  and never come back through the API or the panel.
+- **Nothing from Spotify reaches the model**, and voice control of Spotify is
+  not offered, by policy.
 - **On a wireless robot the panel is reachable by anyone on your network, with
   no token** — the same posture the robot itself already has. See below.
 

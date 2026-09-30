@@ -104,6 +104,82 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
 - O cartão da conversa deixou de pôr o divisor e a caixa do caderno na mesma
   linha do botão de esquecer.
 
+#### Nova experiência e integrações (30/09)
+
+- **Painel em cinco telas.** INÍCIO · CONVERSA · CONTROLE (Robô · Casa ·
+  Música) · APPS · AJUSTES, cada uma com endereço (`#controle/casa` abre na
+  tela certa e o "voltar" do celular funciona). No computador as abas ficam
+  no topo grudado, ao lado do STOP; no celular a mesma nav vira barra inferior,
+  com cinco itens e alvos de 44 px. Medido no Chrome em 320, 390, 768, 1280 e
+  1920 px: nenhuma tela rola na horizontal, nenhum alvo fica abaixo de 44 px
+  no toque, zero erro de JavaScript. Todos os controles antigos continuam
+  onde o código os procura; o caderno foi para CONVERSA e os ajustes da
+  conversa para AJUSTES.
+
+- **"O que você está vendo?"** (`vision_enabled`, desligado por padrão). Por
+  voz ou pelo chat, o robô pega **um** quadro da câmera de até 2 s — o mesmo
+  `FrameHub` que serve o painel, nunca um segundo laço — e o manda ao companion
+  no computador, que o descreve por um modelo de visão. Local por padrão
+  (Ollama, `qwen2.5vl:7b`); a nuvem (OpenRouter) só com `vision_cloud_enabled`,
+  que é o único interruptor que deixa uma imagem da casa sair dela, e o painel
+  mostra o aviso enquanto ele estiver marcado. A descrição entra no pedido
+  citada e com a hora da captura; câmera parada, quadro velho, modelo fora,
+  modelo sem visão, timeout, imagem inválida, nuvem desligada e chave recusada
+  viram "não estou conseguindo ver agora: motivo" — nunca uma descrição
+  inventada nem a da vez anterior. A imagem não vai a log, evento, disco nem
+  histórico. Painel: Ajustes › Visão, com testar conexão, analisar imagem atual,
+  estado por provedor e última análise.
+
+- **Casa (Home Assistant), pelo Garra.** Controle › Casa configura endereço e
+  token de longa duração; o token atravessa uma vez, vai para o ambiente do
+  gateway e não volta. O gateway passa a enxergar os aparelhos pelo seu
+  próprio registro e pelas suas portas de risco — o robô não cria um registro
+  paralelo nem executa nada pelo painel. Comandar por voz é opt-in
+  (`Deixar o robô comandar aparelhos por voz`), que libera `device_list/read/
+  execute` no modo restrito da voz; o resto continua recusado por política.
+  Estados: não configurada / pendente / conectada / quebrada, cada um dito.
+
+- **Música (Spotify), até onde a política deixa.** Controle › Música: Client
+  ID, conexão da conta pelo navegador **do computador** (loopback, como a
+  Spotify exige; `http://127.0.0.1:8125/spotify/conectar`), tokens no
+  computador (0600), onde está tocando, aparelhos, tocar/pausar/próxima/
+  anterior/volume/transferir. **Comando por voz não existe** — a política de
+  desenvolvedores da Spotify o proíbe para assistentes; "toca uma música" é
+  recusado antes de chegar ao modelo, e nada da Spotify vai ao modelo. A
+  música toca nos seus aparelhos Spotify, não no robô (a reprodução no próprio
+  hardware exige o eSDK, só para parceiros).
+
+- **Família: reconhecer quem consentiu** (`family_recognition_enabled`,
+  desligado por padrão). Ajustes › Família cadastra perfis com consentimento
+  explícito (menor só com responsável), captura 3–5 amostras pela câmera do
+  robô (com o motivo quando a amostra não serve: sem rosto, mais de um, longe,
+  tremida, escura, clara), ativa/desativa, recomeça, apaga em dois cliques e
+  testa. Fica **só** uma assinatura do rosto (vetor SFace), cifrada, em
+  `~/.config/garra-reachy/rostos` no computador — sem foto, nada na nuvem, nada
+  no repositório; apagar o perfil apaga as assinaturas. "Quem está aí?" compara
+  um quadro fresco com os perfis (serviço local YuNet + SFace em
+  127.0.0.1:8127, ~7 ms) e responde nome ou "desconhecido" — abaixo do limiar
+  ou com dois candidatos próximos demais é desconhecido, por regra. O modelo de
+  visão nunca é convidado a adivinhar nome. O bloco que vai ao modelo diz com
+  todas as letras que reconhecer um rosto **não** diz quem está falando e
+  **não** autoriza nada; eventos levam contagens, nunca nomes.
+
+- **Diagnóstico item a item.** Ajustes › Diagnóstico lê o Capability Registry
+  do gateway e mostra cada capacidade com nome, origem, estado, motivo e o que
+  fazer — separando "não configurado" (escolha) de "indisponível" (defeito) —
+  mais as integrações deste painel e os outros checks. O "11" some; o que
+  aparece é `device_read`/`device_execute` indisponíveis porque não há
+  aparelho registrado (conecte o Home Assistant) e `bash` não configurado de
+  propósito. A ponte ganhou `GET /api/diagnostico`, só leitura, só os campos
+  que a tela usa.
+
+- **Companion:** unidade `garra-reachy-faces.service` (serviço de rostos, só
+  loopback; o instalador cria o venv e baixa os dois modelos do opencv_zoo uma
+  vez), `OPENROUTER_API_KEY` opcional no `companion.env` para a visão em nuvem,
+  rotas `/api/olhar`, `/api/casa/*`, `/api/musica/*`, `/api/rostos/*`,
+  `/api/diagnostico`. `build_info.capabilities` anuncia `vision`, `home`,
+  `music`, `family`, `diagnostics`, `panel_screens`.
+
 ### Medido e não adotado
 
 - **Desligar o ganho automático da placa de áudio.** Com ele desligado e ganho
