@@ -1723,6 +1723,22 @@ function ligar() {
 
   // Diagnóstico.
   $('btn-diagnostico-atualizar').addEventListener('click', carregarDiagnostico);
+
+  // Atalhos de AJUSTES: rolam até o cartão, sem mexer no endereço (que é da tela).
+  for (const b of document.querySelectorAll('[data-ir]')) {
+    b.addEventListener('click', () => {
+      const alvo = $(b.dataset.ir);
+      const cartao = alvo && (alvo.closest('.card') || alvo);
+      if (cartao) cartao.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+}
+
+// O resumo do INÍCIO com o estado de verdade: só os `estado` (leves), uma vez
+// no arranque — nada de player da Spotify nem lista de aparelhos aqui.
+async function carregarResumo() {
+  await Promise.allSettled([carregarCasa(), estadoDaMusicaSo(), carregarFamilia()]);
+  pintarResumo();
 }
 
 // ─── arranque ────────────────────────────────────────────────────────────────
@@ -1742,6 +1758,7 @@ function ligar() {
   carregarContexto();
   carregarCaderno();
   carregarAgentes();
+  carregarResumo();
   const btnAgentes = $('btn-agentes-atualizar');
   if (btnAgentes) btnAgentes.addEventListener('click', carregarAgentes);
   conectarEventos();

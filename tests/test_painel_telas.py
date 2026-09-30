@@ -231,3 +231,26 @@ def test_o_painel_diz_se_a_visao_local_esta_pronta_carrega_ou_espera_a_gpu() -> 
     assert "l.loaded === 'gpu'" in trecho and "!l.admissible" in trecho
     for chave in ("visao.pronto_gpu", "visao.gpu_ocupada", "visao.carrega_no_pedido", "visao.carregando_e_olhando"):
         assert chave in JS and f"'{chave}':" in I18N, chave
+
+
+def test_a_protecao_contra_estouro_nao_anula_o_alvo_de_toque_dos_botoes() -> None:
+    """`.card * { min-width: 0 }` vinha depois e ganhava do `min-width: 44px`
+    dos botões no toque; medido no robô, ⏮/⏭ ficavam com 42 px."""
+    assert ".card, .card * { min-width: 0; }" not in CSS
+    assert ".card, .card *:not(button) { min-width: 0; }" in CSS
+
+
+def test_no_celular_a_camera_vem_primeiro_e_ajustes_tem_atalhos() -> None:
+    assert "@media (max-width: 760px) { .card.camera { order: -1; } }" in CSS
+    ajustes = HTML[HTML.index('id="tela-ajustes"'):HTML.index("</main>")]
+    for alvo in ("conversa-bloco", "visao-bloco", "familia-bloco", "diagnostico-bloco", "logs"):
+        assert f'data-ir="{alvo}"' in ajustes and f'id="{alvo}"' in HTML, alvo
+    assert "scrollIntoView" in JS
+
+
+def test_o_resumo_do_inicio_carrega_os_estados_leves_no_arranque() -> None:
+    trecho = JS[JS.index("async function carregarResumo"):]
+    trecho = trecho[:trecho.index("\n}\n")]
+    assert "carregarCasa()" in trecho and "estadoDaMusicaSo()" in trecho and "carregarFamilia()" in trecho
+    assert "carregarMusica()" not in trecho, "o arranque não pede player nem aparelhos à Spotify"
+    assert "carregarResumo();" in JS

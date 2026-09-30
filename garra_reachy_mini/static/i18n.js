@@ -632,6 +632,8 @@ const TEXTOS = {
     'visao.carrega_no_pedido': '{modelo} loads on the first request (a few seconds)',
     'visao.gpu_ocupada': 'GPU busy with another model ({quem}); local vision waits until it frees up',
     'visao.carregando_e_olhando': 'loading the model and looking…',
+    'atalhos.rotulo': 'Jump to',
+    'atalhos.diagnostico': 'Diagnostics',
   },
 
   pt: {
@@ -1254,6 +1256,8 @@ const TEXTOS = {
     'visao.carrega_no_pedido': '{modelo} carrega no primeiro pedido (alguns segundos)',
     'visao.gpu_ocupada': 'GPU ocupada por outro modelo ({quem}); a visão local espera ela liberar',
     'visao.carregando_e_olhando': 'carregando o modelo e olhando…',
+    'atalhos.rotulo': 'Ir para',
+    'atalhos.diagnostico': 'Diagnóstico',
   },
 };
 

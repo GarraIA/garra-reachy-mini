@@ -177,6 +177,13 @@ main { padding: 16px clamp(14px, 3vw, 28px) 40px; }
 /* Em tela larga a câmera ocupa duas colunas: é o que se quer ver grande, e
    o INÍCIO com quatro cartões de uma coluna deixava metade da tela vazia. */
 @media (min-width: 1100px) { .card.camera { grid-column: span 2; } }
+/* No celular a câmera vem primeiro: ela é o que se abre o painel para ver, e
+   ficava depois de catorze linhas de status (medido no robô, 320 px). */
+@media (max-width: 760px) { .card.camera { order: -1; } }
+
+/* Atalhos no topo de AJUSTES: a tela é longa no celular. */
+.atalhos { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.atalhos button { font-size: 0.8rem; padding: 6px 12px; border-radius: 999px; }
 
 /* ── navegação entre telas ───────────────────────────────────────────────── */
 /* No computador: uma fila de abas no rodapé do cabeçalho (que é sticky, então
@@ -544,7 +551,9 @@ body.estopped main { filter: saturate(0.65); }
   .card { padding: 14px 14px 16px; }
 }
 html, body { max-width: 100%; overflow-x: hidden; }
-.card, .card * { min-width: 0; }
+/* Botões ficam de fora: no toque eles têm mínimo de 44 px (medido no robô:
+   ⏮/⏭ da música saíam com 42). */
+.card, .card *:not(button) { min-width: 0; }
 code, pre { overflow-wrap: anywhere; }
 
 /* ── formulários ─────────────────────────────────────────────────────────── */
