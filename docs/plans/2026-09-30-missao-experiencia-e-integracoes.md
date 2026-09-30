@@ -158,25 +158,25 @@ citado no envelope do pedido, como o contexto do ambiente.
   hoje continuam (suíte de testes do painel verde).
 - Casa/Spotify/Família: ver cada frente ao ser aberta.
 
-## 6. Estado (30/09, 10:10 — robô de volta, validação em hardware)
+## 6. Estado (30/09, 10:50 — RC final validado no robô)
 
-| Requisito | Estado | Evidência |
+| Requisito | Estado | Evidência (em `~/.local/state/garra-reachy/validacao-1.11.0/2026-09-30-robo/`) |
 |---|---|---|
-| Registry — causas de cada item | feito | §2.1 (config, não código); `tools.capabilities` = 11 visíveis · `device_*` (no_devices) · `bash` (not_configured) |
-| Registry — apresentação item a item | **validado real no robô** | Ajustes › Diagnóstico renderizado pelo robô contra o gateway 0.4.7 (§11) |
+| Registry — causas de cada item | feito | §2.1; 11 visíveis · `device_*` (no_devices) · `bash` (not_configured) |
+| Registry — apresentação item a item | **validado real no robô** | §11; captura `final-34cddf9/ajustes-1920.png` |
+| Registry — "não tenho essa capacidade" | **corrigido e validado real** | luz/ventilador: "ainda não… o Home Assistant não foi conectado… painel, aba de controle da casa" (chat e voz); terminal: "por voz eu não faço esse tipo de tarefa" (`chat-capacidades*.log`) |
 | Registry — agregação no core | **handoff (§8.1)** | GarraRUST só leitura |
-| Smoke em hardware (página, câmera, apps, movimentos, expressões, STOP, TTS) | **validado real** | `validacao-1.11.0/2026-09-30-robo/smoke.log` |
-| Visão local — painel | **validado real** | fria 5,1 s, quente 1,8 s; 3 posições de cabeça → 3 quadros e 3 descrições diferentes (`visao-robo-3.log`) |
-| Visão local — chat | **validado real** | 2 cenas diferentes; "o que eu estou segurando?" → "não estou vendo ninguém" (sem inventar) |
-| Visão local — voz | **validado real** | "o que você está vendo?" / "o que tem na sua frente?" com cenas diferentes, visão 1,35–1,38 s (`voz-visao.log`) |
-| Visão — negativos | **validado real** | modelo inexistente → `model_missing`; endpoint fora → `provider_offline`; nuvem sem opt-in → `cloud_disabled`; desligada → `disabled`, e o chat diz que não vê |
-| Visão × GPU (Hera) | **resolvido por admissão** (§10) | testes com o 27B residente; incidente real das 08:50–09:30 como evidência |
-| Casa | implementado; validado real até a fronteira | onboarding com URL inválida/fora da casa/token curto/HA sem resposta → códigos certos; nada gravado; `device_*` segue `no_devices` (verdade). **Real: sem Home Assistant nesta casa** |
-| Spotify | implementado; validado real até a autorização | Client ID inválido/válido, erros sem conta (409), volume fora da faixa (400), `/spotify/conectar` → authorize com PKCE S256, redirect loopback, sem secret; callback com erro/`state` errado → 400; voz recusada (painel, chat e voz). **Real: precisa do Client ID do Michel** |
-| Família | implementado; validado real sem cadastrar ninguém | serviço de pé; reconhecer num quadro real (0 perfis → 0 rostos em 45–108 ms); consentimento, menor sem responsável, desativar, apagar, 404 depois; eventos só com contagens. **Cadastro real: fronteira do consentimento** |
-| Painel 5 telas no robô | **validado real** | 7 telas em 390 px: 0 rolagem, STOP e nav visíveis, status real; stream + trocas de aba + 5 recargas: 0 cliente de câmera sobrando |
-| Correções vindas do hardware | feitas, com teste | evento de status apagava câmera/voz; timeout/carga da visão; alvos mini 25→44 px; favicon; câmera 2 colunas no desktop |
-| Suíte | 1552 passed, 1 skipped; pyflakes limpo | |
+| Smoke em hardware | **validado real** | página, câmera, apps, movimentos limitados, expressões, STOP 207 ms e bloqueando até liberar, TTS, chat, configuração preservada na reinstalação (`smoke-final.log`) |
+| Visão local — painel/chat/voz | **validado real** | fria 5,1 s, quente 1,8 s; 3 cenas distintas; chat e voz com cenas diferentes; "o que eu estou segurando?" sem inventar (`visao-robo-3.log`, `voz-visao.log`) |
+| Visão — negativos | **validado real** | `model_missing`, `provider_offline`, `cloud_disabled`, `disabled`; o chat diz que não vê |
+| Visão × GPU (Hera) | **resolvido por admissão** (§10) | 37 testes da visão no PC; mutantes mortos |
+| Casa | implementado; real até a fronteira | onboarding com entradas inválidas → códigos certos, nada gravado; situação no envelope (acima). **Real: sem Home Assistant nesta casa** |
+| Spotify | implementado; real até a autorização | `spotify.log`; voz recusada pela política (painel, chat e voz). **Real: Client ID do Michel** |
+| Família | implementado; fluxo de cadastro validado pela UI real sem cadastrar ninguém | criar com consentimento, recusa de menor sem responsável, captura guiada → "nenhum rosto no quadro", desativar, persistência após reiniciar o serviço, apagar em dois cliques; pasta 0700/0600, nada no git (`familia-ui.log`). **Cadastro real: consentimento presencial** |
+| Painel 5 telas no robô | **validado real** | 5 larguras × 7 telas: 0 rolagem, 0 alvo < 44 px no toque, 0 cartão cortado, STOP visível, status real, 0 erro de JS; stream + 10 trocas de aba + 5 recargas → 0 cliente de câmera sobrando (`final-34cddf9/`) |
+| Correções vindas do hardware | feitas, com teste | status por evento, timeout/carga/admissão da visão, alvos mini e ⏮/⏭, câmera primeiro no celular, resumo real no INÍCIO, atalhos em AJUSTES, situação da casa |
+| Recursos | observação contínua | `recursos-rc-407b2dd.tsv` (1 h sob carga: FDs 62→63, threads em platô 49–50) e `recursos-final.tsv` (build final, em repouso) |
+| Suíte | 1589 passed, 1 skipped; pyflakes limpo | |
 | Publicação v1.4.1 | **bloqueado pelo OK único do Michel** | decisão 1 |
 
 ## 7. Validação (comandos)
@@ -322,10 +322,24 @@ intencional, sem sandbox** · integrações do painel: `vision` ok (robô),
 `home`/`music` não configuradas (companion), `family` desligada (companion).
 O pill global do gateway segue "Atenção" por causa da agregação no core (§8.1).
 
+## 12. Reversão
+
+- **Robô:** o build anterior bom é o RC `e27981eef8dc` (commit `41e9637`, a
+  1.4.1 de voz de 29/09). Para voltar: publicar esse commit no Space privado
+  (`git checkout 41e9637 && GARRA_SPACE=garra_reachy_mini_rc bash publicar.sh
+  privado`) e instalar por estado (`instalar_rc.sh`). A 1.3.1 pública segue no
+  Space público, intocada.
+- **PC:** `systemctl --user stop garra-reachy-faces` desliga o serviço de rostos
+  (perfis ficam em `~/.config/garra-reachy/rostos`, apagáveis); o companion
+  volta a um commit anterior com `git checkout <commit> -- companion/` e
+  `systemctl --user restart garra-reachy-companion`. A visão local não altera
+  nada no Ollama além de carregar o próprio modelo.
+- **Configuração do robô:** as chaves novas (`vision_*`,
+  `family_recognition_enabled`) são ignoradas por builds antigos; nada precisa
+  ser desfeito.
+
 ## PRÓXIMA AÇÃO EXATA
 
-Publicar o RC final (commit com este registro) no Space privado, instalar no
-robô por estado, repetir no build final: painel (5 telas × 5 larguras,
-capturas), visão fria/quente, família/casa/música até as fronteiras, e deixar
-a observação de recursos (robô + GPU) rodando antes do relatório e do pedido
-único de OK.
+Instalar o RC final (o commit deste registro) no robô, deixar a observação de
+recursos em repouso por pelo menos uma hora e pedir ao Michel, uma vez, o OK
+para publicar (§ publicação no relatório final).

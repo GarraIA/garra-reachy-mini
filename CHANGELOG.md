@@ -177,6 +177,14 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   seguintes. O painel diz "pronto na GPU", "carrega no primeiro pedido" ou
   "GPU ocupada por outro modelo".
 
+- **"Você consegue acender a luz?" com a resposta certa.** Medido no robô: o
+  modelo dizia "não tenho integração com os controles da casa". Agora um
+  pedido sobre aparelho (luz, tomada, ar, cortina…) leva a situação real do
+  controle da casa: o Garra tem, falta conectar o Home Assistant (Controle ›
+  Casa), ou está conectado com a voz desligada. Resposta medida no robô, por
+  chat e por voz: "ainda não está configurado porque o Home Assistant não foi
+  conectado no painel do robô".
+
 - **Diagnóstico item a item.** Ajustes › Diagnóstico lê o Capability Registry
   do gateway e mostra cada capacidade com nome, origem, estado, motivo e o que
   fazer — separando "não configurado" (escolha) de "indisponível" (defeito) —

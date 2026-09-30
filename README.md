@@ -266,7 +266,10 @@ robot does not keep a second registry and executes nothing from the panel. The
 state is one of *not configured / pending / connected / broken*, each explained.
 **Allow the robot to control devices by voice** is off by default; on, "turn
 on the living room light" goes through the gateway's tools and gates (low-risk
-actions run, riskier ones are refused by policy).
+actions run, riskier ones are refused by policy). When you ask about a device
+while the home is not connected (or voice control is off), the robot tells the
+model the real situation, so the answer is "not set up yet — connect Home
+Assistant under Control › Home" rather than "I can't do that".
 
 ### Music (Spotify, 1.4.1)
 
