@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import caderno as _caderno
-from . import envelope
+from . import envelope, relogio
 from .ambiente import MemoriaAmbiente
 
 _OPERACAO = {"+": "add", "-": "remove"}
@@ -87,7 +87,11 @@ class Acompanhamento:
                 utterances=len(falas),
                 span_s=max(0, int(agora - min(f.quando for f in falas))),
                 chars=sum(len(f.texto) for f in falas))
-        return envelope.compor(pedido, falas=falas, agora=agora, listas=listas)
+        hora = None
+        if conversa.get("clock_enabled"):
+            hora = relogio.por_extenso(relogio.agora(conversa.get("clock_timezone")))
+        return envelope.compor(pedido, falas=falas, agora=agora, listas=listas,
+                               relogio=hora)
 
     # ── a resposta ───────────────────────────────────────────────────────────
     def receber(self, resposta: str, conversa: dict,

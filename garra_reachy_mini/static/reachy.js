@@ -671,6 +671,9 @@ function pintarConversa(d) {
   $('conversa-wake').checked = c.wake_phrase_enabled === true;
   // A segunda escuta nasce ligada; o diagnóstico, desligado.
   $('conversa-wake-conferir').checked = c.wake_second_listen_enabled !== false;
+  $('conversa-wake-conferir-sempre').checked = c.wake_second_listen_always === true;
+  $('conversa-relogio').checked = c.clock_enabled === true;
+  $('conversa-relogio-fuso').value = c.clock_timezone ?? '';
   $('conversa-wake-diagnostico').checked = c.wake_diagnostics_enabled === true;
   pintarPerto();
   $('conversa-wake-texto').value = c.wake_phrase_text ?? 'Fala Garra';
@@ -689,7 +692,30 @@ function pintarConversa(d) {
   $('conversa-caderno').checked = c.notebook_enabled === true;
   sincronizarMestre();
   sincronizarWake();
+  sincronizarConferir();
   sincronizarContexto();
+  sincronizarRelogio();
+}
+
+// "Conferir sempre" só faz sentido com a conferência ligada.
+function sincronizarConferir() {
+  const pode = $('conversa-wake').checked && $('conversa-wake-conferir').checked;
+  $('conversa-wake-conferir-sempre').disabled = !pode;
+  $('linha-conversa-wake-conferir-sempre').style.opacity = pode ? '' : '0.55';
+}
+
+// O fuso deste navegador: quem abre o painel costuma estar onde o robô está.
+function fusoDaqui() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+  catch (e) { return ''; }
+}
+
+function sincronizarRelogio() {
+  const ligado = $('conversa-relogio').checked;
+  for (const linha of document.querySelectorAll('[data-conversa-relogio-sub]')) {
+    linha.style.opacity = ligado ? '' : '0.55';
+    for (const el of linha.querySelectorAll('input, button')) el.disabled = !ligado;
+  }
 }
 
 // O que o robô ouviu no lugar da frase — só o trecho parecido, que é tudo o
@@ -979,6 +1005,9 @@ function ligar() {
     wake_phrase_window_s: Number($('conversa-wake-janela').value),
     wake_phrase_session_max_s: Number($('conversa-wake-teto').value),
     wake_second_listen_enabled: $('conversa-wake-conferir').checked,
+    wake_second_listen_always: $('conversa-wake-conferir-sempre').checked,
+    clock_enabled: $('conversa-relogio').checked,
+    clock_timezone: $('conversa-relogio-fuso').value.trim(),
     wake_diagnostics_enabled: $('conversa-wake-diagnostico').checked,
     ambient_context_enabled: $('conversa-contexto').checked,
     ambient_context_window_s: Number($('conversa-contexto-janela').value),
@@ -995,10 +1024,23 @@ function ligar() {
   $('conversa-saida').addEventListener('change', sincronizarMestre);
   $('conversa-wake').addEventListener('change', () => {
     sincronizarWake();
+    sincronizarConferir();
     sincronizarContexto();
   });
   $('conversa-contexto').addEventListener('change', sincronizarContexto);
   $('conversa-wake-diagnostico').addEventListener('change', pintarPerto);
+  $('conversa-wake-conferir').addEventListener('change', sincronizarConferir);
+  $('conversa-relogio').addEventListener('change', () => {
+    // Ligou sem fuso: propõe o deste navegador. Fica no campo, à vista, e só
+    // vale depois de salvar.
+    if ($('conversa-relogio').checked && !$('conversa-relogio-fuso').value.trim()) {
+      $('conversa-relogio-fuso').value = fusoDaqui();
+    }
+    sincronizarRelogio();
+  });
+  $('btn-relogio-fuso-daqui').addEventListener('click', () => {
+    $('conversa-relogio-fuso').value = fusoDaqui();
+  });
   $('conversa-saida').addEventListener('change', (e) =>
     $('conversa-mudo-aviso').hidden = e.target.checked);
   $('conversa-contexto-janela').addEventListener('input', (e) =>

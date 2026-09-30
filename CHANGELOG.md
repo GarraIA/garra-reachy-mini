@@ -35,11 +35,28 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
     de dois jeitos. "Fala cara", "fala gera", "falta garra" e "fala garrafa"
     continuam não ativando.
   - *Segunda escuta.* Quando o **começo** do que foi ouvido lembra a frase (até
-    três letras de diferença), o robô manda o mesmo áudio ao servidor de voz de
-    novo, dizendo qual é a frase, e só responde se aí ela sair exata. Nas mesmas
-    30 frases, com a dica: 30. Nasce ligada (`wake_second_listen_enabled`) e
-    tem interruptor no painel. O áudio vai para o mesmo servidor de voz, uma
-    segunda vez; nada novo sai de casa.
+    três letras de diferença) **e a própria transcrição duvidou do que
+    escreveu ali**, o robô manda o mesmo áudio ao servidor de voz de novo,
+    dizendo qual é a frase, e só responde se aí ela sair exata. Nasce ligada
+    (`wake_second_listen_enabled`) e tem interruptor no painel. O áudio vai
+    para o mesmo servidor de voz, uma segunda vez; nada novo sai de casa.
+
+    A confiança entrou depois de medir. Conferindo sempre que o começo
+    lembrasse a frase, "Fala galera, beleza?" e "Fala, cara, tudo bem?"
+    ativaram o robô em 3 de 16: a dica convence o Whisper a trocar "galera"
+    por "Garra". O que separa os casos é o quanto ele confia na palavra que
+    escreveu — entre 0,13 e 0,62 quando errou a frase, entre 0,83 e 0,99 quando
+    a palavra era outra mesmo. O corte ficou em 0,75.
+
+    Na build final, no robô: **19 de 21** frases com "Fala Garra" respondidas
+    por voz, e **1 falsa ativação em 16** frases parecidas ("Falta garra nesse
+    time", que chegou como "falta a garra"). "Fala galera", "fala para" e "fala
+    agora" não ativaram.
+
+    O filtro tem preço: com a voz do Michel, "fala cara" ouvido com 91% de
+    confiança era ele chamando, e não foi conferido. Para quem prefere ser
+    ouvido mais vezes há `wake_second_listen_always`, desligado por padrão, com
+    o número medido escrito na dica.
 
 - **O que foi ouvido ficava em memória além da janela.** A escuta de contexto
   só esquecia ao anotar uma fala nova ou ao ser colhida. Com a sala quieta, o
@@ -53,6 +70,12 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
 
 ### Added
 
+- **O robô sabe que horas são** (`clock_enabled`, desligado por padrão). A
+  primeira pergunta da bancada foi "que horas são?", e a resposta foi "não
+  tenho acesso a um relógio". Ligado, a data e a hora vão com cada pedido, por
+  extenso. O fuso é do app (`clock_timezone`), e não do sistema: o robô sai de
+  fábrica em Londres. O painel propõe o fuso do navegador. O nome do fuso não
+  vai na mensagem.
 - **Aviso de robô sem voz.** Com "Falar respostas" desmarcado, o cartão da
   conversa abre com um aviso dizendo isso e o que marcar. O robô passou uma
   tarde mudo por causa de uma caixa entre quinze.
@@ -60,18 +83,23 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   Evento `voice.wake.near_miss` com o trecho que pareceu a frase (`heard`), onde
   ele estava (`position`), a quantas letras da frase (`distance`) e o resultado
   da segunda escuta (`second_listen`: `confirmed`, `rejected`, `failed`,
-  `not_tried`). Só o trecho — duas ou três palavras —, nunca o resto do
-  enunciado. O painel mostra os cinco últimos, e só na página aberta. É o único
+  `skipped_confident`, `unknown_confidence`, `disabled`, `not_tried`) e a
+  confiança da transcrição nele (`confidence`). Só o trecho — duas ou três
+  palavras —, nunca o resto do enunciado. O painel mostra os cinco últimos, e só na página aberta. É o único
   lugar em que algo dito sem a frase aparece; `voice.wake.rejected` continua
   sem conteúdo nenhum.
 - `voice.wake.activated` ganhou `match: "second_listen"`.
 - **O microfone no status.** `GET /api/robot/status` traz `voice.detector`
   (piso de ruído, limiares, contagens), e o painel mostra "ruído 0,007 · abre
   em 0,028". Só números.
-- Servidor de voz: `POST /transcrever?dica=Fala%20Garra` repassa a frase ao
-  Whisper como `hotwords`. Dica que não tem cara de frase é recusada (400), não
-  limpa. Sem o parâmetro nada muda; servidor antigo ignora o parâmetro e o app
-  novo segue funcionando, sem a segunda escuta.
+- Servidor de voz: `POST /transcrever` devolve `confianca`, uma probabilidade
+  por palavra do texto (custo medido na GPU: nenhum — 0,11 s contra 0,12 s), e
+  aceita `?dica=Fala%20Garra`, que repassa a frase ao Whisper como `hotwords`.
+  Dica que não tem cara de frase é recusada (400), não limpa. **O servidor de
+  voz tem de ser reiniciado junto com o app:** um servidor antigo não informa
+  a confiança, e sem ela o robô não faz segunda escuta nenhuma.
+- O cartão da conversa deixou de pôr o divisor e a caixa do caderno na mesma
+  linha do botão de esquecer.
 
 ### Medido e não adotado
 
@@ -83,6 +111,22 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   cada). Com o filtro, nas mesmas 16 frases: nenhum.
 - **O gesto das antenas como causa dos trechos vazios.** Doze gestos, um trecho
   aberto. Não é ele.
+- **A confiança da SEGUNDA escuta como filtro.** Quando a frase sai certa com a
+  dica, o Whisper dá a "Garra" entre 0,003 e 0,51 — tanto nas chamadas de
+  verdade quanto na falsa ativação (0,036). Não separa nada.
+
+### Visto e não resolvido
+
+- **A antena esquerda entrou em sobrecarga** (`Overload Error`) sete segundos
+  depois de o app subir, às 18:57, e ficou assim até o daemon ser reiniciado.
+  Com o motor em erro, parar o app deixou o gerenciador do robô preso em
+  `stopping` — o deadlock que só reiniciar o daemon resolve. Depois do
+  reinício: sem erro, 37 °C, torque ligado. Aconteceu uma vez; a causa não foi
+  achada.
+- **Gravações que o robô não reconhece de jeito nenhum.** Duas das 21 frases
+  positivas chegaram com um começo que não lembra a frase nem de longe, e aí
+  não há segunda escuta. O diagnóstico não mostra o que foi ouvido nesses
+  casos, de propósito.
 
 ## 1.4.0 — 2026-09-29
 

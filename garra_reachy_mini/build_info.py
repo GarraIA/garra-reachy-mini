@@ -67,6 +67,8 @@ CAPACIDADES: dict[str, bool] = {
     # `voice.detector` no status: o detector de fala acompanha o ruído e diz o
     # que está medindo.
     "voice_detector_status": True,
+    # Relógio (`clock_enabled`, `clock_timezone`): a hora vai com o pedido.
+    "clock": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

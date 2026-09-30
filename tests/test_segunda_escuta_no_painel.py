@@ -34,6 +34,9 @@ CHAVES = ("conversa.wake_conferir", "conversa.wake_conferir_dica",
           "conversa.perto_confirmed", "conversa.perto_rejected", "conversa.perto_failed",
           "conversa.perto_not_tried", "conversa.perto_skipped_confident",
           "conversa.perto_unknown_confidence", "conversa.perto_disabled",
+          "conversa.wake_conferir_sempre", "conversa.wake_conferir_sempre_dica",
+          "conversa.relogio", "conversa.relogio_dica", "conversa.relogio_fuso",
+          "conversa.relogio_fuso_daqui",
           "lista.microfone", "lista.microfone_val",
           "lista.microfone_fixo", "lista.microfone_parado")
 
@@ -74,7 +77,8 @@ def test_o_aviso_diz_o_que_fazer() -> None:
 
 
 # ─── os dois interruptores ───────────────────────────────────────────────────
-@pytest.mark.parametrize("ident", ["conversa-wake-conferir", "conversa-wake-diagnostico"])
+@pytest.mark.parametrize("ident", ["conversa-wake-conferir", "conversa-wake-conferir-sempre",
+                                   "conversa-wake-diagnostico"])
 def test_os_interruptores_ficam_sob_a_frase_de_ativacao(ident) -> None:
     assert f'id="{ident}"' in CARTAO
     assert CARTAO.index('id="conversa-wake"') < CARTAO.index(f'id="{ident}"')
@@ -95,6 +99,59 @@ def test_cada_um_aparece_com_o_padrao_do_servidor() -> None:
     pinta = funcao("pintarConversa")
     assert "$('conversa-wake-conferir').checked = c.wake_second_listen_enabled !== false" in pinta
     assert "$('conversa-wake-diagnostico').checked = c.wake_diagnostics_enabled === true" in pinta
+
+
+def test_conferir_sempre_e_gravado_e_nasce_desligado() -> None:
+    corpo = JS[JS.index("$('btn-conversa-salvar').addEventListener"):]
+    corpo = corpo[:corpo.index("}));")]
+    assert "wake_second_listen_always: $('conversa-wake-conferir-sempre').checked" in corpo
+    assert ("$('conversa-wake-conferir-sempre').checked = c.wake_second_listen_always === true"
+            in funcao("pintarConversa"))
+
+
+def test_conferir_sempre_depende_de_conferir() -> None:
+    sincroniza = funcao("sincronizarConferir")
+    assert "$('conversa-wake-conferir').checked" in sincroniza
+    assert "$('conversa-wake-conferir-sempre').disabled" in sincroniza
+
+
+def test_a_dica_de_conferir_sempre_avisa_do_preco() -> None:
+    """Quem liga tem de saber o que passa a chamar o robô — com o número medido."""
+    pt = valor(PT, "conversa.wake_conferir_sempre_dica").lower()
+    en = valor(EN, "conversa.wake_conferir_sempre_dica").lower()
+    assert "fala galera" in pt and "3 de 16" in pt
+    assert "fala galera" in en and "3 out of 16" in en
+
+
+# ─── o relógio ───────────────────────────────────────────────────────────────
+def test_o_relogio_tem_interruptor_e_fuso_no_cartao() -> None:
+    assert 'id="conversa-relogio"' in CARTAO and 'id="conversa-relogio-fuso"' in CARTAO
+    assert 'id="btn-relogio-fuso-daqui"' in CARTAO
+    campo = CARTAO[CARTAO.index('id="conversa-relogio-fuso"') - 80:][:260]
+    assert 'maxlength="64"' in campo and 'spellcheck="false"' in campo
+
+
+def test_o_relogio_e_lido_e_gravado() -> None:
+    corpo = JS[JS.index("$('btn-conversa-salvar').addEventListener"):]
+    corpo = corpo[:corpo.index("}));")]
+    assert "clock_enabled: $('conversa-relogio').checked" in corpo
+    assert "clock_timezone: $('conversa-relogio-fuso').value.trim()" in corpo
+    pinta = funcao("pintarConversa")
+    assert "$('conversa-relogio').checked = c.clock_enabled === true" in pinta
+    assert "$('conversa-relogio-fuso').value = c.clock_timezone ?? ''" in pinta
+
+
+def test_o_fuso_do_navegador_preenche_o_campo() -> None:
+    assert "Intl.DateTimeFormat().resolvedOptions().timeZone" in funcao("fusoDaqui")
+    arma = JS[JS.index("$('btn-relogio-fuso-daqui').addEventListener"):][:200]
+    assert "fusoDaqui()" in arma
+
+
+def test_a_dica_do_relogio_diz_o_que_vai_e_o_que_nao_vai() -> None:
+    pt = valor(PT, "conversa.relogio_dica").lower()
+    en = valor(EN, "conversa.relogio_dica").lower()
+    assert "data e a hora" in pt and "fuso" in pt and "não vai" in pt
+    assert "date and time" in en and "time zone" in en and "not sent" in en
 
 
 def test_a_dica_do_diagnostico_diz_o_que_aparece_e_o_que_nao() -> None:
@@ -233,6 +290,17 @@ def test_as_duas_chaves_novas_tem_padrao_e_sao_gravaveis(montar_painel) -> None:
     c = painel.get("/api/robot/conversation").json()["conversation"]
     assert c["wake_second_listen_enabled"] is True
     assert c["wake_diagnostics_enabled"] is False
+    assert c["wake_second_listen_always"] is False
+    assert (c["clock_enabled"], c["clock_timezone"]) == (False, "")
+    r = painel.put("/api/robot/conversation", json={
+        "clock_enabled": True, "clock_timezone": "America/New_York",
+        "wake_second_listen_always": True})
+    assert r.status_code == 200
+    c = painel.get("/api/robot/conversation").json()["conversation"]
+    assert (c["clock_enabled"], c["clock_timezone"], c["wake_second_listen_always"]) == (
+        True, "America/New_York", True)
+    painel.put("/api/robot/conversation", json={
+        "clock_enabled": False, "clock_timezone": "", "wake_second_listen_always": False})
     r = painel.put("/api/robot/conversation", json={
         "wake_second_listen_enabled": False, "wake_diagnostics_enabled": True})
     assert r.status_code == 200

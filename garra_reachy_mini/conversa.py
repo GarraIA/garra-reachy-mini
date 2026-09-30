@@ -93,6 +93,11 @@ PADRAO: dict[str, Any] = {
     # ativação: pelo microfone do robô o STT errava a frase na maioria das
     # vezes. O áudio vai para o mesmo servidor de voz, uma segunda vez.
     "wake_second_listen_enabled": True,
+    # Conferir mesmo quando a transcrição tinha certeza do que ouviu. Desligado
+    # por padrão: foi assim que "Fala galera, beleza?" ativou o robô em 3 de 16
+    # na bancada. Ligar é escolher ser ouvido mais vezes ao preço de o robô
+    # responder, às vezes, a quem não o chamou.
+    "wake_second_listen_always": False,
     # Diagnóstico: eventos `voice.wake.near_miss` com o trecho que pareceu a
     # frase ("fala gabi"), e só ele. Nasce desligado — é o único lugar em que
     # algo dito sem a frase aparece num evento.
@@ -109,6 +114,12 @@ PADRAO: dict[str, Any] = {
     # Listas que o robô anota a pedido e guarda em arquivo. Ligado, todo pedido
     # leva o que está anotado e a instrução de como anotar. Ver caderno.py.
     "notebook_enabled": False,
+    # ── relógio ──────────────────────────────────────────────────────────────
+    # Ligado, a data e a hora vão com cada pedido: é o que faz "que horas são?"
+    # ter resposta. O fuso é do app, e não do sistema — o robô sai de fábrica
+    # em Londres. Vazio = o relógio do sistema. Ver relogio.py.
+    "clock_enabled": False,
+    "clock_timezone": "",
     "progress_update_delay_ms": 10000,
     "max_progress_messages": 1,
     "acknowledgement_cut_threshold_ms": 1200,
@@ -129,8 +140,9 @@ PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": False}
 BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
              "spoken_acknowledgements_enabled", "spoken_progress_updates",
              "announce_tool_usage", "wake_phrase_enabled",
-             "wake_second_listen_enabled", "wake_diagnostics_enabled",
-             "ambient_context_enabled", "notebook_enabled")
+             "wake_second_listen_enabled", "wake_second_listen_always",
+             "wake_diagnostics_enabled",
+             "ambient_context_enabled", "notebook_enabled", "clock_enabled")
 
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
 # folgado para isso e curto o bastante para não virar um parágrafo.
@@ -191,6 +203,13 @@ def _aplicar(c: dict, bruto: dict) -> None:
         candidata = str(bruto["wake_phrase_text"] or "").strip()[:FRASE_MAX]
         if candidata and _tokens(candidata):
             c["wake_phrase_text"] = candidata
+    if "clock_timezone" in bruto:
+        # Vazio vale: é "use o relógio do sistema". Nome que o sistema não
+        # conhece é recusado, e o anterior fica.
+        from .relogio import fuso_valido
+        fuso = bruto["clock_timezone"]
+        if fuso == "" or fuso_valido(fuso):
+            c["clock_timezone"] = fuso
     # O teto tem de caber a janela. Um teto menor que a inatividade daria uma
     # sessão que expira antes do primeiro silêncio — só pode ter vindo de engano.
     if c["wake_phrase_session_max_s"] < c["wake_phrase_window_s"]:

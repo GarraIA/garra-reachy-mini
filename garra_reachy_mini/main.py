@@ -792,6 +792,11 @@ class GarraReachyMini(ReachyMiniApp):
                 ouvido = ativacao.tokens(texto)
                 perto, exame = ativacao.exame(
                     ouvido, ativ.frase, ativacao.confianca_por_token(texto, confianca))
+                if (exame in ("confident", "unknown")
+                        and preferencias["wake_second_listen_always"]):
+                    # Quem ligou "conferir sempre" prefere o robô que às vezes
+                    # responde sem ser chamado ao que às vezes não responde.
+                    exame = "unsure"
                 conferencia = {"confident": "skipped_confident",
                                "unknown": "unknown_confidence"}.get(exame, "not_tried")
                 if exame == "unsure" and not (

@@ -303,3 +303,60 @@ def test_o_diagnostico_nao_vai_para_o_log(montar, caplog) -> None:
     cena = montar(DIAGNOSTICO, [(ERRADA, ERRADA)], [])
     cena.alguem_fala()
     assert "gabi" not in caplog.text.lower()
+
+
+# ─── conferir sempre: a escolha de quem prefere ser ouvido ───────────────────
+# Medido com a voz do Michel em 29/09/2026: o robô ouviu "fala cara" com 91% de
+# confiança e não conferiu — e era ele chamando. O filtro da confiança troca
+# falsas ativações por chamadas perdidas; quem prefere o contrário liga isto.
+SEMPRE = {**LIGADA, "wake_second_listen_always": True}
+
+
+def test_com_conferir_sempre_a_certeza_da_transcricao_nao_impede(montar) -> None:
+    cena = montar(SEMPRE, [("Fala cara, que horas são?", CERTA, CERTEZA)], ["São três horas."])
+    cena.alguem_fala()
+
+    assert cena.voz.dicas == [None, FRASE]
+    assert cena.cerebro.recebidas == ["que horas são?"]
+
+
+def test_com_conferir_sempre_servidor_antigo_tambem_e_conferido(montar) -> None:
+    cena = montar(SEMPRE, [(ERRADA, CERTA, SEM_MEDIDA)], ["São três horas."])
+    cena.alguem_fala()
+    assert cena.voz.dicas == [None, FRASE]
+
+
+def test_conferir_sempre_continua_pedindo_o_comeco_parecido(montar) -> None:
+    cena = montar(SEMPRE, [("Acabou a manteiga, hein.", CERTA, CERTEZA),
+                           ("E aí, fala Gabi, que horas são?", CERTA, DUVIDA)], [])
+    cena.alguem_fala()
+    cena.alguem_fala()
+    assert cena.voz.dicas == [None, None]
+    assert cena.cerebro.recebidas == []
+
+
+def test_conferir_sempre_nao_vale_com_a_conferencia_desligada(montar) -> None:
+    cena = montar({**SEMPRE, "wake_second_listen_enabled": False},
+                  [("Fala cara, que horas são?", CERTA, CERTEZA)], [])
+    cena.alguem_fala()
+    assert cena.voz.dicas == [None]
+
+
+def test_nasce_desligado() -> None:
+    from garra_reachy_mini import conversa
+    assert conversa.normalizar({})["wake_second_listen_always"] is False
+
+
+# ─── o relógio, no laço ──────────────────────────────────────────────────────
+def test_com_o_relogio_ligado_o_pedido_leva_a_hora_e_o_chat_nao(montar, caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+    cena = montar({**LIGADA, "clock_enabled": True, "clock_timezone": "America/New_York"},
+                  [(CERTA, CERTA)], ["São nove e vinte da noite."])
+    cena.alguem_fala()
+
+    [mensagem] = cena.cerebro.recebidas
+    assert mensagem.startswith("[AGORA")
+    assert mensagem.split("\n")[-1] == "que horas são?"
+    assert [(e["role"], e["content"]) for e in cena.eventos("chat.message")] == [
+        ("user", "que horas são?"), ("assistant", "São nove e vinte da noite.")]
+    assert "[AGORA" not in tudo(cena) and "[AGORA" not in caplog.text

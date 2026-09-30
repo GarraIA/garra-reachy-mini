@@ -185,11 +185,16 @@ speakers into the robot: 6 right out of 30. Three things deal with it:
 - **Doubled letters are the same word.** "Gara" and "Garra" both activate;
   "fala cara" and "falta garra" still do not.
 - **Double-check** (on by default). When what was heard *begins* with something
-  within three letters of the phrase, the robot sends the same audio to the
-  voice server once more, telling it which phrase to expect, and answers only
-  if the phrase then comes out exact. Same 30 phrases: 30 right. The phrase is
-  never given as a hint to *every* transcription — that makes noise turn into
-  a call.
+  within three letters of the phrase **and the transcription itself was unsure
+  of it**, the robot sends the same audio to the voice server once more,
+  telling it which phrase to expect, and answers only if the phrase then comes
+  out exact. On the robot: 19 of 21 calls answered, and 1 false activation in
+  16 look-alike sentences. The phrase is never given as a hint to *every*
+  transcription — that makes noise turn into a call — and not even every time
+  the beginning looks alike: that made "Fala galera, beleza?" call the robot.
+- **Double-check even when the transcription was sure** (off by default) trades
+  the other way: you are heard more often, and look-alike greetings sometimes
+  call the robot. The panel states the measured price.
 - **Show what was heard instead of the phrase** (off by default). The panel
   lists the snippet that resembled the phrase — two or three words, never the
   rest of what was said — and what the double-check made of it. It is there to
@@ -200,6 +205,14 @@ measurement at start-up and keep it; the audio board has automatic gain, so the
 noise floor moves by itself, and a floor above that fixed threshold left the
 robot listening to three minutes of nothing as if it were one sentence. The
 status list in the panel shows what the microphone is measuring.
+
+### Telling the time (1.4.1, off by default)
+
+The model has no clock; the robot has one. With **Know what time it is** on,
+the date and time are sent with every request, which is what makes "what time
+is it?" answerable. The time zone is an app setting, not the system's — the
+robot ships set to London — and the panel offers the browser's. The name of the
+zone is never sent.
 
 ### Assistant identity (requires a Garra gateway)
 
@@ -317,6 +330,8 @@ advice applies to the robot as a whole, not just to this app.
   default.
 - **The double-check sends the same audio twice** to the speech server you run.
   Nothing new leaves the house.
+- **With "Know what time it is" on, the robot's local date and time go with
+  every request.** The name of the time zone does not.
 - **With "Notebook" on, what you ask the robot to write down is stored** in
   `~/.config/garra_reachy_mini/caderno.json` until you delete it, and is sent
   to the model with every request so it can answer questions about it.
@@ -380,7 +395,8 @@ so nothing can quietly pretend a movement happened.
 | Robot no longer says "let me think" | That is the 1.1.0 default: silent while processing. Re-enable the phrases in the panel's conversation card. |
 | Identity card says it needs Garra | Assistant name and personality live in the gateway's config; without a reachable gateway they cannot be read or written — nothing is cached or queued. |
 | Robot hears but never answers aloud | "Speak responses" is unticked in the Conversation card — since 1.4.1 the card opens with a warning when it is. |
-| Robot ignores the activation phrase | Turn on "Show what was heard instead of the phrase" and say it again: the panel shows what the transcription made of it. Keep "Double-check" on. If it is heard as something else entirely, pick a phrase made of common words. |
+| Robot ignores the activation phrase | Turn on "Show what was heard instead of the phrase" and say it again: the panel shows what the transcription made of it, and how sure it was. Keep "Double-check" on, and restart the voice server after updating the app — an old one does not report confidence, and without it there is no double-check. If what you said shows up with high confidence, "Double-check even when the transcription was sure" catches it. |
+| Robot says it has no clock | Turn on "Know what time it is" and set the time zone. |
 | Robot deaf for minutes at a time | Fixed in 1.4.1: the speech detector used a noise threshold measured once at start-up. The status list now shows the noise floor it is following. |
 | Beginning of sentences was cut | Fixed in 1.1.0 with an audio pre-roll. If it still happens, check microphone levels — a very high noise floor shrinks what the pre-roll can recover. |
 

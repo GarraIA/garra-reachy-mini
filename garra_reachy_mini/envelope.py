@@ -6,9 +6,9 @@ caderno — tem de caber nesse texto. Este módulo monta o texto e sabe desmont�
 
 Três regras:
 
-1. **Nada ligado, nada muda.** Sem contexto e sem caderno, `compor` devolve o
-   pedido intacto. Quem não ligou os recursos manda ao modelo exatamente o que
-   mandava antes deles existirem.
+1. **Nada ligado, nada muda.** Sem contexto, sem caderno e sem relógio, `compor`
+   devolve o pedido intacto. Quem não ligou os recursos manda ao modelo
+   exatamente o que mandava antes deles existirem.
 2. **O que não é do app vai citado.** Fala ouvida e item de caderno são texto
    não confiável; cada linha deles leva `> ` na frente, e os blocos são
    delimitados por colchetes — que `ambiente` e `caderno` não deixam entrar.
@@ -23,6 +23,8 @@ from typing import Iterable, Mapping, Sequence
 from .ambiente import Fala
 
 MARCA_PEDIDO = "[PEDIDO FEITO AO ROBÔ]"
+
+_AGORA = "[AGORA — data e hora no relógio do robô, para quando perguntarem]"
 
 _CONTEXTO = (
     "[CONTEXTO DO AMBIENTE — transcrição automática do que pessoas disseram perto "
@@ -62,9 +64,15 @@ def _bloco_caderno(listas: Mapping[str, Sequence[str]]) -> list[str]:
 
 
 def compor(pedido: str, falas: Sequence[Fala] = (), agora: float = 0.0,
-           listas: Mapping[str, Sequence[str]] | None = None) -> str:
-    """O pedido com o que o acompanha. `listas=None` é caderno desligado."""
+           listas: Mapping[str, Sequence[str]] | None = None,
+           relogio: str | None = None) -> str:
+    """O pedido com o que o acompanha. `listas=None` é caderno desligado;
+    `relogio` é a hora já por extenso, ou `None`."""
     blocos: list[str] = []
+    # A hora é montada pelo app, mas passa pela mesma regra de tudo o que entra
+    # num bloco: colchete ou quebra de linha, e ela fica de fora.
+    if relogio and not any(c in relogio for c in "[]\n\r"):
+        blocos.append(f"{_AGORA}\n> {relogio}")
     if falas:
         blocos.append("\n".join(_bloco_contexto(falas, agora)))
     if listas is not None:

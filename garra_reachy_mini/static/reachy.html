@@ -281,6 +281,11 @@
       <span data-i18n="conversa.wake_conferir"></span>
     </label>
     <div class="dica" data-i18n="conversa.wake_conferir_dica"></div>
+    <label class="caixa" id="linha-conversa-wake-conferir-sempre" data-conversa-wake-sub="1">
+      <input type="checkbox" id="conversa-wake-conferir-sempre">
+      <span data-i18n="conversa.wake_conferir_sempre"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.wake_conferir_sempre_dica"></div>
     <label class="caixa" id="linha-conversa-wake-diagnostico" data-conversa-wake-sub="1">
       <input type="checkbox" id="conversa-wake-diagnostico">
       <span data-i18n="conversa.wake_diagnostico"></span>
@@ -303,6 +308,19 @@
     <div class="linha" data-conversa-contexto-sub="1">
       <span class="conta" id="conversa-contexto-estado">—</span>
       <button id="btn-contexto-esquecer" data-i18n="conversa.contexto_esquecer"></button>
+    </div>
+    <!-- Relógio. O modelo não tem um; o robô tem. -->
+    <hr class="divisor">
+    <label class="caixa" id="linha-conversa-relogio">
+      <input type="checkbox" id="conversa-relogio">
+      <span data-i18n="conversa.relogio"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.relogio_dica"></div>
+    <div class="linha" data-conversa-relogio-sub="1">
+      <label for="conversa-relogio-fuso"><span data-i18n="conversa.relogio_fuso"></span></label>
+      <input type="text" id="conversa-relogio-fuso" maxlength="64" style="flex:1 1 18ch;min-width:18ch"
+             autocomplete="off" spellcheck="false" placeholder="America/Sao_Paulo">
+      <button id="btn-relogio-fuso-daqui" data-i18n="conversa.relogio_fuso_daqui"></button>
     </div>
     <!-- Caderno. Independente de tudo acima: vale por voz e pelo chat. -->
     <hr class="divisor">
