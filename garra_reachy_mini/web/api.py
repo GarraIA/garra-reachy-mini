@@ -13,6 +13,9 @@ inclusive o botão de parada de emergência.
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
+import re
 import logging
 import time
 from dataclasses import dataclass, field
@@ -36,6 +39,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 
 from .. import armazenamento, build_info, conversa, envelope, recursos
 from .. import caderno as caderno_mod
+from .. import familia as familia_mod
 from .. import musica as musica_mod
 from .. import visao as visao_mod
 from ..acompanhamento import Acompanhamento
@@ -74,6 +78,8 @@ class ContextoWeb:
     # A visão pela câmera (`visao.Olho`): o painel analisa um quadro por aqui,
     # e o chat digitado olha quando o texto pede.
     olho: Any = None
+    # A família (`familia.Familia`): quem está aí, pelos perfis consentidos.
+    familia: Any = None
     # As integrações que moram no companion (casa, música, rostos), pelo único
     # caminho que fala com a ponte (`web/integracoes.Ponte`). `None` sem ponte.
     integracoes: Any = None
@@ -267,6 +273,94 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
         if not isinstance(corpo.get("enabled"), bool):
             raise _erro(400, "informe enabled", "bad_request")
         return await repassar("POST", "/api/casa/voz", {"enabled": corpo["enabled"]})
+
+    # ── família (rostos) ─────────────────────────────────────────────────────
+    # Cadastro é repasse. A amostra e o teste pegam UM quadro da câmera AGORA —
+    # é o dono, no painel, pedindo — e o mandam ao serviço no PC. O painel
+    # nunca envia imagem, e nenhuma imagem volta ou fica.
+    _PERFIL_ID = re.compile(r"[0-9a-f]{6,32}")
+
+    def _perfil_id(perfil_id: str) -> str:
+        if not _PERFIL_ID.fullmatch(perfil_id or ""):
+            raise _erro(400, "perfil inválido", "bad_request")
+        return perfil_id
+
+    def _quadro_agora() -> bytes:
+        quadro = ctx.hub.instantaneo(idade_maxima_s=familia_mod.IDADE_MAXIMA_S) if ctx.hub else None
+        if quadro is None or float(quadro.idade_s) > familia_mod.IDADE_MAXIMA_S:
+            raise _erro(503, familia_mod.explicar("camera_unavailable"), "camera_unavailable")
+        return quadro.jpeg
+
+    @r.get("/familia/estado")
+    async def familia_estado() -> dict[str, Any]:
+        conf = _conversa_atual()
+        base: dict[str, Any] = {"enabled": conf.get("family_recognition_enabled") is True,
+                                "last": ctx.familia.status()["last"] if ctx.familia else None,
+                                "service": None}
+        resposta = await repassar("GET", "/api/rostos/estado")
+        try:
+            dados = json.loads(bytes(resposta.body))
+        except (ValueError, TypeError, AttributeError):
+            dados = None
+        if resposta.status_code == 200 and isinstance(dados, dict):
+            base["service"] = dados
+        else:
+            erro = dados.get("erro") if isinstance(dados, dict) else None
+            if not erro and isinstance(dados, dict) and isinstance(dados.get("error"), dict):
+                erro = dados["error"].get("code")
+            base["service"] = {"state": "unavailable", "error": erro or "bridge_error"}
+        return base
+
+    @r.get("/familia/perfis")
+    async def familia_perfis() -> Any:
+        return await repassar("GET", "/api/rostos/perfis")
+
+    @r.post("/familia/perfis")
+    async def familia_criar(corpo: dict[str, Any] = Body(...)) -> Any:
+        nome, consent = corpo.get("name"), corpo.get("consent")
+        if not isinstance(nome, str) or not nome.strip() or len(nome.strip()) > 40:
+            raise _erro(400, "informe o nome (até 40 letras)", "bad_request")
+        if not isinstance(consent, dict):
+            raise _erro(400, "informe o consentimento", "bad_request")
+        return await repassar("POST", "/api/rostos/perfis", {"name": nome.strip(), "consent": consent})
+
+    @r.patch("/familia/perfis/{perfil_id}")
+    async def familia_ativo(perfil_id: str, corpo: dict[str, Any] = Body(...)) -> Any:
+        _perfil_id(perfil_id)
+        if not isinstance(corpo.get("active"), bool):
+            raise _erro(400, "informe active", "bad_request")
+        return await repassar("PATCH", f"/api/rostos/perfis/{perfil_id}", {"active": corpo["active"]})
+
+    @r.delete("/familia/perfis/{perfil_id}")
+    async def familia_apagar(perfil_id: str) -> Any:
+        _perfil_id(perfil_id)
+        return await repassar("DELETE", f"/api/rostos/perfis/{perfil_id}")
+
+    @r.delete("/familia/perfis/{perfil_id}/amostras")
+    async def familia_limpar(perfil_id: str) -> Any:
+        _perfil_id(perfil_id)
+        return await repassar("DELETE", f"/api/rostos/perfis/{perfil_id}/amostras")
+
+    @r.post("/familia/perfis/{perfil_id}/amostras")
+    async def familia_amostra(perfil_id: str) -> Any:
+        _perfil_id(perfil_id)
+        jpeg = await asyncio.to_thread(_quadro_agora)
+        return await repassar("POST", f"/api/rostos/perfis/{perfil_id}/amostras",
+                              {"imagem": base64.b64encode(jpeg).decode("ascii")}, timeout_s=30.0)
+
+    @r.post("/familia/reconhecer")
+    async def familia_reconhecer(corpo: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+        if ctx.familia is None:
+            raise _erro(503, "sem câmera", "no_camera")
+        corpo = corpo or {}
+        # O botão do painel funciona com o interruptor desligado: é o dono
+        # conferindo o cadastro. Por voz, o interruptor manda.
+        conf = dict(_conversa_atual(), family_recognition_enabled=True)
+        visto = await asyncio.to_thread(ctx.familia.reconhecer, conf, corpo.get("correlation_id"), "painel")
+        if isinstance(visto, familia_mod.SemReconhecimento):
+            return {"ok": False, "reason": visto.motivo, "detail": visto.explicacao, "at": visto.quando}
+        return {"ok": True, "names": visto.nomes, "unknown": visto.desconhecidos, "faces": visto.rostos,
+                "captured_at": visto.capturado_em, "ms": visto.ms}
 
     # ── música (Spotify) ─────────────────────────────────────────────────────
     # Conectar a conta não passa por aqui (é no navegador do PC, por loopback);
@@ -853,8 +947,11 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         visto = None
         if ctx.olho is not None and visao_mod.pede_visao(texto):
             visto = await asyncio.to_thread(ctx.olho.olhar, texto, conf, correlacao, "chat")
+        pessoas = None
+        if ctx.familia is not None and familia_mod.pede_reconhecer(texto):
+            pessoas = await asyncio.to_thread(ctx.familia.reconhecer, conf, correlacao, "chat")
         mensagem = await asyncio.to_thread(
-            ac.montar, texto, time.monotonic(), conf, correlacao, False, visto)
+            ac.montar, texto, time.monotonic(), conf, correlacao, False, visto, pessoas)
         try:
             resposta = await ponte().enviar(mensagem)
         except ErroChat as e:

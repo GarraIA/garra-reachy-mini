@@ -1,0 +1,33 @@
+[Unit]
+Description=Garra Reachy — serviço de rostos da família (YuNet + SFace, CPU, só loopback)
+Documentation=https://github.com/GarraIA/garra-reachy-mini
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/Projetos/Reachy-Mini-Control
+# O wrapper cria o venv e baixa os dois modelos se faltarem (uma vez), e só
+# então sobe o servidor em 127.0.0.1:8127. Nada de rede além do loopback.
+ExecStart=%h/Documents/Projetos/Reachy-Mini-Control/garra_reachy_mini/companion/systemd/garra-rostos.sh
+
+# ~40 MB de modelos: carregam em menos de um segundo com os arquivos no lugar.
+# Na primeira vez o wrapper baixa (opencv_zoo, ~39 MB) — dê um minuto.
+TimeoutStartSec=180
+
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Perfis e vetores cifrados nascem só para o dono (a pasta já é 0700).
+UMask=0077
+NoNewPrivileges=yes
+# (Sem `PrivateDevices=`: numa unidade de USUÁRIO o systemd não consegue
+# soltar as capacidades e a unidade morre com 218/CAPABILITIES.)
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

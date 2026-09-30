@@ -25,11 +25,11 @@ else
   echo "token da voz já existia — mantido (o robô já pode ter uma cópia)"
 fi
 
-for unidade in garra-reachy-voice.service garra-reachy-companion.service; do
+for unidade in garra-reachy-voice.service garra-reachy-companion.service garra-reachy-faces.service; do
   cp "$AQUI/systemd/$unidade" "$DESTINO/$unidade"
   echo "instalada: $DESTINO/$unidade"
 done
-chmod +x "$AQUI/systemd/garra-voz.sh"
+chmod +x "$AQUI/systemd/garra-voz.sh" "$AQUI/systemd/garra-rostos.sh"
 
 systemctl --user daemon-reload
 systemctl --user enable --now garra-reachy-companion.service
@@ -40,6 +40,11 @@ if [ "${1:-}" = "--auto-voz" ]; then
   echo "voz ligada e marcada para subir no arranque"
 else
   echo "voz NÃO foi ligada: use o painel em http://localhost:3888/#/reachy"
+fi
+
+if [ "${GARRA_SEM_ROSTOS:-}" = "" ]; then
+  systemctl --user enable --now garra-reachy-faces.service
+  echo "rostos ligado em http://127.0.0.1:8127 (só loopback; perfis em $CONF/rostos)"
 fi
 
 if [ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null)" != "yes" ]; then

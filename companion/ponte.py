@@ -44,7 +44,7 @@ import urllib.parse
 
 import httpx
 
-from . import agente, casa as casa_mod, modo, musica as musica_mod, visao
+from . import agente, casa as casa_mod, familia as familia_mod, modo, musica as musica_mod, visao
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -275,6 +275,13 @@ def _preferencias_da_query(q) -> visao.Preferencias | None:
 
 _casa = None
 _musica = None
+_familia = None
+_STATUS_DA_FAMILIA = {"not_found": 404, "consent_required": 400, "guardian_required": 400, "invalid_name": 400,
+                      "bad_image": 400, "bad_request": 400, "service_offline": 503, "timeout": 504,
+                      "service_error": 502}
+# O id do perfil é o que o serviço gera (hex curto); nada de "/" ou "." vindo
+# do painel entra num caminho.
+_PERFIL_ID = re.compile(r"[0-9a-f]{6,32}")
 _STATUS_DA_MUSICA = {"invalid_client_id": 400, "bad_request": 400, "not_configured": 409,
                      "not_connected": 409, "restricted_device": 409, "invalid_state": 400,
                      "auth_failed": 401, "auth_expired": 401, "premium_required": 402,
@@ -285,7 +292,7 @@ _STATUS_DA_CASA = {"invalid_url": 400, "invalid_token": 400, "unreachable": 502,
 
 
 def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None,
-           casa=None, musica=None) -> FastAPI:
+           casa=None, musica=None, familia=None) -> FastAPI:
     """Devolve o app da ponte já com o token e a chave real do gateway.
 
     `visao_local`/`visao_nuvem` são os provedores de visão; sem eles, os de
@@ -294,11 +301,12 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
     """
     # Módulo, não closure: o `app` é um só e as rotas ficam registradas na
     # primeira chamada; o que `montar` decide depois precisa valer também.
-    global _olho_local, _olho_nuvem, _casa, _musica
+    global _olho_local, _olho_nuvem, _casa, _musica, _familia
     _olho_local = visao_local or visao.Local()
     _olho_nuvem = visao_nuvem or visao.Nuvem(chave=os.environ.get("OPENROUTER_API_KEY"))
     _casa = casa or casa_mod.Casa(chave_gateway=chave_gateway)
     _musica = musica or musica_mod.Spotify()
+    _familia = familia or familia_mod.Familia()
 
     @app.api_route("/ping", methods=["GET", "HEAD"])
     async def saude(request: Request) -> Response:
@@ -638,6 +646,113 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
                 return JSONResponse({"erro": "bad_request"}, status_code=400)
             args["device_id"] = alvo
         return await _musica_rota(request, lambda: _musica.acionar(acao, **args))
+
+    # ── família (rostos) ─────────────────────────────────────────────────────
+    # Cadastro e reconhecimento passam por aqui para o serviço local (:8127).
+    # A imagem chega em base64, vira bytes, vai ao serviço e morre nesta
+    # requisição: nem log, nem erro, nem disco a guardam.
+    def _erro_da_familia(e: familia_mod.ErroFamilia) -> JSONResponse:
+        log.info("familia: %s", e.codigo)
+        return JSONResponse({"erro": e.codigo, "detalhe": e.detalhe[:120]},
+                            status_code=_STATUS_DA_FAMILIA.get(e.codigo, 502),
+                            headers={"Cache-Control": "no-store"})
+
+    async def _familia_rota(request: Request, chamada, *args, status: int = 200) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            return JSONResponse(await asyncio.to_thread(chamada, *args), status_code=status,
+                                headers={"Cache-Control": "no-store"})
+        except familia_mod.ErroFamilia as e:
+            return _erro_da_familia(e)
+
+    async def _imagem_do_corpo(request: Request) -> bytes | JSONResponse:
+        bruto = await request.body()
+        if len(bruto) > IMAGEM_B64_MAX + 4096:
+            return JSONResponse({"erro": "bad_image", "detalhe": "grande demais"}, status_code=413)
+        try:
+            corpo = json.loads(bruto)
+        except ValueError:
+            corpo = None
+        b64 = corpo.get("imagem") if isinstance(corpo, dict) else None
+        if not isinstance(b64, str) or not b64:
+            return JSONResponse({"erro": "bad_image", "detalhe": "imagem"}, status_code=400)
+        try:
+            return base64.b64decode(b64, validate=True)
+        except (ValueError, TypeError):
+            return JSONResponse({"erro": "bad_image", "detalhe": "base64"}, status_code=400)
+
+    @app.get("/api/rostos/estado")
+    async def rostos_estado(request: Request) -> Response:
+        return await _familia_rota(request, _familia.estado)
+
+    @app.get("/api/rostos/perfis")
+    async def rostos_perfis(request: Request) -> Response:
+        return await _familia_rota(request, lambda: {"profiles": _familia.perfis()})
+
+    @app.post("/api/rostos/perfis")
+    async def rostos_criar(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            corpo = json.loads(await request.body())
+        except ValueError:
+            corpo = None
+        if (not isinstance(corpo, dict) or not isinstance(corpo.get("name"), str)
+                or not isinstance(corpo.get("consent"), dict)):
+            return JSONResponse({"erro": "bad_request"}, status_code=400)
+        return await _familia_rota(request, lambda: {"ok": True, "profile": _familia.criar(corpo["name"], corpo["consent"])},
+                                   status=201)
+
+    @app.patch("/api/rostos/perfis/{perfil_id}")
+    async def rostos_ativo(perfil_id: str, request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        if not _PERFIL_ID.fullmatch(perfil_id):
+            return JSONResponse({"erro": "bad_request", "detalhe": "perfil"}, status_code=400)
+        try:
+            corpo = json.loads(await request.body())
+        except ValueError:
+            corpo = None
+        if not isinstance(corpo, dict) or not isinstance(corpo.get("active"), bool):
+            return JSONResponse({"erro": "bad_request"}, status_code=400)
+        return await _familia_rota(request, lambda: {"ok": True, "profile": _familia.ativo(perfil_id, corpo["active"])})
+
+    @app.delete("/api/rostos/perfis/{perfil_id}")
+    async def rostos_apagar(perfil_id: str, request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        if not _PERFIL_ID.fullmatch(perfil_id):
+            return JSONResponse({"erro": "bad_request", "detalhe": "perfil"}, status_code=400)
+        return await _familia_rota(request, _familia.apagar, perfil_id)
+
+    @app.delete("/api/rostos/perfis/{perfil_id}/amostras")
+    async def rostos_limpar(perfil_id: str, request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        if not _PERFIL_ID.fullmatch(perfil_id):
+            return JSONResponse({"erro": "bad_request", "detalhe": "perfil"}, status_code=400)
+        return await _familia_rota(request, _familia.limpar_amostras, perfil_id)
+
+    @app.post("/api/rostos/perfis/{perfil_id}/amostras")
+    async def rostos_amostra(perfil_id: str, request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        if not _PERFIL_ID.fullmatch(perfil_id):
+            return JSONResponse({"erro": "bad_request", "detalhe": "perfil"}, status_code=400)
+        imagem = await _imagem_do_corpo(request)
+        if isinstance(imagem, JSONResponse):
+            return imagem
+        return await _familia_rota(request, _familia.amostra, perfil_id, imagem)
+
+    @app.post("/api/rostos/reconhecer")
+    async def rostos_reconhecer(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        imagem = await _imagem_do_corpo(request)
+        if isinstance(imagem, JSONResponse):
+            return imagem
+        return await _familia_rota(request, _familia.reconhecer, imagem)
 
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])

@@ -19,7 +19,7 @@ import time
 import numpy as np
 import pytest
 
-from garra_reachy_mini import armazenamento, envelope, visao
+from garra_reachy_mini import armazenamento, envelope, familia, visao
 from garra_reachy_mini.acompanhamento import Acompanhamento
 from garra_reachy_mini.cerebro import RespostaCerebro
 from garra_reachy_mini.config import Config
@@ -130,6 +130,7 @@ class Cena:
         # Sem câmera, a não ser que o teste dê uma: o laço pergunta ao olho só
         # quando o pedido pede para olhar.
         app.olho = olho or visao.Olho(None, None, self.ctrl.eventos)
+        app.familia = familia.Familia(None, None, self.ctrl.eventos)
         app._midia_ligada = False
         app._acordar = threading.Event()
         app._falhas_voz = 0

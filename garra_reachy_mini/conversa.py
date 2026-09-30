@@ -132,6 +132,12 @@ PADRAO: dict[str, Any] = {
     "vision_local_model": "qwen2.5vl:7b",
     "vision_openrouter_model": "google/gemini-3.8-flash",
     "vision_cloud_enabled": False,
+    # ── família ──────────────────────────────────────────────────────────────
+    # "Quem está aí?" compara o rosto de agora com os perfis que a família
+    # cadastrou, com consentimento, no computador — nunca pelo modelo de visão.
+    # Desligado de fábrica; reconhecer não identifica quem fala nem autoriza
+    # nada. Ver familia.py.
+    "family_recognition_enabled": False,
     "progress_update_delay_ms": 10000,
     "max_progress_messages": 1,
     "acknowledgement_cut_threshold_ms": 1200,
@@ -155,7 +161,7 @@ BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
              "wake_second_listen_enabled", "wake_second_listen_always",
              "wake_diagnostics_enabled",
              "ambient_context_enabled", "notebook_enabled", "clock_enabled",
-             "vision_enabled", "vision_cloud_enabled")
+             "vision_enabled", "vision_cloud_enabled", "family_recognition_enabled")
 
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
 # folgado para isso e curto o bastante para não virar um parágrafo.

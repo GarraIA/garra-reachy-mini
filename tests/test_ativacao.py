@@ -529,6 +529,7 @@ def test_toda_chave_do_padrao_sobrevive_a_escrita_pelo_painel() -> None:
         "vision_local_model": "gemma3:12b",
         "vision_openrouter_model": "openai/gpt-5-mini",
         "vision_cloud_enabled": True,
+        "family_recognition_enabled": True,
         "ambient_context_enabled": True,
         "ambient_context_window_s": 90,
         "notebook_enabled": True,
