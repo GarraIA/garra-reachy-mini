@@ -193,7 +193,11 @@ const rotulo = (acao) => t(`rot.${acao}`).startsWith('rot.') ? acao : t(`rot.${a
 function tratarEvento(e) {
   switch (e.type) {
     case 'robot.status':
-      pintarStatus(e); break;
+      // O evento traz o status do CONTROLADOR (conexão, motores, fila); a
+      // câmera, a voz, o chat e os recursos só vêm em GET /api/robot/status.
+      // Pintar o evento sozinho apagava tudo isso — medido no robô em 30/09:
+      // a cada ação a lista mostrava "câmera indisponível" e "sem escuta".
+      pintarStatus({ ...(estado.status || {}), ...e }); break;
     case 'robot.services':
       pintarServicos(e); break;
     case 'robot.action.started':

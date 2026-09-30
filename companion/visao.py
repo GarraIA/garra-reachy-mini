@@ -30,7 +30,12 @@ CODIGOS = ("no_provider", "provider_offline", "model_missing", "model_without_vi
            "cloud_disabled", "auth_failed", "timeout", "bad_image", "provider_error")
 IMAGEM_MAX_BYTES = 4 * 1024 * 1024
 DESCRICAO_MAX = 1500
-TIMEOUT_S = 45.0
+# 30 s: um modelo de 7B carrega em ~8 s numa GPU livre e descreve um quadro
+# 720p em 3–4 s. Medido em 30/09 com a GPU ocupada por outro modelo (27B da
+# Hera, em geração): o Ollama não consegue carregar o de visão e a chamada
+# só termina no timeout — quanto mais curto, mais cedo o robô diz "não estou
+# conseguindo ver agora" e, com a nuvem permitida, mais cedo cai nela.
+TIMEOUT_S = 30.0
 OPENROUTER = "https://openrouter.ai/api/v1"
 
 # O que se pede ao modelo. A instrução do fim não é enfeite: o que está escrito

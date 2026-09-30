@@ -522,7 +522,10 @@ body.estopped main { filter: saturate(0.65); }
 /* 44 × 44 no toque: é o que o polegar acerta. No mouse os botões continuam
    como sempre. */
 @media (pointer: coarse), (max-width: 760px) {
-  button:not(.mini) { min-height: 44px; min-width: 44px; }
+  button { min-height: 44px; min-width: 44px; }
+  /* Os botões "mini" (apagar item do caderno, ações de perfil) também: no
+     toque, 25 px de altura é o que o dedo erra — medido no robô em 30/09. */
+  button.mini { min-height: 44px; min-width: 44px; padding: 3px 10px; }
   select, input[type="text"], input[type="url"], input[type="password"] { min-height: 44px; }
   /* A caixa de seleção é pequena; o alvo é o rótulo inteiro, que a acompanha. */
   label.caixa, label.linha { min-height: 44px; }

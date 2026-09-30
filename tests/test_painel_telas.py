@@ -216,3 +216,11 @@ def test_botoes_e_links_tem_foco_visivel_e_a_nav_tem_rotulo() -> None:
 
 def test_nada_escuta_em_todas_as_interfaces_por_causa_do_painel() -> None:
     assert "0.0.0.0" not in HTML and "0.0.0.0" not in JS
+
+
+def test_o_evento_de_status_nao_apaga_camera_voz_e_chat() -> None:
+    """`robot.status` pelo WebSocket é o status do controlador, sem câmera,
+    voz, chat e recursos; o painel tem de fundi-lo com o último status
+    completo em vez de pintar "indisponível" a cada ação (medido no robô)."""
+    assert "pintarStatus({ ...(estado.status || {}), ...e }); break;" in JS
+    assert "case 'robot.status':\n      pintarStatus(e); break;" not in JS
