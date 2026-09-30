@@ -19,7 +19,7 @@ import time
 import numpy as np
 import pytest
 
-from garra_reachy_mini import armazenamento, envelope
+from garra_reachy_mini import armazenamento, envelope, visao
 from garra_reachy_mini.acompanhamento import Acompanhamento
 from garra_reachy_mini.cerebro import RespostaCerebro
 from garra_reachy_mini.config import Config
@@ -115,7 +115,7 @@ class Cena:
     """O app montado à mão, com o laço de voz rodando numa thread."""
 
     def __init__(self, backend, pasta, conversa: dict, roteiro: list[str],
-                 respostas: list[str], mic=None, voz=None) -> None:
+                 respostas: list[str], mic=None, voz=None, olho=None) -> None:
         armazenamento.salvar_config({"conversation": conversa})
         self.mic, self.voz = mic or Microfone(), voz or Voz(roteiro)
         self.cerebro = Cerebro(respostas)
@@ -127,6 +127,9 @@ class Cena:
         app.comportamento = Gestos()
         app.hub = None
         app.acompanhamento = Acompanhamento(self.ctrl.eventos)
+        # Sem câmera, a não ser que o teste dê uma: o laço pergunta ao olho só
+        # quando o pedido pede para olhar.
+        app.olho = olho or visao.Olho(None, None, self.ctrl.eventos)
         app._midia_ligada = False
         app._acordar = threading.Event()
         app._falhas_voz = 0

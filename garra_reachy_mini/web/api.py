@@ -36,6 +36,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 
 from .. import armazenamento, build_info, conversa, envelope, recursos
 from .. import caderno as caderno_mod
+from .. import visao as visao_mod
 from ..acompanhamento import Acompanhamento
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
 from ..robo.barramento import Barramento
@@ -68,6 +69,9 @@ class ContextoWeb:
     # A escuta de contexto e o caderno. O MESMO objeto que o laço de voz usa:
     # é por ele que o painel lê o caderno e manda esquecer o que foi ouvido.
     acompanhamento: Acompanhamento | None = None
+    # A visão pela câmera (`visao.Olho`): o painel analisa um quadro por aqui,
+    # e o chat digitado olha quando o texto pede.
+    olho: Any = None
     # Quais subsistemas estão de pé. Sem isto o painel não tem como distinguir
     # "sem voz porque você não configurou" de "sem voz porque quebrou".
     servicos: Servicos = field(default_factory=Servicos)
@@ -471,6 +475,40 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
     async def ambiente_esquecer() -> dict[str, Any]:
         return {"ok": True, "forgotten": ac.esquecer()}
 
+    # ── visão ────────────────────────────────────────────────────────────────
+    # `analyze` é o botão do painel: pega um quadro AGORA, descreve e devolve o
+    # texto — a câmera é do dono, e é ele quem está pedindo para ver. `status`
+    # diz qual provedor valeria e a última análise, sem texto nenhum.
+    @r.get("/vision/status")
+    async def visao_estado() -> dict[str, Any]:
+        conf = _conversa_atual()
+        olho = ctx.olho
+        chaves = ("vision_enabled", "vision_provider", "vision_local_endpoint",
+                  "vision_local_model", "vision_openrouter_model", "vision_cloud_enabled")
+        base = {"settings": {k: conf.get(k) for k in chaves}, "last": None, "providers": None}
+        if olho is None:
+            return base
+        base["last"] = olho.status()["last"]
+        if conf.get("vision_enabled"):
+            base["providers"] = await asyncio.to_thread(olho.provedores, conf)
+        return base
+
+    @r.post("/vision/analyze")
+    async def visao_analisar(corpo: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+        if ctx.olho is None:
+            raise _erro(503, "sem câmera", "no_camera")
+        corpo = corpo or {}
+        pergunta = str(corpo.get("question") or "o que você está vendo?").strip()[:500]
+        conf = _conversa_atual()
+        visto = await asyncio.to_thread(ctx.olho.olhar, pergunta, conf,
+                                        corpo.get("correlation_id"), "painel")
+        if isinstance(visto, visao_mod.SemVisao):
+            return {"ok": False, "reason": visto.motivo, "detail": visto.explicacao,
+                    "at": visto.quando}
+        return {"ok": True, "text": visto.texto, "provider": visto.provedor,
+                "model": visto.modelo, "captured_at": visto.capturado_em,
+                "frame_age_s": visto.idade_s, "ms": visto.ms}
+
     @r.get("/conversation")
     async def conversa_ler() -> dict[str, Any]:
         return await asyncio.to_thread(_ler_conversa)
@@ -707,8 +745,11 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         # a mensagem montada é entre o app e o modelo.
         ac = ctx.acompanhamento
         conf = await asyncio.to_thread(_conversa_atual)
+        visto = None
+        if ctx.olho is not None and visao_mod.pede_visao(texto):
+            visto = await asyncio.to_thread(ctx.olho.olhar, texto, conf, correlacao, "chat")
         mensagem = await asyncio.to_thread(
-            ac.montar, texto, time.monotonic(), conf, correlacao, False)
+            ac.montar, texto, time.monotonic(), conf, correlacao, False, visto)
         try:
             resposta = await ponte().enviar(mensagem)
         except ErroChat as e:

@@ -27,6 +27,7 @@ Duas armadilhas que este módulo existe para evitar:
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -120,6 +121,17 @@ PADRAO: dict[str, Any] = {
     # em Londres. Vazio = o relógio do sistema. Ver relogio.py.
     "clock_enabled": False,
     "clock_timezone": "",
+    # ── visão ────────────────────────────────────────────────────────────────
+    # "O que você está vendo?" pega UM quadro da câmera e o manda ao companion
+    # no computador, que o descreve por um modelo de visão. Local (Ollama)
+    # por padrão; a nuvem (OpenRouter) só com `vision_cloud_enabled`, que é o
+    # único interruptor que deixa uma imagem da casa sair dela. Ver visao.py.
+    "vision_enabled": False,
+    "vision_provider": "auto",
+    "vision_local_endpoint": "http://127.0.0.1:11434",
+    "vision_local_model": "qwen2.5vl:7b",
+    "vision_openrouter_model": "google/gemini-3.8-flash",
+    "vision_cloud_enabled": False,
     "progress_update_delay_ms": 10000,
     "max_progress_messages": 1,
     "acknowledgement_cut_threshold_ms": 1200,
@@ -142,11 +154,19 @@ BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
              "announce_tool_usage", "wake_phrase_enabled",
              "wake_second_listen_enabled", "wake_second_listen_always",
              "wake_diagnostics_enabled",
-             "ambient_context_enabled", "notebook_enabled", "clock_enabled")
+             "ambient_context_enabled", "notebook_enabled", "clock_enabled",
+             "vision_enabled", "vision_cloud_enabled")
 
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
 # folgado para isso e curto o bastante para não virar um parágrafo.
 FRASE_MAX = 64
+
+# Visão: o provedor é um de três; o endpoint local é uma URL http(s) curta (a
+# ponte confere de novo se é da casa); nome de modelo é o que o Ollama e a
+# OpenRouter aceitam. O que não casa não é gravado, e o anterior fica.
+VISAO_PROVEDORES = ("auto", "local", "openrouter")
+_URL_LOCAL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:_]{1,120}(?:/[A-Za-z0-9._\-/]{0,60})?")
+_MODELO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}")
 
 # Os campos inteiros, num lugar só. Havia duas listas — uma em `normalizar`,
 # outra em `perfil_atualizado` — e elas divergiram assim que chegaram chaves
@@ -203,6 +223,15 @@ def _aplicar(c: dict, bruto: dict) -> None:
         candidata = str(bruto["wake_phrase_text"] or "").strip()[:FRASE_MAX]
         if candidata and _tokens(candidata):
             c["wake_phrase_text"] = candidata
+    if "vision_provider" in bruto and bruto["vision_provider"] in VISAO_PROVEDORES:
+        c["vision_provider"] = bruto["vision_provider"]
+    if "vision_local_endpoint" in bruto:
+        url = str(bruto["vision_local_endpoint"] or "").strip().rstrip("/")
+        if _URL_LOCAL.fullmatch(url):
+            c["vision_local_endpoint"] = url
+    for campo in ("vision_local_model", "vision_openrouter_model"):
+        if campo in bruto and isinstance(bruto[campo], str) and _MODELO.fullmatch(bruto[campo]):
+            c[campo] = bruto[campo]
     if "clock_timezone" in bruto:
         # Vazio vale: é "use o relógio do sistema". Nome que o sistema não
         # conhece é recusado, e o anterior fica.

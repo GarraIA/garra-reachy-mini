@@ -38,9 +38,13 @@ import os
 import re
 import time
 
+import base64
+import ipaddress
+import urllib.parse
+
 import httpx
 
-from . import agente, modo
+from . import agente, modo, visao
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -206,8 +210,80 @@ def _ping_liberado(agora: float | None = None) -> bool:
     return True
 
 
-def montar(token: str, chave_gateway: str | None) -> FastAPI:
-    """Devolve o app da ponte já com o token e a chave real do gateway."""
+# ── visão: o quadro do robô vira texto AQUI ──────────────────────────────────
+# A pergunta cabe numa frase; a imagem, num quadro 720p. O que passa disso não é
+# um pedido do robô.
+PERGUNTA_MAX = 500
+IMAGEM_B64_MAX = 6 * 1024 * 1024
+_MODELO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}")
+_STATUS_DO_ERRO = {
+    "bad_image": 400, "no_provider": 400, "cloud_disabled": 403,
+    "provider_offline": 503, "model_missing": 503, "model_without_vision": 503,
+    "timeout": 504, "provider_error": 502, "auth_failed": 502,
+}
+
+
+def _endpoint_da_casa(url: str) -> bool:
+    """Para onde o companion MANDA o quadro. Só loopback, rede privada ou `.local`:
+    quem tiver o token da ponte não aponta a câmera da casa para a internet."""
+    try:
+        partes = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    if partes.scheme not in ("http", "https") or not partes.hostname or len(url) > 200:
+        return False
+    nome = partes.hostname
+    if nome in ("localhost",) or nome.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(nome)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private
+
+
+def _preferencias(bruto: object) -> visao.Preferencias | None:
+    """As preferências que o robô mandou, validadas. `None` = recusadas."""
+    if bruto is None:
+        return visao.Preferencias()
+    if not isinstance(bruto, dict):
+        return None
+    padrao = visao.Preferencias()
+    provedor = str(bruto.get("provedor", padrao.provedor))
+    endpoint = str(bruto.get("local_endpoint", padrao.local_endpoint))
+    modelo_local = str(bruto.get("local_modelo", padrao.local_modelo))
+    modelo_nuvem = str(bruto.get("nuvem_modelo", padrao.nuvem_modelo))
+    if provedor not in visao.PROVEDORES or not _endpoint_da_casa(endpoint):
+        return None
+    if not (_MODELO.fullmatch(modelo_local) and _MODELO.fullmatch(modelo_nuvem)):
+        return None
+    return visao.Preferencias(
+        provedor=provedor, local_endpoint=endpoint.rstrip("/"), local_modelo=modelo_local,
+        nuvem_modelo=modelo_nuvem, nuvem_permitida=bruto.get("nuvem_permitida") is True)
+
+
+_olho_local = None
+_olho_nuvem = None
+
+
+def _preferencias_da_query(q) -> visao.Preferencias | None:
+    bruto = {k: q[k] for k in ("provedor", "local_endpoint", "local_modelo", "nuvem_modelo") if k in q}
+    if "nuvem_permitida" in q:
+        bruto["nuvem_permitida"] = str(q["nuvem_permitida"]).lower() in ("1", "true", "sim")
+    return _preferencias(bruto)
+
+
+def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None) -> FastAPI:
+    """Devolve o app da ponte já com o token e a chave real do gateway.
+
+    `visao_local`/`visao_nuvem` são os provedores de visão; sem eles, os de
+    verdade — o Ollama deste PC e a OpenRouter com a chave do ambiente.
+    """
+    # Módulo, não closure: o `app` é um só e as rotas ficam registradas na
+    # primeira chamada; o que `montar` decide depois precisa valer também.
+    global _olho_local, _olho_nuvem
+    _olho_local = visao_local or visao.Local()
+    _olho_nuvem = visao_nuvem or visao.Nuvem(chave=os.environ.get("OPENROUTER_API_KEY"))
 
     @app.api_route("/ping", methods=["GET", "HEAD"])
     async def saude(request: Request) -> Response:
@@ -347,6 +423,61 @@ def montar(token: str, chave_gateway: str | None) -> FastAPI:
         agentes = [a for a in (_redigir_agente(b) for b in brutos) if a]
         return JSONResponse({"ok": True, "agents": agentes},
                             headers=cabecalhos)
+
+    # ── visão ────────────────────────────────────────────────────────────────
+    # Não é proxy do gateway: o quadro entra aqui e sai como texto. A imagem
+    # vive só nesta requisição — não vai a log (nem em erro), nem a disco.
+    @app.post("/api/olhar")
+    async def olhar(request: Request) -> Response:
+        cabecalhos = {"Cache-Control": "no-store"}
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401, headers=cabecalhos)
+        bruto = await request.body()
+        if len(bruto) > IMAGEM_B64_MAX + 4096:
+            return JSONResponse({"erro": "bad_image", "detalhe": "grande demais"},
+                                status_code=413, headers=cabecalhos)
+        try:
+            corpo = json.loads(bruto)
+        except ValueError:
+            return JSONResponse({"erro": "bad_request"}, status_code=400, headers=cabecalhos)
+        if not isinstance(corpo, dict):
+            return JSONResponse({"erro": "bad_request"}, status_code=400, headers=cabecalhos)
+        pergunta = corpo.get("pergunta")
+        if not isinstance(pergunta, str) or not pergunta.strip() or len(pergunta) > PERGUNTA_MAX:
+            return JSONResponse({"erro": "bad_request", "detalhe": "pergunta"},
+                                status_code=400, headers=cabecalhos)
+        prefs = _preferencias(corpo.get("preferencias"))
+        if prefs is None:
+            return JSONResponse({"erro": "bad_request", "detalhe": "preferencias"},
+                                status_code=400, headers=cabecalhos)
+        try:
+            imagem = base64.b64decode(corpo.get("imagem") or "", validate=True)
+        except (ValueError, TypeError):
+            return JSONResponse({"erro": "bad_image", "detalhe": "base64"},
+                                status_code=400, headers=cabecalhos)
+        try:
+            obs = await asyncio.to_thread(visao.descrever, imagem, pergunta.strip(), prefs,
+                                          _olho_local, _olho_nuvem)
+        except visao.ErroDeVisao as e:
+            log.info("visão recusada: %s (%s, %d bytes)", e.codigo, prefs.provedor, len(imagem))
+            return JSONResponse({"erro": e.codigo, "detalhe": e.detalhe[:120]},
+                                status_code=_STATUS_DO_ERRO.get(e.codigo, 502), headers=cabecalhos)
+        log.info("visão: %s/%s em %d ms (%d bytes de imagem, %d de texto)",
+                 obs.provedor, obs.modelo, obs.ms, len(imagem), len(obs.texto))
+        return JSONResponse({"texto": obs.texto, "provedor": obs.provedor,
+                             "modelo": obs.modelo, "ms": obs.ms}, headers=cabecalhos)
+
+    @app.get("/api/olhar/estado")
+    async def olhar_estado(request: Request) -> Response:
+        cabecalhos = {"Cache-Control": "no-store"}
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401, headers=cabecalhos)
+        prefs = _preferencias_da_query(request.query_params)
+        if prefs is None:
+            return JSONResponse({"erro": "bad_request", "detalhe": "preferencias"},
+                                status_code=400, headers=cabecalhos)
+        estado = await asyncio.to_thread(visao.estado, prefs, _olho_local, _olho_nuvem)
+        return JSONResponse(estado, headers=cabecalhos)
 
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])

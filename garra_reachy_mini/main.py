@@ -51,6 +51,7 @@ from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from . import servicos as servicos_mod
+from . import visao
 from .segmentador import Segmentador
 from .servicos import Servicos
 from .voz import VozClient, frases, limpar_para_voz
@@ -276,6 +277,9 @@ class GarraReachyMini(ReachyMiniApp):
 
         self.controlador, self.hub, self.comportamento = controlador, hub, comportamento
         self.acompanhamento = Acompanhamento(controlador.eventos)
+        # A visão: o mesmo `FrameHub` do painel, um quadro por pedido. O cliente
+        # da ponte é montado a cada olhada, com a URL e o token de agora.
+        self.olho = visao.Olho(hub, self._cliente_de_visao, controlador.eventos)
         self.servicos.conectar(controlador.eventos)
 
         estado = controlador.status()
@@ -383,6 +387,7 @@ class GarraReachyMini(ReachyMiniApp):
                 politica=self.politica,
                 chat=self.chat,
                 acompanhamento=self.acompanhamento,
+                olho=self.olho,
                 servicos=self.servicos,
                 falar=self._falar_async,
                 calar=self._calar_agora,
@@ -407,6 +412,10 @@ class GarraReachyMini(ReachyMiniApp):
             raise RuntimeError("a voz ainda não está pronta")
         r = await asyncio.to_thread(self._falar_texto, texto, False)
         return r.value if isinstance(r, ResultadoFala) else ResultadoFala.FALADA.value
+
+    def _cliente_de_visao(self) -> visao.ClienteVisao:
+        cfg = Config.carregar()
+        return visao.ClienteVisao(cfg.gateway_url, cfg.gateway_key)
 
     def medida_do_detector(self) -> dict | None:
         """O que o detector de fala está medindo agora, ou `None` sem laço de
@@ -936,9 +945,15 @@ class GarraReachyMini(ReachyMiniApp):
             # contexto, e gastá-lo num turno que não consulta o modelo seria
             # jogá-lo fora. O chat e o registro seguem mostrando `texto`, que é
             # o que a pessoa disse.
+            # "O que você está vendo?": um quadro da câmera vira texto e vai
+            # junto. Só quando o pedido pede para olhar; nunca em laço.
+            visto = None
+            if visao.pede_visao(texto):
+                visto = self.olho.olhar(texto, conf_agora.conversa,
+                                        correlacao=correlacao, origem="voz")
             mensagem = self.acompanhamento.montar(texto, time.monotonic(),
                                                   conf_agora.conversa,
-                                                  correlacao=correlacao)
+                                                  correlacao=correlacao, visao=visto)
             futuro = executor.submit(cerebro.perguntar, mensagem + complemento)
 
             # Prazos ABSOLUTOS a partir do início do turno. Encadear as esperas
