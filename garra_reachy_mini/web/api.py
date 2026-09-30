@@ -274,6 +274,13 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
             raise _erro(400, "informe enabled", "bad_request")
         return await repassar("POST", "/api/casa/voz", {"enabled": corpo["enabled"]})
 
+    # ── diagnóstico do gateway ───────────────────────────────────────────────
+    # O Capability Registry e os outros checks do gateway, para o painel
+    # mostrar nome/origem/estado/motivo/ação em vez de "11". Só leitura.
+    @r.get("/diagnostico")
+    async def diagnostico() -> Any:
+        return await repassar("GET", "/api/diagnostico", timeout_s=30.0)
+
     # ── família (rostos) ─────────────────────────────────────────────────────
     # Cadastro é repasse. A amostra e o teste pegam UM quadro da câmera AGORA —
     # é o dono, no painel, pedindo — e o mandam ao serviço no PC. O painel

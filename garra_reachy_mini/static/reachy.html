@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#041531">
 <title>Reachy Mini — Garra</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,8 +16,14 @@
 </head>
 <body>
 
+<!-- ── topo: cabeçalho + nav, sempre visíveis, com o STOP sempre ao alcance ──
+     A nav é IRMÃ do cabeçalho, não filha: o cabeçalho tem `backdrop-filter`,
+     e um filtro no ancestral faz `position: fixed` valer em relação a ele —
+     a barra inferior do celular apareceria colada no cabeçalho, em cima do
+     STOP. Medido em captura de tela, não em teoria. -->
+<div id="topo">
 <header>
-  <h1><span class="logo">◉</span> Reachy Mini</h1>
+  <h1><span class="logo">◉</span> <span class="marca">Reachy Mini</span></h1>
   <div id="pills-topo">
     <span class="pill" id="p-conexao"><span class="status-dot offline"></span> <span data-i18n="pill.conectando"></span></span>
     <span class="pill" id="p-modo" data-i18n="pill.modo"></span>
@@ -29,6 +37,27 @@
   </select>
   <button id="estop" class="perigo" data-i18n="estop.botao" data-i18n-title="estop.dica"></button>
 </header>
+  <!-- As cinco telas. No computador é a fila de abas sob o cabeçalho; no
+       celular o CSS leva a mesma nav para a barra inferior, ao alcance do
+       polegar. -->
+  <nav id="nav-telas" data-i18n-aria-label="nav.rotulo" aria-label="">
+    <a href="#inicio" data-tela="inicio" class="nav-item">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
+      <span data-i18n="nav.inicio"></span></a>
+    <a href="#conversa" data-tela="conversa" class="nav-item">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>
+      <span data-i18n="nav.conversa"></span></a>
+    <a href="#controle" data-tela="controle" class="nav-item">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10a5 5 0 0 1 5 5v1a5 5 0 0 1-5 5h-1l-2-2h-4l-2 2H7a5 5 0 0 1-5-5v-1a5 5 0 0 1 5-5zm0 3v2H5v2h2v2h2v-2h2v-2H9v-2zm9 0a1.2 1.2 0 1 0 0 2.4A1.2 1.2 0 0 0 16 10zm2.5 3a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z"/></svg>
+      <span data-i18n="nav.controle"></span></a>
+    <a href="#apps" data-tela="apps" class="nav-item">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 0h6v6h-6z"/></svg>
+      <span data-i18n="nav.apps"></span></a>
+    <a href="#ajustes" data-tela="ajustes" class="nav-item">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.9 5.2.1-1.2-.1-1.2 2-1.6-2-3.4-2.4.9a8 8 0 0 0-2.1-1.2L16 3h-4l-.4 2.5a8 8 0 0 0-2.1 1.2l-2.4-.9-2 3.4 2 1.6-.1 1.2.1 1.2-2 1.6 2 3.4 2.4-.9a8 8 0 0 0 2.1 1.2L12 21h4l.4-2.5a8 8 0 0 0 2.1-1.2l2.4.9 2-3.4z"/></svg>
+      <span data-i18n="nav.ajustes"></span></a>
+  </nav>
+</div>
 
 <div id="faixa-estop">
   <span data-i18n="estop.faixa"></span>
@@ -42,6 +71,9 @@
 </div>
 
 <main>
+
+<!-- ═══ INÍCIO ═══════════════════════════════════════════════════════════════ -->
+<section class="tela" id="tela-inicio" data-tela="inicio">
 
   <!-- ── status ──────────────────────────────────────────────────────────── -->
   <section class="card glass-panel">
@@ -70,52 +102,11 @@
     </div>
   </section>
 
-  <!-- ── controle manual ─────────────────────────────────────────────────── -->
+  <!-- ── integrações, num relance ────────────────────────────────────────── -->
   <section class="card glass-panel">
-    <h2 data-i18n="manual.titulo"></h2>
-    <div class="joystick" id="joystick" role="application"
-         data-i18n-aria-label="manual.joystick" aria-label="" tabindex="0">
-      <div class="knob" id="knob"></div>
-    </div>
-    <div class="controle-slider">
-      <label><span data-i18n="manual.intensidade"></span> <b id="v-intensidade">0.60</b></label>
-      <input type="range" id="intensidade" min="0.05" max="1" step="0.05" value="0.6">
-    </div>
-    <div class="controle-slider">
-      <label><span data-i18n="manual.duracao"></span> <b id="v-duracao">0.8 s</b></label>
-      <input type="range" id="duracao" min="0.2" max="3" step="0.1" value="0.8">
-    </div>
-    <div class="grade-botoes" style="margin-top:10px">
-      <button data-antenas="up" data-i18n="manual.antenas_cima"></button>
-      <button data-antenas="down" data-i18n="manual.antenas_baixo"></button>
-      <button data-antenas="wiggle" data-i18n="manual.antenas_balancar"></button>
-      <button data-antenas="neutral" data-i18n="manual.antenas_neutro"></button>
-    </div>
-  </section>
-
-  <!-- ── expressões ──────────────────────────────────────────────────────── -->
-  <section class="card glass-panel">
-    <h2><span data-i18n="expr.titulo"></span> <span class="conta" id="conta-expressoes"></span></h2>
-    <div class="grade-botoes" id="expressoes-principais"></div>
-    <div class="linha" style="margin-top:12px">
-      <select id="sel-emocao" style="flex:1"></select>
-      <button id="btn-emocao" data-i18n="expr.executar"></button>
-    </div>
-  </section>
-
-  <!-- ── movimentos e danças ─────────────────────────────────────────────── -->
-  <section class="card glass-panel">
-    <h2><span data-i18n="mov.titulo"></span> <span class="conta" id="conta-dancas"></span></h2>
-    <div class="linha">
-      <button data-acao="dance" class="primario" data-i18n="mov.dancar"></button>
-      <button data-acao="greet" data-i18n="mov.cumprimentar"></button>
-      <button data-acao="nod" data-i18n="mov.sim"></button>
-      <button data-acao="shake_head" data-i18n="mov.nao"></button>
-    </div>
-    <div class="linha" style="margin-top:10px">
-      <select id="sel-danca" style="flex:1"></select>
-      <button id="btn-danca" data-i18n="mov.executar"></button>
-    </div>
+    <h2><span data-i18n="resumo.titulo"></span></h2>
+    <div class="status-lista" id="resumo-integracoes"></div>
+    <div class="dica" data-i18n="resumo.dica"></div>
   </section>
 
   <!-- ── comandos rápidos ────────────────────────────────────────────────── -->
@@ -123,6 +114,11 @@
     <h2 data-i18n="rapidos.titulo"></h2>
     <div class="grade-botoes" id="rapidos"></div>
   </section>
+
+</section>
+
+<!-- ═══ CONVERSA ═════════════════════════════════════════════════════════════ -->
+<section class="tela" id="tela-conversa" data-tela="conversa" hidden>
 
   <!-- ── chat ────────────────────────────────────────────────────────────── -->
   <section class="card glass-panel largo">
@@ -139,56 +135,178 @@
     </div>
   </section>
 
-  <!-- ── identidade do assistente (interface REMOTA do Garra) ─────────────── -->
-  <section class="card glass-panel" id="identidade-bloco" hidden>
-    <h2><span data-i18n="ident.titulo"></span> <span class="conta" id="identidade-info"></span></h2>
-    <div class="campo">
-      <label for="identidade-nome" data-i18n="ident.nome"></label>
-      <input type="text" id="identidade-nome" maxlength="32" placeholder="Garra">
-    </div>
-    <div class="campo">
-      <label for="identidade-operador" data-i18n="ident.operador"></label>
-      <input type="text" id="identidade-operador" maxlength="32">
-    </div>
-    <div class="dica" data-i18n="ident.operador_dica"></div>
-    <div class="campo">
-      <label for="identidade-persona" data-i18n="ident.persona"></label>
-      <textarea id="identidade-persona" rows="5" maxlength="4000"></textarea>
-    </div>
-    <div class="dica" data-i18n="ident.aviso"></div>
-    <div class="linha">
-      <button id="btn-identidade-salvar" class="primario" data-i18n="ident.salvar"></button>
-      <button id="btn-identidade-reset" data-i18n="ident.restaurar"></button>
-      <span class="pill" id="p-identidade">—</span>
+  <!-- ── caderno ─────────────────────────────────────────────────────────────
+       O que o robô anotou, lido do arquivo dele. É aqui que se confere: o
+       modelo pode dizer "anotado" sem ter anotado. -->
+  <section class="card glass-panel" id="caderno-bloco">
+    <h2><span data-i18n="caderno.titulo"></span> <span class="conta" id="caderno-info"></span></h2>
+    <div id="caderno-listas"><div class="vazio" data-i18n="caderno.vazio"></div></div>
+    <div class="linha" style="margin-top:10px">
+      <button id="btn-caderno-atualizar" data-i18n="caderno.atualizar"></button>
+      <span class="pill" id="p-caderno">—</span>
     </div>
   </section>
 
-  <!-- ── agentes (registry factual do Garra, SOMENTE leitura) ────────────── -->
-  <!-- Os cards vêm inteiros de GET /api/robot/agents; nada é duplicado aqui.
-       Sem toggles, sem edição, sem mensagem: um registry mostra fatos. -->
-  <section class="card glass-panel largo" id="agentes-bloco"
-           data-testid="reachy-agents-section" hidden>
-    <h2><span data-i18n="agentes.titulo"></span> <span class="conta" id="agentes-info"></span></h2>
-    <div id="agentes-cards"></div>
-    <div class="dica" id="agentes-indisponivel" data-testid="reachy-agents-unavailable"
-         data-i18n="agentes.indisponivel" hidden></div>
-    <!-- Esta tela é somente leitura, e o link diz onde a escrita mora. Sem ele,
-         quem quisesse mudar algo procuraria um botão que este painel nunca vai
-         ter — e o robô não pode virar um segundo dono da configuração.
-         O gateway é loopback, então o link só abre no computador que o
-         hospeda; o texto diz isso em vez de deixar a pessoa descobrir com um
-         erro de conexão. -->
-    <div class="dica" data-testid="reachy-agents-admin-hint">
-      <span data-i18n="agentes.administrar_em"></span>
-      <a href="http://127.0.0.1:3888/#/agentes" target="_blank" rel="noopener"
-         data-testid="reachy-agents-admin-link">127.0.0.1:3888</a>
+</section>
+
+<!-- ═══ CONTROLE ═════════════════════════════════════════════════════════════ -->
+<section class="tela" id="tela-controle" data-tela="controle" hidden>
+  <div class="subnav" role="tablist" data-i18n-aria-label="controle.rotulo" aria-label="">
+    <a href="#controle/robo" role="tab" data-sub="robo" data-i18n="controle.robo"></a>
+    <a href="#controle/casa" role="tab" data-sub="casa" data-i18n="controle.casa"></a>
+    <a href="#controle/musica" role="tab" data-sub="musica" data-i18n="controle.musica"></a>
+  </div>
+
+  <!-- ── robô ────────────────────────────────────────────────────────────── -->
+  <div class="sub" id="sub-robo" data-sub="robo">
+    <section class="card glass-panel">
+      <h2 data-i18n="manual.titulo"></h2>
+      <div class="joystick" id="joystick" role="application"
+           data-i18n-aria-label="manual.joystick" aria-label="" tabindex="0">
+        <div class="knob" id="knob"></div>
+      </div>
+      <div class="controle-slider">
+        <label><span data-i18n="manual.intensidade"></span> <b id="v-intensidade">0.60</b></label>
+        <input type="range" id="intensidade" min="0.05" max="1" step="0.05" value="0.6">
+      </div>
+      <div class="controle-slider">
+        <label><span data-i18n="manual.duracao"></span> <b id="v-duracao">0.8 s</b></label>
+        <input type="range" id="duracao" min="0.2" max="3" step="0.1" value="0.8">
+      </div>
+      <div class="grade-botoes" style="margin-top:10px">
+        <button data-antenas="up" data-i18n="manual.antenas_cima"></button>
+        <button data-antenas="down" data-i18n="manual.antenas_baixo"></button>
+        <button data-antenas="wiggle" data-i18n="manual.antenas_balancar"></button>
+        <button data-antenas="neutral" data-i18n="manual.antenas_neutro"></button>
+      </div>
+    </section>
+
+    <section class="card glass-panel">
+      <h2><span data-i18n="expr.titulo"></span> <span class="conta" id="conta-expressoes"></span></h2>
+      <div class="grade-botoes" id="expressoes-principais"></div>
+      <div class="linha" style="margin-top:12px">
+        <select id="sel-emocao" style="flex:1"></select>
+        <button id="btn-emocao" data-i18n="expr.executar"></button>
+      </div>
+    </section>
+
+    <section class="card glass-panel">
+      <h2><span data-i18n="mov.titulo"></span> <span class="conta" id="conta-dancas"></span></h2>
+      <div class="linha">
+        <button data-acao="dance" class="primario" data-i18n="mov.dancar"></button>
+        <button data-acao="greet" data-i18n="mov.cumprimentar"></button>
+        <button data-acao="nod" data-i18n="mov.sim"></button>
+        <button data-acao="shake_head" data-i18n="mov.nao"></button>
+      </div>
+      <div class="linha" style="margin-top:10px">
+        <select id="sel-danca" style="flex:1"></select>
+        <button id="btn-danca" data-i18n="mov.executar"></button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ── casa ────────────────────────────────────────────────────────────────
+       Nada é executado daqui: o painel configura e mostra. Quem liga a luz é
+       o modelo, pelo gateway, com as portas de risco dele — e só se a pessoa
+       liberou a voz aqui embaixo. -->
+  <div class="sub" id="sub-casa" data-sub="casa" hidden>
+    <section class="card glass-panel largo" id="casa-bloco">
+      <h2><span data-i18n="casa.titulo"></span> <span class="pill" id="p-casa">—</span></h2>
+      <div class="dica" id="casa-estado-texto"></div>
+      <div id="casa-configurar">
+        <div class="campo">
+          <label for="casa-url" data-i18n="casa.url"></label>
+          <input type="url" id="casa-url" maxlength="200" placeholder="http://homeassistant.local:8123"
+                 autocomplete="off" spellcheck="false" inputmode="url">
+        </div>
+        <div class="campo">
+          <label for="casa-token" data-i18n="casa.token"></label>
+          <input type="password" id="casa-token" maxlength="2048" autocomplete="off">
+        </div>
+        <div class="dica" data-i18n="casa.token_dica"></div>
+        <div class="linha">
+          <button id="btn-casa-conectar" class="primario" data-i18n="casa.conectar"></button>
+          <button id="btn-casa-remover" data-i18n="casa.remover"></button>
+        </div>
+      </div>
+      <hr class="divisor">
+      <label class="caixa" id="linha-casa-voz">
+        <input type="checkbox" id="casa-voz">
+        <span data-i18n="casa.voz"></span>
+      </label>
+      <div class="aviso-caixa" data-i18n="casa.voz_aviso"></div>
+      <hr class="divisor">
+      <div class="linha">
+        <span class="conta" data-i18n="casa.entidades"></span>
+        <button id="btn-casa-entidades" data-i18n="casa.entidades_atualizar"></button>
+      </div>
+      <div class="lista-itens" id="casa-entidades"><div class="vazio" data-i18n="casa.entidades_vazio"></div></div>
+      <div class="dica" data-i18n="casa.dica"></div>
+    </section>
+  </div>
+
+  <!-- ── música (Spotify) ─────────────────────────────────────────────────────
+       Conectar a conta é no navegador do COMPUTADOR (loopback, como a Spotify
+       exige). Aqui: estado, onde toca, aparelhos e os botões. Por voz, não:
+       política da Spotify, e o painel diz isso em vez de fingir. -->
+  <div class="sub" id="sub-musica" data-sub="musica" hidden>
+    <section class="card glass-panel largo" id="musica-bloco">
+      <h2><span data-i18n="musica.titulo"></span> <span class="pill" id="p-musica">—</span></h2>
+      <div class="dica" id="musica-estado-texto"></div>
+      <div id="musica-configurar">
+        <div class="campo">
+          <label for="musica-client-id" data-i18n="musica.client_id"></label>
+          <input type="text" id="musica-client-id" maxlength="32" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="dica" data-i18n="musica.client_id_dica"></div>
+        <div class="linha">
+          <button id="btn-musica-salvar" class="primario" data-i18n="musica.salvar"></button>
+          <button id="btn-musica-desconectar" data-i18n="musica.desconectar"></button>
+        </div>
+        <div class="aviso-caixa" id="musica-conectar-dica">
+          <span data-i18n="musica.conectar_dica"></span>
+          <code id="musica-conectar-url">http://127.0.0.1:8125/spotify/conectar</code>
+        </div>
+      </div>
+      <hr class="divisor">
+      <div class="agora" id="musica-reproducao"><div class="vazio" data-i18n="musica.nada"></div></div>
+      <div class="linha" style="margin-top:10px" id="musica-controles">
+        <button data-musica="previous" data-i18n="musica.anterior"></button>
+        <button data-musica="play" class="primario" data-i18n="musica.tocar"></button>
+        <button data-musica="pause" data-i18n="musica.pausar"></button>
+        <button data-musica="next" data-i18n="musica.proxima"></button>
+      </div>
+      <div class="controle-slider">
+        <label for="musica-volume"><span data-i18n="musica.volume"></span> <b id="v-musica-volume">—</b></label>
+        <input type="range" id="musica-volume" min="0" max="100" step="5" value="50">
+      </div>
+      <div class="linha">
+        <span class="conta" data-i18n="musica.dispositivos"></span>
+        <button id="btn-musica-atualizar" data-i18n="musica.atualizar"></button>
+      </div>
+      <div class="lista-itens" id="musica-dispositivos"><div class="vazio" data-i18n="musica.sem_dispositivos"></div></div>
+      <div class="dica" data-i18n="musica.politica"></div>
+    </section>
+  </div>
+
+</section>
+
+<!-- ═══ APPS ═════════════════════════════════════════════════════════════════ -->
+<section class="tela" id="tela-apps" data-tela="apps" hidden>
+  <section class="card glass-panel largo">
+    <h2><span data-i18n="apps.titulo"></span> <span class="conta" id="conta-apps"></span></h2>
+    <div class="lista-apps" id="lista-apps"><div class="vazio" data-i18n="apps.carregando"></div></div>
+    <div class="linha" style="margin-top:10px">
+      <button id="btn-apps-atualizar" data-i18n="apps.atualizar"></button>
+      <button id="btn-app-parar" data-i18n="apps.parar"></button>
+      <button id="btn-app-reiniciar" data-i18n="apps.reiniciar"></button>
     </div>
-    <div class="linha">
-      <button id="btn-agentes-atualizar" data-i18n="agentes.atualizar"></button>
-      <span class="pill" id="p-agentes">—</span>
-    </div>
-    <div class="dica" data-i18n="agentes.nota"></div>
+    <div class="dica" data-i18n="apps.dica"></div>
   </section>
+</section>
+
+<!-- ═══ AJUSTES ══════════════════════════════════════════════════════════════ -->
+<section class="tela" id="tela-ajustes" data-tela="ajustes" hidden>
 
   <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
   <section class="card glass-panel" id="conversa-bloco">
@@ -340,34 +458,173 @@
     <div class="status-lista" id="conversa-metricas" style="margin-top:12px"></div>
   </section>
 
-  <!-- ── caderno ─────────────────────────────────────────────────────────────
-       O que o robô anotou, lido do arquivo dele. É aqui que se confere: o
-       modelo pode dizer "anotado" sem ter anotado. -->
-  <section class="card glass-panel" id="caderno-bloco">
-    <h2><span data-i18n="caderno.titulo"></span> <span class="conta" id="caderno-info"></span></h2>
-    <div id="caderno-listas"><div class="vazio" data-i18n="caderno.vazio"></div></div>
+  <!-- ── visão ─────────────────────────────────────────────────────────────────
+       "O que você está vendo?" pega UM quadro e o descreve. Local por padrão;
+       a nuvem é opt-in com aviso, e só ela deixa uma imagem da casa sair. -->
+  <section class="card glass-panel" id="visao-bloco">
+    <h2><span data-i18n="visao.titulo"></span> <span class="pill" id="p-visao">—</span></h2>
+    <label class="caixa" id="linha-visao-ligada">
+      <input type="checkbox" id="visao-ligada">
+      <span data-i18n="visao.ligada"></span>
+    </label>
+    <div class="dica" data-i18n="visao.ligada_dica"></div>
+    <div class="campo" data-visao-sub="1">
+      <label for="visao-provedor" data-i18n="visao.provedor"></label>
+      <select id="visao-provedor">
+        <option value="auto" data-i18n="visao.provedor_auto"></option>
+        <option value="local" data-i18n="visao.provedor_local"></option>
+        <option value="openrouter" data-i18n="visao.provedor_openrouter"></option>
+      </select>
+    </div>
+    <div class="campo" data-visao-sub="1">
+      <label for="visao-local-endpoint" data-i18n="visao.local_endpoint"></label>
+      <input type="url" id="visao-local-endpoint" maxlength="180" autocomplete="off" spellcheck="false"
+             placeholder="http://127.0.0.1:11434" inputmode="url">
+    </div>
+    <div class="campo" data-visao-sub="1">
+      <label for="visao-local-modelo" data-i18n="visao.local_modelo"></label>
+      <input type="text" id="visao-local-modelo" maxlength="120" autocomplete="off" spellcheck="false"
+             placeholder="qwen2.5vl:7b">
+    </div>
+    <div class="campo" data-visao-sub="1">
+      <label for="visao-nuvem-modelo" data-i18n="visao.nuvem_modelo"></label>
+      <input type="text" id="visao-nuvem-modelo" maxlength="120" autocomplete="off" spellcheck="false"
+             placeholder="google/gemini-3.8-flash">
+    </div>
+    <label class="caixa" id="linha-visao-nuvem" data-visao-sub="1">
+      <input type="checkbox" id="visao-nuvem">
+      <span data-i18n="visao.nuvem"></span>
+    </label>
+    <div class="aviso-caixa privacidade" id="visao-nuvem-aviso" data-i18n="visao.nuvem_aviso"></div>
     <div class="linha" style="margin-top:10px">
-      <button id="btn-caderno-atualizar" data-i18n="caderno.atualizar"></button>
-      <span class="pill" id="p-caderno">—</span>
+      <button id="btn-visao-salvar" class="primario" data-i18n="visao.salvar"></button>
+      <button id="btn-visao-testar" data-i18n="visao.testar"></button>
+      <button id="btn-visao-analisar" data-i18n="visao.analisar"></button>
+    </div>
+    <div class="status-lista" id="visao-estado" style="margin-top:12px"></div>
+    <div class="resultado" id="visao-resultado" hidden></div>
+  </section>
+
+  <!-- ── família ───────────────────────────────────────────────────────────────
+       Quem consentiu, e só. Vetores cifrados no computador, nunca imagem;
+       apagar apaga. Reconhecer não é saber quem fala e não autoriza nada. -->
+  <section class="card glass-panel" id="familia-bloco">
+    <h2><span data-i18n="familia.titulo"></span> <span class="pill" id="p-familia">—</span></h2>
+    <label class="caixa" id="linha-familia-ligada">
+      <input type="checkbox" id="familia-ligada">
+      <span data-i18n="familia.ligada"></span>
+    </label>
+    <div class="dica" data-i18n="familia.ligada_dica"></div>
+    <div class="aviso-caixa privacidade" data-i18n="familia.privacidade"></div>
+    <div class="dica" id="familia-servico"></div>
+    <div class="lista-itens" id="familia-perfis"><div class="vazio" data-i18n="familia.vazio"></div></div>
+    <div class="linha" style="margin-top:8px">
+      <button id="btn-familia-atualizar" data-i18n="familia.atualizar"></button>
+      <button id="btn-familia-testar" data-i18n="familia.testar"></button>
+    </div>
+    <div class="resultado" id="familia-resultado" hidden></div>
+    <hr class="divisor">
+    <div class="conta" data-i18n="familia.novo"></div>
+    <div class="campo">
+      <label for="familia-nome" data-i18n="familia.nome"></label>
+      <input type="text" id="familia-nome" maxlength="40" autocomplete="off">
+    </div>
+    <label class="caixa" id="linha-familia-consente">
+      <input type="checkbox" id="familia-consente">
+      <span data-i18n="familia.consente"></span>
+    </label>
+    <div class="campo">
+      <label for="familia-por" data-i18n="familia.por"></label>
+      <input type="text" id="familia-por" maxlength="40" autocomplete="off">
+    </div>
+    <label class="caixa" id="linha-familia-menor">
+      <input type="checkbox" id="familia-menor">
+      <span data-i18n="familia.menor"></span>
+    </label>
+    <div class="campo" id="campo-familia-responsavel" hidden>
+      <label for="familia-responsavel" data-i18n="familia.responsavel"></label>
+      <input type="text" id="familia-responsavel" maxlength="40" autocomplete="off">
+    </div>
+    <div class="linha">
+      <button id="btn-familia-criar" class="primario" data-i18n="familia.criar"></button>
+    </div>
+    <div class="dica" data-i18n="familia.amostras_dica"></div>
+  </section>
+
+  <!-- ── identidade do assistente (interface REMOTA do Garra) ─────────────── -->
+  <section class="card glass-panel" id="identidade-bloco" hidden>
+    <h2><span data-i18n="ident.titulo"></span> <span class="conta" id="identidade-info"></span></h2>
+    <div class="campo">
+      <label for="identidade-nome" data-i18n="ident.nome"></label>
+      <input type="text" id="identidade-nome" maxlength="32" placeholder="Garra">
+    </div>
+    <div class="campo">
+      <label for="identidade-operador" data-i18n="ident.operador"></label>
+      <input type="text" id="identidade-operador" maxlength="32">
+    </div>
+    <div class="dica" data-i18n="ident.operador_dica"></div>
+    <div class="campo">
+      <label for="identidade-persona" data-i18n="ident.persona"></label>
+      <textarea id="identidade-persona" rows="5" maxlength="4000"></textarea>
+    </div>
+    <div class="dica" data-i18n="ident.aviso"></div>
+    <div class="linha">
+      <button id="btn-identidade-salvar" class="primario" data-i18n="ident.salvar"></button>
+      <button id="btn-identidade-reset" data-i18n="ident.restaurar"></button>
+      <span class="pill" id="p-identidade">—</span>
     </div>
   </section>
 
-  <!-- ── apps ────────────────────────────────────────────────────────────── -->
-  <section class="card glass-panel">
-    <h2><span data-i18n="apps.titulo"></span> <span class="conta" id="conta-apps"></span></h2>
-    <div class="lista-apps" id="lista-apps"><div class="vazio" data-i18n="apps.carregando"></div></div>
+  <!-- ── diagnóstico ───────────────────────────────────────────────────────────
+       O Capability Registry do gateway, item a item: nome, origem, estado,
+       motivo e o que fazer. "Não configurado" não é "quebrado", e a tela
+       diz qual é qual em vez de somar tudo num número. -->
+  <section class="card glass-panel largo" id="diagnostico-bloco">
+    <h2><span data-i18n="diag.titulo"></span> <span class="pill" id="p-diagnostico">—</span></h2>
+    <div class="lista-itens" id="diagnostico-capacidades"><div class="vazio" data-i18n="diag.carregando"></div></div>
+    <div class="conta" style="margin-top:10px" data-i18n="diag.checks"></div>
+    <div class="lista-itens" id="diagnostico-checks"></div>
     <div class="linha" style="margin-top:10px">
-      <button id="btn-apps-atualizar" data-i18n="apps.atualizar"></button>
-      <button id="btn-app-parar" data-i18n="apps.parar"></button>
-      <button id="btn-app-reiniciar" data-i18n="apps.reiniciar"></button>
+      <button id="btn-diagnostico-atualizar" data-i18n="diag.atualizar"></button>
+      <span class="dica" id="diagnostico-info"></span>
     </div>
+    <div class="dica" data-i18n="diag.dica"></div>
+  </section>
+
+  <!-- ── agentes (registry factual do Garra, SOMENTE leitura) ────────────── -->
+  <!-- Os cards vêm inteiros de GET /api/robot/agents; nada é duplicado aqui.
+       Sem toggles, sem edição, sem mensagem: um registry mostra fatos. -->
+  <section class="card glass-panel largo" id="agentes-bloco"
+           data-testid="reachy-agents-section" hidden>
+    <h2><span data-i18n="agentes.titulo"></span> <span class="conta" id="agentes-info"></span></h2>
+    <div id="agentes-cards"></div>
+    <div class="dica" id="agentes-indisponivel" data-testid="reachy-agents-unavailable"
+         data-i18n="agentes.indisponivel" hidden></div>
+    <!-- Esta tela é somente leitura, e o link diz onde a escrita mora. Sem ele,
+         quem quisesse mudar algo procuraria um botão que este painel nunca vai
+         ter — e o robô não pode virar um segundo dono da configuração.
+         O gateway é loopback, então o link só abre no computador que o
+         hospeda; o texto diz isso em vez de deixar a pessoa descobrir com um
+         erro de conexão. -->
+    <div class="dica" data-testid="reachy-agents-admin-hint">
+      <span data-i18n="agentes.administrar_em"></span>
+      <a href="http://127.0.0.1:3888/#/agentes" target="_blank" rel="noopener"
+         data-testid="reachy-agents-admin-link">127.0.0.1:3888</a>
+    </div>
+    <div class="linha">
+      <button id="btn-agentes-atualizar" data-i18n="agentes.atualizar"></button>
+      <span class="pill" id="p-agentes">—</span>
+    </div>
+    <div class="dica" data-i18n="agentes.nota"></div>
   </section>
 
   <!-- ── logs ────────────────────────────────────────────────────────────── -->
-  <section class="card glass-panel">
+  <section class="card glass-panel largo">
     <h2><span data-i18n="logs.titulo"></span> <span class="conta" id="conta-eventos"></span></h2>
     <div class="logs" id="logs"></div>
   </section>
+
+</section>
 
 </main>
 

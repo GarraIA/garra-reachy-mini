@@ -47,10 +47,10 @@ body {
 }
 
 /* ── cabeçalho ───────────────────────────────────────────────────────────── */
+/* O topo (cabeçalho + nav) é o que gruda; o filtro fica só no cabeçalho, para
+   a nav poder ser `fixed` em relação à janela no celular. */
+#topo { position: sticky; top: 0; z-index: 20; }
 header {
-  position: sticky;
-  top: 0;
-  z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -159,25 +159,109 @@ button.ativo { border-color: var(--garra-accent); color: var(--garra-accent); }
   letter-spacing: 0.02em;
 }
 
-/* ── grade ───────────────────────────────────────────────────────────────── */
-main {
+/* ── telas e grade ───────────────────────────────────────────────────────── */
+/* Cinco telas, uma visível por vez (o `hidden` do HTML, que o `display: grid`
+   não pode atropelar). Cada tela é a grade de cartões de sempre. */
+main { padding: 16px clamp(14px, 3vw, 28px) 40px; }
+.tela, .sub {
   display: grid;
   gap: 16px;
-  padding: 16px clamp(14px, 3vw, 28px) 40px;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(330px, 100%), 1fr));
   align-items: start;
 }
+.tela[hidden], .sub[hidden] { display: none; }
+.sub { grid-column: 1 / -1; }
 .card { padding: 16px 18px 18px; min-width: 0; }
 .card.largo { grid-column: span 2; }
 @media (max-width: 760px) { .card.largo { grid-column: span 1; } }
+
+/* ── navegação entre telas ───────────────────────────────────────────────── */
+/* No computador: uma fila de abas no rodapé do cabeçalho (que é sticky, então
+   as abas e o STOP ficam sempre à vista). No celular a MESMA nav vira a barra
+   inferior, ao alcance do polegar, com cinco itens e alvos de 44 px. */
+#nav-telas {
+  display: flex;
+  gap: 4px;
+  padding: 0 clamp(14px, 3vw, 28px);
+  background: rgba(4, 21, 49, 0.82);
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--garra-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#nav-telas::-webkit-scrollbar { display: none; }
+.nav-item {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 12px 12px 0 0;
+  border-bottom: 2px solid transparent;
+  color: var(--garra-muted);
+  font-size: 0.82rem; font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.nav-item svg { width: 18px; height: 18px; fill: currentColor; flex: none; }
+.nav-item:hover { color: var(--garra-text); background: var(--garra-panel); }
+.nav-item.ativo { color: var(--garra-primary); border-bottom-color: var(--garra-primary); }
+.nav-item:focus-visible { outline: 2px solid var(--garra-accent); outline-offset: -2px; }
+
+/* Sub-abas do CONTROLE (Robô · Casa · Música): um segmento só. */
+.subnav {
+  grid-column: 1 / -1;
+  display: flex; gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--garra-border);
+  background: var(--garra-panel);
+  width: fit-content; max-width: 100%;
+  overflow-x: auto; scrollbar-width: none;
+}
+.subnav a {
+  min-height: 40px; display: inline-flex; align-items: center;
+  padding: 6px 16px; border-radius: 999px;
+  color: var(--garra-muted); font-size: 0.82rem; font-weight: 700;
+  text-decoration: none; white-space: nowrap;
+}
+.subnav a.ativo { background: rgba(var(--garra-primary-rgb), 0.18); color: var(--garra-primary); }
+.subnav a:focus-visible { outline: 2px solid var(--garra-accent); }
+
+@media (max-width: 760px) {
+  #nav-telas {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    margin: 0;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    background: rgba(4, 21, 49, 0.94);
+    backdrop-filter: blur(18px);
+    border-top: 1px solid var(--garra-border);
+    justify-content: space-around;
+    overflow: visible;
+  }
+  .nav-item {
+    flex: 1 1 0; min-width: 44px; min-height: 52px;
+    flex-direction: column; gap: 3px;
+    padding: 6px 2px;
+    border-radius: 12px; border-bottom: 0;
+    font-size: 0.66rem;
+  }
+  .nav-item svg { width: 22px; height: 22px; }
+  .nav-item.ativo { background: rgba(var(--garra-primary-rgb), 0.14); }
+  /* O conteúdo não pode terminar embaixo da barra. */
+  main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+}
 
 /* No celular as pílulas embrulhavam numa coluna alta e empurravam o título e o
    botão de parada para fora do alcance do polegar. Uma faixa que rola na
    horizontal mantém o cabeçalho com uma linha só. */
 @media (max-width: 620px) {
   header { flex-wrap: nowrap; gap: 8px; padding: 10px 12px; }
-  header h1 { font-size: 1rem; }
+  header h1 { font-size: 1rem; white-space: nowrap; }
+  #estop { min-height: 44px; padding: 8px 14px; }
+  /* A faixa das pílulas precisa de `min-width: 0` E `flex: 1 1 0`: com a base
+     `auto` o flex a encolhia para zero e as pílulas sumiam do celular. */
   #pills-topo {
+    flex: 1 1 0;
+    min-width: 40px;
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
@@ -185,6 +269,7 @@ main {
   }
   #pills-topo::-webkit-scrollbar { display: none; }
   #estop { flex-shrink: 0; }
+  #idioma { flex-shrink: 0; width: auto; padding: 5px 4px; }
 }
 
 .card > h2 {
@@ -432,3 +517,103 @@ body.estopped main { filter: saturate(0.65); }
   font-size: 0.8rem;
   cursor: pointer;
 }
+
+/* ── alvos de toque e larguras mínimas ───────────────────────────────────── */
+/* 44 × 44 no toque: é o que o polegar acerta. No mouse os botões continuam
+   como sempre. */
+@media (pointer: coarse), (max-width: 760px) {
+  button:not(.mini) { min-height: 44px; min-width: 44px; }
+  select, input[type="text"], input[type="url"], input[type="password"] { min-height: 44px; }
+  /* A caixa de seleção é pequena; o alvo é o rótulo inteiro, que a acompanha. */
+  label.caixa, label.linha { min-height: 44px; }
+  input[type="checkbox"] { width: 22px; height: 22px; }
+  .subnav a { min-height: 44px; }
+}
+/* 320 px: sem rolagem horizontal. A marca some, as pílulas rolam, tudo o
+   que é largo quebra dentro do cartão. */
+@media (max-width: 380px) {
+  h1 .marca { display: none; }
+  header { gap: 6px; padding: 8px 10px; }
+  main { padding-left: 12px; padding-right: 12px; }
+  .card { padding: 14px 14px 16px; }
+}
+html, body { max-width: 100%; overflow-x: hidden; }
+.card, .card * { min-width: 0; }
+code, pre { overflow-wrap: anywhere; }
+
+/* ── formulários ─────────────────────────────────────────────────────────── */
+.campo { display: grid; gap: 4px; margin: 8px 0; }
+.campo label { font-size: 0.78rem; color: var(--garra-muted); }
+input[type="url"], input[type="password"], .card select {
+  width: 100%; min-width: 0;
+  font: inherit; font-size: 0.88rem;
+  color: var(--garra-text);
+  background: var(--garra-panel);
+  border: 1px solid var(--garra-border);
+  border-radius: var(--garra-radius-sm);
+  padding: 9px 12px;
+}
+select option { color: #041531; }
+.card select:focus, input[type="url"]:focus, input[type="password"]:focus { outline: none; border-color: var(--garra-accent); }
+/* A pílula de estado no título quebra em vez de alargar o cartão. */
+.card > h2 { flex-wrap: wrap; }
+.card > h2 .pill { margin-left: auto; white-space: normal; text-align: right; max-width: 100%; }
+label.caixa {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+label.caixa input[type="checkbox"] { accent-color: var(--garra-primary); flex: none; }
+.dica { color: var(--garra-muted-2); font-size: 0.78rem; line-height: 1.45; margin: 2px 0 8px; }
+.dica a { color: var(--garra-accent); text-decoration: none; }
+.dica a:hover { text-decoration: underline; }
+hr.divisor { border: 0; border-top: 1px solid var(--garra-border); margin: 12px 0; }
+.aviso-caixa.privacidade {
+  background: rgba(var(--garra-accent-rgb), 0.08);
+  border-color: rgba(var(--garra-accent-rgb), 0.35);
+  color: var(--garra-text);
+  margin: 6px 0 10px;
+}
+.aviso-caixa code { font-family: var(--garra-mono); font-size: 0.8rem; display: block; margin-top: 4px; color: var(--garra-accent); }
+.resultado {
+  margin-top: 10px; padding: 10px 13px;
+  border-radius: var(--garra-radius-sm);
+  border: 1px solid var(--garra-border);
+  background: var(--garra-panel);
+  font-size: 0.85rem; line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.resultado .t { color: var(--garra-muted-2); font-size: 0.72rem; display: block; margin-bottom: 3px; }
+
+/* ── listas de itens (entidades, aparelhos, perfis, diagnóstico) ─────────── */
+.lista-itens { display: grid; gap: 6px; }
+.item {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 12px;
+  border-radius: var(--garra-radius-sm);
+  border: 1px solid var(--garra-border);
+  background: var(--garra-panel);
+  font-size: 0.85rem;
+}
+.item .nome { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.item .meio { flex: 1 1 160px; min-width: 0; }
+.item .desc { font-size: 0.74rem; color: var(--garra-muted-2); overflow-wrap: anywhere; }
+.item .acoes { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 9px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  border: 1px solid var(--garra-border); color: var(--garra-muted);
+  flex: none;
+}
+.badge.ok      { border-color: rgba(32, 232, 135, 0.45); color: var(--garra-success); }
+.badge.warning { border-color: rgba(255, 176, 32, 0.45); color: var(--garra-warning); }
+.badge.danger  { border-color: rgba(255, 92, 122, 0.5);  color: var(--garra-danger); }
+.badge.accent  { border-color: rgba(var(--garra-accent-rgb), 0.45); color: var(--garra-accent); }
+.badge.muted   { opacity: 0.8; }
+
+/* "Agora tocando" da música. */
+.agora { display: grid; gap: 2px; font-size: 0.88rem; }
+.agora .faixa { font-weight: 700; font-size: 1rem; }
+.agora .onde { color: var(--garra-muted-2); font-size: 0.78rem; }

@@ -40,6 +40,10 @@ class PonteFalsa:
             return httpx.Response(200, json={"voice_control": True})
         if request.url.path == "/api/casa" and request.method == "DELETE":
             return httpx.Response(200, json={"configured": False})
+        if request.url.path == "/api/diagnostico":
+            return httpx.Response(200, json={"status": "warning", "version": "0.4.7", "generated_at": "x",
+                                             "checks": [{"id": "tools.capabilities", "label": "Capability registry",
+                                                         "status": "warning", "detail": "11 visivel(is)", "next_step": None}]})
         return httpx.Response(404, json={"erro": "nada"})
 
 
@@ -106,3 +110,11 @@ def test_sem_ponte_configurada_as_rotas_dizem_isso(backend, tmp_path, monkeypatc
         assert r.status_code == 503 and r.json()["error"]["code"] == "bridge_not_configured"
     hub.encerrar()
     ctrl.encerrar(timeout=2)
+
+
+def test_o_diagnostico_do_gateway_e_repasse_so_leitura(painel) -> None:
+    r = painel.get("/api/robot/diagnostico")
+    assert r.status_code == 200 and r.json()["checks"][0]["id"] == "tools.capabilities"
+    assert painel.falsa.pedidos[-1][:2] == ("GET", "/api/diagnostico")
+    painel.falsa.falha = "offline"
+    assert painel.get("/api/robot/diagnostico").status_code == 502

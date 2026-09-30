@@ -690,11 +690,14 @@ function pintarConversa(d) {
   $('conversa-contexto-janela').value = tras;
   $('v-conversa-contexto-janela').textContent = `${tras} s`;
   $('conversa-caderno').checked = c.notebook_enabled === true;
+  pintarVisaoCampos(c);
+  $('familia-ligada').checked = c.family_recognition_enabled === true;
   sincronizarMestre();
   sincronizarWake();
   sincronizarConferir();
   sincronizarContexto();
   sincronizarRelogio();
+  pintarResumo();
 }
 
 // "Conferir sempre" só faz sentido com a conferência ligada.
@@ -911,6 +914,554 @@ async function carregarApps() {
   }
 }
 
+// ─── telas ───────────────────────────────────────────────────────────────────
+// Cinco telas e um endereço por tela (`#controle/casa`): o link abre na tela
+// certa, o botão "voltar" do celular funciona, e recarregar não perde o lugar.
+const TELAS = ['inicio', 'conversa', 'controle', 'apps', 'ajustes'];
+const SUBS = ['robo', 'casa', 'musica'];
+const telaAtual = { tela: 'inicio', sub: 'robo' };
+
+function lerRota() {
+  const [tela, sub] = location.hash.replace(/^#/, '').split('/');
+  return { tela: TELAS.includes(tela) ? tela : 'inicio', sub: SUBS.includes(sub) ? sub : telaAtual.sub };
+}
+
+function mostrarTela() {
+  const rota = lerRota();
+  telaAtual.tela = rota.tela; telaAtual.sub = rota.sub;
+  for (const sec of document.querySelectorAll('.tela')) sec.hidden = sec.dataset.tela !== rota.tela;
+  for (const a of document.querySelectorAll('#nav-telas .nav-item')) {
+    const ativo = a.dataset.tela === rota.tela;
+    a.classList.toggle('ativo', ativo);
+    if (ativo) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  }
+  for (const div of document.querySelectorAll('#tela-controle .sub')) div.hidden = div.dataset.sub !== rota.sub;
+  for (const a of document.querySelectorAll('.subnav a')) {
+    const ativo = a.dataset.sub === rota.sub;
+    a.classList.toggle('ativo', ativo);
+    a.setAttribute('aria-selected', ativo ? 'true' : 'false');
+  }
+  // O que a tela mostra vem do servidor na hora em que ela abre — e só então:
+  // ninguém pede o estado da Spotify para quem está olhando o joystick.
+  if (rota.tela === 'controle' && rota.sub === 'casa') carregarCasa();
+  if (rota.tela === 'controle' && rota.sub === 'musica') carregarMusica();
+  if (rota.tela === 'apps') carregarApps();
+  if (rota.tela === 'ajustes') { carregarVisao(); carregarFamilia(); carregarDiagnostico(); }
+  if (rota.tela === 'inicio') pintarResumo();
+  window.scrollTo({ top: 0 });
+}
+
+// ─── início: as integrações num relance ──────────────────────────────────────
+// Nada é pedido daqui: o resumo é o último estado que cada tela carregou.
+const integracoes = { visao: null, casa: null, musica: null, familia: null };
+
+function pintarResumo() {
+  const caixa = $('resumo-integracoes');
+  if (!caixa) return;
+  const linhas = [];
+  const linha = (rotulo, valor, ok) =>
+    `<div class="status-item"><span class="status-dot ${ok === null ? 'offline' : ok ? '' : 'warning'}"></span>${esc(rotulo)}<b>${esc(valor)}</b></div>`;
+  const c = conversaEstado.conf || {};
+  linhas.push(linha(t('resumo.visao'), c.vision_enabled === true ? t('resumo.ligada') : t('resumo.desligada'),
+                    c.vision_enabled === true ? true : null));
+  const casa = integracoes.casa;
+  linhas.push(linha(t('resumo.casa'), casa ? t(`casa.estado_${casa.state}`) : t('resumo.abra'),
+                    casa ? (casa.state === 'ok' ? true : casa.state === 'not_configured' ? null : false) : null));
+  const mus = integracoes.musica;
+  linhas.push(linha(t('resumo.musica'), mus ? t(`musica.estado_${mus.state}`) : t('resumo.abra'),
+                    mus ? (mus.state === 'connected' ? true : mus.state === 'not_configured' ? null : false) : null));
+  const fam = integracoes.familia;
+  linhas.push(linha(t('resumo.familia'), c.family_recognition_enabled === true ? t('resumo.ligada') : t('resumo.desligada'),
+                    c.family_recognition_enabled === true ? (fam && fam.service && fam.service.state === 'ok') : null));
+  caixa.innerHTML = linhas.join('');
+}
+
+// ─── visão ───────────────────────────────────────────────────────────────────
+function pintarVisaoCampos(c) {
+  $('visao-ligada').checked = c.vision_enabled === true;
+  $('visao-provedor').value = c.vision_provider || 'auto';
+  $('visao-local-endpoint').value = c.vision_local_endpoint ?? '';
+  $('visao-local-modelo').value = c.vision_local_model ?? '';
+  $('visao-nuvem-modelo').value = c.vision_openrouter_model ?? '';
+  $('visao-nuvem').checked = c.vision_cloud_enabled === true;
+  sincronizarVisao();
+}
+
+function sincronizarVisao() {
+  const ligada = $('visao-ligada').checked;
+  for (const el of document.querySelectorAll('[data-visao-sub]')) {
+    el.style.opacity = ligada ? '' : '0.55';
+    for (const campo of el.querySelectorAll('input, select')) campo.disabled = !ligada;
+  }
+  // O aviso fica à vista sempre que a nuvem está marcada — mesmo com a visão
+  // desligada: é a marca que deixa uma imagem sair de casa.
+  $('visao-nuvem-aviso').hidden = !$('visao-nuvem').checked;
+}
+
+function mudancasDaVisao() {
+  return {
+    vision_enabled: $('visao-ligada').checked,
+    vision_provider: $('visao-provedor').value,
+    vision_local_endpoint: $('visao-local-endpoint').value.trim() || undefined,
+    vision_local_model: $('visao-local-modelo').value.trim() || undefined,
+    vision_openrouter_model: $('visao-nuvem-modelo').value.trim() || undefined,
+    vision_cloud_enabled: $('visao-nuvem').checked,
+  };
+}
+
+function pintarVisaoEstado(d) {
+  integracoes.visao = d;
+  const itens = [];
+  const item = (rotulo, valor, ok) =>
+    `<div class="status-item"><span class="status-dot ${ok === null ? 'offline' : ok ? '' : 'warning'}"></span>${esc(rotulo)}<b>${esc(valor)}</b></div>`;
+  const s = d.settings || {};
+  const p = d.providers;
+  if (!s.vision_enabled) {
+    itens.push(item(t('visao.estado_provedor'), t('visao.desligada'), null));
+    pill($('p-visao'), false, t('visao.desligada'));
+  } else if (!p || p.error) {
+    const erro = p && p.error ? t(`visao.erro_${p.error}`) : t('visao.sem_resposta');
+    itens.push(item(t('visao.estado_provedor'), erro, false));
+    pill($('p-visao'), false, erro, 'warning');
+  } else {
+    // `effective` é o provedor que valeria AGORA: local, openrouter ou nenhum.
+    const efetivo = p.effective;
+    itens.push(item(t('visao.estado_provedor'), efetivo ? t(`visao.provedor_${efetivo}`) : t('visao.nenhum'), !!efetivo));
+    const l = p.local || {};
+    const textoLocal = !l.reachable ? t('visao.erro_provider_offline')
+      : !l.model_present ? t('visao.erro_model_missing')
+      : !l.vision ? t('visao.erro_model_without_vision') : (l.model || t('visao.pronto'));
+    itens.push(item(t('visao.estado_local'), textoLocal, !!(l.reachable && l.model_present && l.vision)));
+    const n = p.cloud || {};
+    const textoNuvem = !n.enabled ? t('visao.nuvem_desligada')
+      : !n.key_present ? t('visao.erro_auth_failed') : (n.model || t('visao.pronto'));
+    itens.push(item(t('visao.estado_nuvem'), textoNuvem, !n.enabled ? null : !!n.key_present));
+    pill($('p-visao'), !!efetivo, efetivo ? t(`visao.provedor_${efetivo}`) : t('visao.nenhum'), efetivo ? 'success' : 'warning');
+  }
+  const u = d.last;
+  itens.push(item(t('visao.ultima'), !u ? t('visao.nunca')
+    : u.ok ? t('visao.ultima_ok', { hora: u.at, provedor: u.provider || '?', ms: u.ms ?? '?' })
+    : t('visao.ultima_falhou', { hora: u.at, motivo: t(`visao.erro_${u.reason}`) }), u ? !!u.ok : null));
+  $('visao-estado').innerHTML = itens.join('');
+  pintarResumo();
+}
+
+async function carregarVisao() {
+  try {
+    pintarVisaoEstado(await api('/api/robot/vision/status'));
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) { $('visao-bloco').hidden = true; return; }
+    pill($('p-visao'), false, e.message, 'danger');
+  }
+}
+
+async function analisarVisao() {
+  const b = $('btn-visao-analisar'), caixa = $('visao-resultado');
+  b.disabled = true;
+  caixa.hidden = false;
+  caixa.innerHTML = `<span class="t">${esc(t('visao.analisando'))}</span>`;
+  try {
+    const r = await api('/api/robot/vision/analyze', { method: 'POST', body: '{}' });
+    if (r.ok) {
+      caixa.innerHTML = `<span class="t">${esc(t('visao.analise_de', { hora: r.captured_at, provedor: r.provider, modelo: r.model, ms: r.ms }))}</span>${esc(r.text)}`;
+    } else {
+      caixa.innerHTML = `<span class="t">${esc(r.at || '')}</span>${esc(t(`visao.erro_${r.reason}`))}`;
+    }
+  } catch (e) {
+    caixa.innerHTML = esc(e.message);
+  } finally {
+    b.disabled = false;
+    carregarVisao();
+  }
+}
+
+// ─── casa (Home Assistant pelo gateway) ──────────────────────────────────────
+function pintarCasa(d) {
+  integracoes.casa = d;
+  const estadoCasa = d.state || 'not_configured';
+  const classe = { ok: 'success', pending: 'warning', broken: 'danger', not_configured: '' }[estadoCasa] || '';
+  pill($('p-casa'), estadoCasa === 'ok', t(`casa.estado_${estadoCasa}`), classe);
+  const partes = [t(`casa.estado_${estadoCasa}_dica`)];
+  if (d.url) partes.push(d.url);
+  const ha = d.home_assistant;
+  if (ha && ha.version) partes.push(`Home Assistant ${ha.version}`);
+  if (d.gateway) partes.push(t(d.gateway.devices_visible ? 'casa.gateway_ve' : 'casa.gateway_nao_ve'));
+  $('casa-estado-texto').textContent = partes.join(' · ');
+  if (d.url && !$('casa-url').value) $('casa-url').value = d.url;
+  $('casa-voz').checked = d.voice_control === true;
+  $('casa-voz').disabled = estadoCasa !== 'ok';
+  $('btn-casa-remover').disabled = !d.configured;
+  pintarResumo();
+}
+
+function erroDaPonte(e, prefixo) {
+  // A ponte responde `{erro, detalhe}`; o robô, `{detail:{error:{code}}}`.
+  const codigo = e.dados && (e.dados.erro || (e.dados.detail && e.dados.detail.error && e.dados.detail.error.code) || e.dados.error && e.dados.error.code);
+  const chave = codigo ? `${prefixo}.erro_${codigo}` : '';
+  const texto = chave && !t(chave).startsWith(prefixo) ? t(chave) : (codigo || e.message);
+  return texto;
+}
+
+async function carregarCasa() {
+  try {
+    pintarCasa(await api('/api/robot/casa/estado'));
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) { $('casa-bloco').hidden = true; return; }
+    pill($('p-casa'), false, erroDaPonte(e, 'casa'), 'danger');
+    $('casa-estado-texto').textContent = `${erroDaPonte(e, 'casa')} — ${t('casa.sem_ponte')}`;
+  }
+}
+
+async function conectarCasa() {
+  const url = $('casa-url').value.trim(), token = $('casa-token').value.trim();
+  if (!url || !token) { registrarLog(t('casa.faltando'), 'err'); return; }
+  const b = $('btn-casa-conectar');
+  b.disabled = true;
+  pill($('p-casa'), false, t('casa.conectando'), 'warning');
+  try {
+    pintarCasa(await api('/api/robot/casa/configurar', { method: 'POST', body: JSON.stringify({ url, token }) }));
+    $('casa-token').value = '';
+    registrarLog(t('casa.conectada'), 'ok');
+    carregarEntidades();
+  } catch (e) {
+    pill($('p-casa'), false, erroDaPonte(e, 'casa'), 'danger');
+  } finally { b.disabled = false; }
+}
+
+async function removerCasa() {
+  try {
+    pintarCasa(await api('/api/robot/casa', { method: 'DELETE' }));
+    $('casa-entidades').innerHTML = `<div class="vazio">${esc(t('casa.entidades_vazio'))}</div>`;
+  } catch (e) { pill($('p-casa'), false, erroDaPonte(e, 'casa'), 'danger'); }
+}
+
+async function carregarEntidades() {
+  const caixa = $('casa-entidades');
+  try {
+    const d = await api('/api/robot/casa/entidades');
+    const ents = d.entities || [];
+    caixa.innerHTML = ents.length ? ents.map((e) => `<div class="item">
+        <span class="badge ${e.risk === 'R0' || e.risk === 'R1' ? 'ok' : e.risk === 'R2' ? 'warning' : 'danger'}">${esc(e.risk || '?')}</span>
+        <div class="meio"><div class="nome">${esc(e.name || e.entity_id)}</div>
+        <div class="desc">${esc(e.entity_id)} · ${esc(e.state ?? '—')}</div></div>
+      </div>`).join('') : `<div class="vazio">${esc(t('casa.entidades_vazio'))}</div>`;
+  } catch (e) {
+    caixa.innerHTML = `<div class="vazio">${esc(erroDaPonte(e, 'casa'))}</div>`;
+  }
+}
+
+async function vozCasa(ligar) {
+  try {
+    pintarCasa(await api('/api/robot/casa/voz', { method: 'POST', body: JSON.stringify({ enabled: ligar }) }));
+    registrarLog(t(ligar ? 'casa.voz_liberada' : 'casa.voz_bloqueada'), 'ok');
+  } catch (e) {
+    $('casa-voz').checked = !ligar;
+    registrarLog(erroDaPonte(e, 'casa'), 'err');
+  }
+}
+
+// ─── música (Spotify) ────────────────────────────────────────────────────────
+function estadoDaMusica(d) {
+  return !d.configured ? 'not_configured' : d.connected ? 'connected' : 'not_connected';
+}
+
+function pintarMusica(d) {
+  const st = estadoDaMusica(d);
+  integracoes.musica = { ...d, state: st };
+  const classe = { connected: 'success', not_connected: 'warning', expired: 'danger', not_configured: '' }[st] || '';
+  pill($('p-musica'), st === 'connected', t(`musica.estado_${st}`), classe);
+  $('musica-estado-texto').textContent = t(`musica.estado_${st}_dica`);
+  if (d.connect_url) $('musica-conectar-url').textContent = d.connect_url;
+  $('musica-conectar-dica').hidden = st === 'connected' || st === 'not_configured';
+  if (d.configured && !$('musica-client-id').value) $('musica-client-id').placeholder = '••••••••';
+  if (st === 'connected' && d.user && d.user.display_name) {
+    $('musica-estado-texto').textContent += ` · ${d.user.display_name}${d.premium === false ? ' · ' + t('musica.sem_premium') : ''}`;
+  }
+  $('btn-musica-desconectar').disabled = st === 'not_configured';
+  for (const b of document.querySelectorAll('[data-musica]')) b.disabled = st !== 'connected';
+  $('musica-volume').disabled = st !== 'connected';
+  pintarResumo();
+}
+
+function pintarReproducao(r) {
+  const caixa = $('musica-reproducao');
+  if (!r || !r.item) {
+    caixa.innerHTML = `<div class="vazio">${esc(t('musica.nada'))}</div>`;
+    $('v-musica-volume').textContent = '—';
+    return;
+  }
+  const onde = r.device ? t('musica.toca_em', { aparelho: r.device.name || '?' }) : '';
+  caixa.innerHTML = `<div class="faixa">${esc(r.item.name || '—')}</div>
+    <div>${esc((r.item.artists || []).join(', '))}</div>
+    <div class="onde">${esc(r.is_playing ? t('musica.tocando') : t('musica.pausado'))}${onde ? ' · ' + esc(onde) : ''}</div>`;
+  if (r.device && Number.isFinite(r.device.volume_percent)) {
+    $('musica-volume').value = r.device.volume_percent;
+    $('v-musica-volume').textContent = `${r.device.volume_percent}%`;
+  }
+}
+
+function pintarDispositivos(lista) {
+  const caixa = $('musica-dispositivos');
+  caixa.innerHTML = lista.length ? lista.map((d) => `<div class="item">
+      <span class="badge ${d.is_active ? 'ok' : 'muted'}">${esc(d.is_active ? t('musica.ativo') : d.type || '')}</span>
+      <div class="meio"><div class="nome">${esc(d.name)}</div></div>
+      <div class="acoes"><button class="mini" data-transferir="${esc(d.id)}" ${d.is_active || d.is_restricted ? 'disabled' : ''}>${esc(t('musica.transferir'))}</button></div>
+    </div>`).join('') : `<div class="vazio">${esc(t('musica.sem_dispositivos'))}</div>`;
+  caixa.querySelectorAll('[data-transferir]').forEach((b) =>
+    b.addEventListener('click', () => acaoMusica('transfer', { device_id: b.dataset.transferir })));
+}
+
+async function carregarMusica() {
+  try {
+    const d = await api('/api/robot/musica/estado');
+    pintarMusica(d);
+    if (estadoDaMusica(d) === 'connected') {
+      const [rep, disp] = await Promise.all([
+        api('/api/robot/musica/reproducao').catch(() => null),
+        api('/api/robot/musica/dispositivos').catch(() => ({ devices: [] })),
+      ]);
+      pintarReproducao(rep);
+      pintarDispositivos((disp && disp.devices) || []);
+    } else {
+      pintarReproducao(null);
+      pintarDispositivos([]);
+    }
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) { $('musica-bloco').hidden = true; return; }
+    pill($('p-musica'), false, erroDaPonte(e, 'musica'), 'danger');
+    $('musica-estado-texto').textContent = `${erroDaPonte(e, 'musica')} — ${t('musica.sem_ponte')}`;
+  }
+}
+
+async function salvarClientId() {
+  const client_id = $('musica-client-id').value.trim();
+  if (!client_id) { registrarLog(t('musica.client_id_faltando'), 'err'); return; }
+  try {
+    pintarMusica(await api('/api/robot/musica/configurar', { method: 'POST', body: JSON.stringify({ client_id }) }));
+    $('musica-client-id').value = '';
+    registrarLog(t('musica.client_id_salvo'), 'ok');
+  } catch (e) { pill($('p-musica'), false, erroDaPonte(e, 'musica'), 'danger'); }
+}
+
+async function desconectarMusica() {
+  try {
+    pintarMusica(await api('/api/robot/musica', { method: 'DELETE' }));
+    pintarReproducao(null); pintarDispositivos([]);
+  } catch (e) { pill($('p-musica'), false, erroDaPonte(e, 'musica'), 'danger'); }
+}
+
+async function acaoMusica(acao, args = {}) {
+  try {
+    const r = await api('/api/robot/musica/acao', { method: 'POST', body: JSON.stringify({ action: acao, ...args }) });
+    pintarReproducao(r ? r.state : null);
+    if (acao === 'transfer') carregarMusica();
+  } catch (e) {
+    registrarLog(`${t('musica.titulo')}: ${erroDaPonte(e, 'musica')}`, 'err');
+  }
+}
+
+// ─── família ─────────────────────────────────────────────────────────────────
+function pintarFamilia(d) {
+  integracoes.familia = d;
+  const s = d.service || {};
+  const vivo = s.state === 'ok';
+  // "unavailable" com `error` é a ponte (companion/gateway), não o serviço de
+  // rostos: o texto diz qual dos dois faltou.
+  const daPonte = s.state === 'unavailable' && s.error && !t(`familia.erro_${s.error}`).startsWith('familia.');
+  const fora = daPonte ? t(`familia.erro_${s.error}`) : t('familia.servico_fora');
+  pill($('p-familia'), vivo, vivo ? t('familia.servico_ok', { n: s.profiles ?? 0 }) : fora, vivo ? 'success' : 'warning');
+  $('familia-servico').textContent = vivo
+    ? (s.unreadable_profiles ? t('familia.ilegiveis', { n: s.unreadable_profiles }) : t('familia.servico_dica', { motor: s.engine || '?' }))
+    : (daPonte ? fora : t('familia.servico_fora_dica'));
+  const u = d.last;
+  if (u) {
+    const caixa = $('familia-resultado');
+    caixa.hidden = false;
+    caixa.innerHTML = `<span class="t">${esc(u.at || '')}</span>` + esc(u.ok
+      ? t('familia.viu', { nomes: (u.names || []).join(', ') || t('familia.ninguem'), n: u.unknown ?? 0 })
+      : t(`familia.erro_${u.reason}`));
+  }
+  pintarResumo();
+}
+
+function pintarPerfis(perfis) {
+  const caixa = $('familia-perfis');
+  caixa.innerHTML = perfis.length ? perfis.map((p) => `<div class="item" data-perfil="${esc(p.id)}">
+      <span class="badge ${p.active ? (p.samples ? 'ok' : 'warning') : 'muted'}">${esc(p.active ? t('familia.amostras', { n: p.samples }) : t('familia.inativo'))}</span>
+      <div class="meio"><div class="nome">${esc(p.name)}</div>
+        <div class="desc">${esc(t('familia.consentiu', { por: p.consent?.by || '?', quando: (p.consent?.at || '').slice(0, 10) }))}${p.consent?.minor ? ' · ' + esc(t('familia.menor_de', { resp: p.consent.guardian || '?' })) : ''}${p.samples_readable === false ? ' · ' + esc(t('familia.ilegivel')) : ''}</div></div>
+      <div class="acoes">
+        <button class="mini primario" data-amostra="${esc(p.id)}">${esc(t('familia.capturar'))}</button>
+        <button class="mini" data-ativo="${esc(p.id)}" data-valor="${p.active ? '0' : '1'}">${esc(t(p.active ? 'familia.desativar' : 'familia.ativar'))}</button>
+        <button class="mini" data-limpar="${esc(p.id)}" ${p.samples ? '' : 'disabled'}>${esc(t('familia.recomecar'))}</button>
+        <button class="mini" data-apagar="${esc(p.id)}">${esc(t('familia.apagar'))}</button>
+      </div>
+    </div>`).join('') : `<div class="vazio">${esc(t('familia.vazio'))}</div>`;
+  caixa.querySelectorAll('[data-amostra]').forEach((b) => b.addEventListener('click', () => amostraFamilia(b.dataset.amostra, b)));
+  caixa.querySelectorAll('[data-ativo]').forEach((b) => b.addEventListener('click', () =>
+    chamadaFamilia(`/api/robot/familia/perfis/${encodeURIComponent(b.dataset.ativo)}`, 'PATCH', { active: b.dataset.valor === '1' })));
+  caixa.querySelectorAll('[data-limpar]').forEach((b) => b.addEventListener('click', () =>
+    chamadaFamilia(`/api/robot/familia/perfis/${encodeURIComponent(b.dataset.limpar)}/amostras`, 'DELETE')));
+  caixa.querySelectorAll('[data-apagar]').forEach((b) => b.addEventListener('click', () => {
+    // Dois cliques para apagar: o primeiro só arma. Sem `confirm()`, que trava
+    // a página e não traduz.
+    if (b.dataset.armado !== '1') { b.dataset.armado = '1'; b.textContent = t('familia.apagar_confirmar'); return; }
+    chamadaFamilia(`/api/robot/familia/perfis/${encodeURIComponent(b.dataset.apagar)}`, 'DELETE');
+  }));
+}
+
+async function chamadaFamilia(caminho, metodo, corpo) {
+  try {
+    await api(caminho, { method: metodo, body: corpo ? JSON.stringify(corpo) : undefined });
+    carregarFamilia();
+  } catch (e) { registrarLog(`${t('familia.titulo')}: ${erroDaPonte(e, 'familia')}`, 'err'); }
+}
+
+async function carregarFamilia() {
+  try {
+    pintarFamilia(await api('/api/robot/familia/estado'));
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) { $('familia-bloco').hidden = true; return; }
+    pill($('p-familia'), false, erroDaPonte(e, 'familia'), 'danger');
+    return;
+  }
+  try {
+    const d = await api('/api/robot/familia/perfis');
+    pintarPerfis(d.profiles || []);
+  } catch (e) {
+    $('familia-perfis').innerHTML = `<div class="vazio">${esc(erroDaPonte(e, 'familia'))}</div>`;
+  }
+}
+
+async function criarPerfil() {
+  const nome = $('familia-nome').value.trim();
+  const menor = $('familia-menor').checked;
+  const consent = { accepted: $('familia-consente').checked, by: $('familia-por').value.trim(),
+                    minor: menor, guardian: menor ? $('familia-responsavel').value.trim() : null };
+  if (!nome) { registrarLog(t('familia.erro_invalid_name'), 'err'); return; }
+  if (!consent.accepted || !consent.by) { registrarLog(t('familia.erro_consent_required'), 'err'); return; }
+  if (menor && !consent.guardian) { registrarLog(t('familia.erro_guardian_required'), 'err'); return; }
+  const b = $('btn-familia-criar');
+  b.disabled = true;
+  try {
+    await api('/api/robot/familia/perfis', { method: 'POST', body: JSON.stringify({ name: nome, consent }) });
+    $('familia-nome').value = ''; $('familia-consente').checked = false;
+    registrarLog(t('familia.criado', { nome }), 'ok');
+    carregarFamilia();
+  } catch (e) {
+    registrarLog(`${t('familia.titulo')}: ${erroDaPonte(e, 'familia')}`, 'err');
+  } finally { b.disabled = false; }
+}
+
+async function amostraFamilia(id, botao) {
+  const caixa = $('familia-resultado');
+  botao.disabled = true;
+  caixa.hidden = false;
+  caixa.innerHTML = `<span class="t">${esc(t('familia.capturando'))}</span>${esc(t('familia.capturando_dica'))}`;
+  try {
+    const r = await api(`/api/robot/familia/perfis/${encodeURIComponent(id)}/amostras`, { method: 'POST', body: '{}' });
+    caixa.innerHTML = r.ok
+      ? esc(t('familia.amostra_ok', { n: r.samples, px: r.quality?.size_px ?? '?' }))
+      : esc(t(`familia.amostra_${r.reason}`));
+    if (r.ok) carregarFamilia();
+  } catch (e) {
+    caixa.innerHTML = esc(erroDaPonte(e, 'familia'));
+  } finally { botao.disabled = false; }
+}
+
+async function testarFamilia() {
+  const b = $('btn-familia-testar'), caixa = $('familia-resultado');
+  b.disabled = true;
+  caixa.hidden = false;
+  caixa.innerHTML = `<span class="t">${esc(t('familia.testando'))}</span>`;
+  try {
+    const r = await api('/api/robot/familia/reconhecer', { method: 'POST', body: '{}' });
+    caixa.innerHTML = `<span class="t">${esc(r.captured_at || r.at || '')}</span>` + esc(r.ok
+      ? t('familia.viu', { nomes: (r.names || []).join(', ') || t('familia.ninguem'), n: r.unknown ?? 0 })
+      : t(`familia.erro_${r.reason}`));
+  } catch (e) {
+    caixa.innerHTML = esc(erroDaPonte(e, 'familia'));
+  } finally { b.disabled = false; }
+}
+
+// ─── diagnóstico (Capability Registry do gateway) ────────────────────────────
+// O gateway resume o registro numa frase: "11 visivel(is) · indisponivel: X
+// (motivo), Y (motivo) · nao configurado: Z (motivo)". Aqui ela vira uma linha
+// por item, com estado, motivo e a ação — e "não configurado" fica separado
+// de "quebrado", que é a diferença que importa.
+function itensDoRegistro(detalhe) {
+  const itens = [];
+  const grupos = String(detalhe || '').split('·');
+  for (const g of grupos) {
+    const m = g.match(/^\s*(indispon[ií]vel|n[aã]o configurado|unavailable|not configured)\s*:\s*(.*)$/i);
+    if (!m) continue;
+    const estado = /indispon|unavail/i.test(m[1]) ? 'unavailable' : 'not_configured';
+    for (const par of m[2].split(',')) {
+      const pm = par.trim().match(/^([a-z_][\w.-]*)\s*(?:\(([^)]*)\))?$/i);
+      if (pm) itens.push({ nome: pm[1], estado, motivo: pm[2] || '' });
+    }
+  }
+  const total = (String(detalhe || '').match(/(\d+)\s*vis/i) || [])[1];
+  return { itens, visiveis: total ? Number(total) : null };
+}
+
+function pintarDiagnostico(d) {
+  const caps = (d.checks || []).find((c) => c.id === 'tools.capabilities');
+  const reg = itensDoRegistro(caps ? caps.detail : '');
+  const caixa = $('diagnostico-capacidades');
+  const linhas = [];
+  if (reg.visiveis !== null) {
+    linhas.push(`<div class="item"><span class="badge ok">${esc(t('diag.disponivel'))}</span>
+      <div class="meio"><div class="nome">${esc(t('diag.visiveis', { n: reg.visiveis - reg.itens.length }))}</div>
+      <div class="desc">${esc(t('diag.visiveis_dica'))}</div></div></div>`);
+  }
+  for (const it of reg.itens) {
+    const chave = `diag.motivo_${it.motivo}`;
+    const motivo = t(chave).startsWith('diag.') ? it.motivo : t(chave);
+    const acaoChave = `diag.acao_${it.nome}_${it.motivo}`;
+    const acao = t(acaoChave).startsWith('diag.') ? '' : t(acaoChave);
+    linhas.push(`<div class="item"><span class="badge ${it.estado === 'unavailable' ? 'warning' : 'muted'}">${esc(t(`diag.${it.estado}`))}</span>
+      <div class="meio"><div class="nome">${esc(it.nome)} <span class="desc">· ${esc(t('diag.origem_gateway'))}</span></div>
+      <div class="desc">${esc(motivo)}${acao ? ' — ' + esc(acao) : ''}</div></div></div>`);
+  }
+  // As integrações deste painel entram no mesmo registro, com a origem certa.
+  const locais = [
+    ['vision', integracoes.visao ? ((integracoes.visao.settings || {}).vision_enabled ? ((integracoes.visao.providers || {}).effective && integracoes.visao.providers.effective !== 'none' ? 'ok' : 'unavailable') : 'not_configured') : null, 'diag.origem_robo'],
+    ['home', integracoes.casa ? ({ ok: 'ok', pending: 'unavailable', broken: 'unavailable', not_configured: 'not_configured' }[integracoes.casa.state] || 'unavailable') : null, 'diag.origem_companion'],
+    ['music', integracoes.musica ? (integracoes.musica.state === 'connected' ? 'ok' : integracoes.musica.state === 'not_configured' ? 'not_configured' : 'unavailable') : null, 'diag.origem_companion'],
+    ['family', integracoes.familia ? (integracoes.familia.service && integracoes.familia.service.state === 'ok' ? (integracoes.familia.enabled ? 'ok' : 'not_configured') : 'unavailable') : null, 'diag.origem_companion'],
+  ];
+  for (const [nome, estadoItem, origem] of locais) {
+    const st = estadoItem || 'unknown';
+    linhas.push(`<div class="item"><span class="badge ${st === 'ok' ? 'ok' : st === 'unavailable' ? 'warning' : 'muted'}">${esc(t(`diag.${st}`))}</span>
+      <div class="meio"><div class="nome">${esc(nome)} <span class="desc">· ${esc(t(origem))}</span></div>
+      <div class="desc">${esc(t(`diag.local_${nome}_${st}`))}</div></div></div>`);
+  }
+  caixa.innerHTML = linhas.join('') || `<div class="vazio">${esc(t('diag.vazio'))}</div>`;
+  const outros = (d.checks || []).filter((c) => c.id !== 'tools.capabilities');
+  const ordem = { error: 0, fail: 0, warning: 1, not_configured: 2, skipped: 3, ok: 4 };
+  outros.sort((a, b) => (ordem[a.status] ?? 2) - (ordem[b.status] ?? 2));
+  $('diagnostico-checks').innerHTML = outros.map((c) => {
+    const classe = c.status === 'ok' ? 'ok' : (c.status === 'warning' || c.status === 'not_configured') ? 'warning' : (c.status === 'skipped' ? 'muted' : 'danger');
+    return `<div class="item"><span class="badge ${classe}">${esc(t(`diag.status_${c.status}`) !== `diag.status_${c.status}` ? t(`diag.status_${c.status}`) : c.status)}</span>
+      <div class="meio"><div class="nome">${esc(c.label || c.id)}</div>
+      <div class="desc">${esc(c.detail || '')}${c.next_step ? ' — ' + esc(c.next_step) : ''}</div></div></div>`;
+  }).join('');
+  pill($('p-diagnostico'), d.status === 'ok', `${t(`diag.status_${d.status}`)} · ${d.version || '?'}`,
+       d.status === 'ok' ? 'success' : d.status === 'warning' ? 'warning' : 'danger');
+  $('diagnostico-info').textContent = d.generated_at ? t('diag.gerado', { quando: d.generated_at }) : '';
+}
+
+async function carregarDiagnostico() {
+  try {
+    pintarDiagnostico(await api('/api/robot/diagnostico'));
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) { $('diagnostico-bloco').hidden = true; return; }
+    pill($('p-diagnostico'), false, erroDaPonte(e, 'diag'), 'danger');
+    $('diagnostico-capacidades').innerHTML = `<div class="vazio">${esc(t('diag.sem_gateway'))}</div>`;
+  }
+}
+
 // ─── ligações ────────────────────────────────────────────────────────────────
 function ligar() {
   $('estop').addEventListener('click', pararTudo);
@@ -1075,6 +1626,48 @@ function ligar() {
     $('v-duracao').textContent = fmt(+e.target.value, ' s'));
 
   montarJoystick();
+
+  // Telas e sub-abas: o endereço manda, e os links só mudam o endereço.
+  window.addEventListener('hashchange', mostrarTela);
+
+  // Visão.
+  $('visao-ligada').addEventListener('change', sincronizarVisao);
+  $('visao-nuvem').addEventListener('change', sincronizarVisao);
+  $('btn-visao-salvar').addEventListener('click', async () => {
+    await salvarConversa(mudancasDaVisao());
+    carregarVisao();
+  });
+  $('btn-visao-testar').addEventListener('click', carregarVisao);
+  $('btn-visao-analisar').addEventListener('click', analisarVisao);
+
+  // Casa.
+  $('btn-casa-conectar').addEventListener('click', conectarCasa);
+  $('btn-casa-remover').addEventListener('click', removerCasa);
+  $('btn-casa-entidades').addEventListener('click', carregarEntidades);
+  $('casa-voz').addEventListener('change', (e) => vozCasa(e.target.checked));
+
+  // Música.
+  $('btn-musica-salvar').addEventListener('click', salvarClientId);
+  $('btn-musica-desconectar').addEventListener('click', desconectarMusica);
+  $('btn-musica-atualizar').addEventListener('click', carregarMusica);
+  for (const b of document.querySelectorAll('[data-musica]')) {
+    b.addEventListener('click', () => acaoMusica(b.dataset.musica));
+  }
+  $('musica-volume').addEventListener('input', (e) => $('v-musica-volume').textContent = `${e.target.value}%`);
+  $('musica-volume').addEventListener('change', (e) => acaoMusica('volume', { percent: Number(e.target.value) }));
+
+  // Família. O interruptor grava sozinho: é uma decisão, não um ajuste fino.
+  $('familia-ligada').addEventListener('change', async (e) => {
+    await salvarConversa({ family_recognition_enabled: e.target.checked });
+    carregarFamilia();
+  });
+  $('familia-menor').addEventListener('change', (e) => $('campo-familia-responsavel').hidden = !e.target.checked);
+  $('btn-familia-criar').addEventListener('click', criarPerfil);
+  $('btn-familia-atualizar').addEventListener('click', carregarFamilia);
+  $('btn-familia-testar').addEventListener('click', testarFamilia);
+
+  // Diagnóstico.
+  $('btn-diagnostico-atualizar').addEventListener('click', carregarDiagnostico);
 }
 
 // ─── arranque ────────────────────────────────────────────────────────────────
@@ -1086,6 +1679,7 @@ function ligar() {
     sel.addEventListener('change', (e) => trocarIdioma(e.target.value));
   }
   ligar();
+  mostrarTela();
   await atualizarStatus();
   await carregarCapacidades();
   carregarApps();

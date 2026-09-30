@@ -754,6 +754,33 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
             return imagem
         return await _familia_rota(request, _familia.reconhecer, imagem)
 
+    # ── diagnóstico do gateway ───────────────────────────────────────────────
+    # Só leitura, só o que o painel mostra: o Capability Registry e os outros
+    # checks, cada um com id/label/status/detail/next_step. O resto do
+    # diagnóstico (e qualquer chave nova que o gateway venha a pôr) não passa.
+    @app.get("/api/diagnostico")
+    async def diagnostico(request: Request) -> Response:
+        global _cliente
+        cabecalhos = {"Cache-Control": "no-store"}
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401, headers=cabecalhos)
+        if _cliente is None:
+            _cliente = httpx.AsyncClient(base_url=GATEWAY, timeout=180.0)
+        auth = {"Authorization": f"Bearer {chave_gateway}"} if chave_gateway else {}
+        try:
+            r = await _cliente.get("/api/diagnostics", headers=auth, timeout=20.0)
+            dados = r.json() if r.is_success else None
+        except httpx.HTTPError:
+            return JSONResponse({"erro": "gateway_unreachable"}, status_code=502, headers=cabecalhos)
+        except ValueError:
+            dados = None
+        if not isinstance(dados, dict) or not isinstance(dados.get("checks"), list):
+            return JSONResponse({"erro": "invalid_gateway_response"}, status_code=502, headers=cabecalhos)
+        checks = [{k: c.get(k) for k in ("id", "label", "status", "detail", "next_step")}
+                  for c in dados["checks"] if isinstance(c, dict)]
+        return JSONResponse({"status": dados.get("status"), "version": dados.get("version"),
+                             "generated_at": dados.get("generated_at"), "checks": checks}, headers=cabecalhos)
+
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     async def encaminhar(caminho: str, request: Request) -> Response:

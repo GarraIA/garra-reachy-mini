@@ -57,7 +57,10 @@ def test_a_escuta_de_contexto_e_subordinada_a_frase_de_ativacao() -> None:
 
 def test_o_caderno_tem_um_cartao_proprio() -> None:
     assert 'id="caderno-bloco"' in HTML and 'id="caderno-listas"' in HTML
-    assert HTML.index('id="conversa-bloco"') < HTML.index('id="caderno-bloco"')
+    # Cartão próprio, na tela CONVERSA (é o que o robô anotou conversando); os
+    # ajustes do caderno ficam com o resto dos ajustes, em AJUSTES.
+    conversa = HTML[HTML.index('id="tela-conversa"'):HTML.index('id="tela-controle"')]
+    assert 'id="caderno-bloco"' in conversa and 'id="conversa-bloco"' not in conversa
 
 
 # ─── ler e gravar ────────────────────────────────────────────────────────────
