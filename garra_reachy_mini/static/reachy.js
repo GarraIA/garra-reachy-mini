@@ -858,6 +858,7 @@ async function carregarConversa() {
 async function salvarConversa(mudancas) {
   const alvo = $('btn-conversa-salvar');
   alvo.disabled = true;
+  let ok = false;
   try {
     const corpo = { updated_by: 'painel-robo', ...mudancas };
     // A `revision` lida acompanha a escrita: se o :3888 gravou no meio, o robô
@@ -867,6 +868,7 @@ async function salvarConversa(mudancas) {
       method: 'PUT', body: JSON.stringify(corpo),
     }));
     pill($('p-conversa'), true, t('conversa.salvo'));
+    ok = true;
   } catch (e) {
     if (e.status === 409) {
       if (e.dados) pintarConversa(e.dados);
@@ -877,6 +879,7 @@ async function salvarConversa(mudancas) {
   } finally {
     alvo.disabled = false;
   }
+  return ok;
 }
 
 // ─── apps ────────────────────────────────────────────────────────────────────
@@ -946,7 +949,7 @@ function mostrarTela() {
   if (rota.tela === 'controle' && rota.sub === 'casa') carregarCasa();
   if (rota.tela === 'controle' && rota.sub === 'musica') carregarMusica();
   if (rota.tela === 'apps') carregarApps();
-  if (rota.tela === 'ajustes') { carregarVisao(); carregarFamilia(); carregarDiagnostico(); }
+  if (rota.tela === 'ajustes') carregarDiagnostico();   // que carrega visão e família antes
   if (rota.tela === 'inicio') pintarResumo();
   window.scrollTo({ top: 0 });
 }
@@ -999,13 +1002,16 @@ function sincronizarVisao() {
 }
 
 function mudancasDaVisao() {
+  const ligada = $('visao-ligada').checked;
   return {
-    vision_enabled: $('visao-ligada').checked,
+    vision_enabled: ligada,
     vision_provider: $('visao-provedor').value,
     vision_local_endpoint: $('visao-local-endpoint').value.trim() || undefined,
     vision_local_model: $('visao-local-modelo').value.trim() || undefined,
     vision_openrouter_model: $('visao-nuvem-modelo').value.trim() || undefined,
-    vision_cloud_enabled: $('visao-nuvem').checked,
+    // Desligar a visão desliga a nuvem junto: religar depois é uma decisão
+    // nova, e a imagem só volta a sair de casa se a pessoa marcar de novo.
+    vision_cloud_enabled: ligada && $('visao-nuvem').checked,
   };
 }
 
@@ -1050,6 +1056,7 @@ async function carregarVisao() {
   try {
     pintarVisaoEstado(await api('/api/robot/vision/status'));
   } catch (e) {
+    integracoes.visao = null;
     if (e.status === 404 || e.status === 405) { $('visao-bloco').hidden = true; return; }
     pill($('p-visao'), false, e.message, 'danger');
   }
@@ -1106,6 +1113,7 @@ async function carregarCasa() {
   try {
     pintarCasa(await api('/api/robot/casa/estado'));
   } catch (e) {
+    integracoes.casa = null;
     if (e.status === 404 || e.status === 405) { $('casa-bloco').hidden = true; return; }
     pill($('p-casa'), false, erroDaPonte(e, 'casa'), 'danger');
     $('casa-estado-texto').textContent = `${erroDaPonte(e, 'casa')} — ${t('casa.sem_ponte')}`;
@@ -1227,6 +1235,7 @@ async function carregarMusica() {
       pintarDispositivos([]);
     }
   } catch (e) {
+    integracoes.musica = null;
     if (e.status === 404 || e.status === 405) { $('musica-bloco').hidden = true; return; }
     pill($('p-musica'), false, erroDaPonte(e, 'musica'), 'danger');
     $('musica-estado-texto').textContent = `${erroDaPonte(e, 'musica')} — ${t('musica.sem_ponte')}`;
@@ -1265,22 +1274,21 @@ function pintarFamilia(d) {
   integracoes.familia = d;
   const s = d.service || {};
   const vivo = s.state === 'ok';
-  // "unavailable" com `error` é a ponte (companion/gateway), não o serviço de
-  // rostos: o texto diz qual dos dois faltou.
-  const daPonte = s.state === 'unavailable' && s.error && !t(`familia.erro_${s.error}`).startsWith('familia.');
-  const fora = daPonte ? t(`familia.erro_${s.error}`) : t('familia.servico_fora');
+  // "unavailable" com `error` é a ponte (companion/gateway); "error" é o
+  // serviço de pé com problema (base corrompida); "offline" é parado. O texto
+  // diz qual dos três faltou, porque o conserto é diferente em cada um.
+  const codigo = s.error && !t(`familia.erro_${s.error}`).startsWith('familia.') ? t(`familia.erro_${s.error}`) : null;
+  const fora = codigo || t('familia.servico_fora');
   pill($('p-familia'), vivo, vivo ? t('familia.servico_ok', { n: s.profiles ?? 0 }) : fora, vivo ? 'success' : 'warning');
   $('familia-servico').textContent = vivo
     ? (s.unreadable_profiles ? t('familia.ilegiveis', { n: s.unreadable_profiles }) : t('familia.servico_dica', { motor: s.engine || '?' }))
-    : (daPonte ? fora : t('familia.servico_fora_dica'));
+    : (codigo ? fora : (s.state === 'error' ? t('familia.servico_erro') : t('familia.servico_fora_dica')));
+  // A última captura fica numa linha própria: a caixa de resultado é da ação
+  // que a pessoa acabou de fazer, e não pode ser apagada por um recarregar.
   const u = d.last;
-  if (u) {
-    const caixa = $('familia-resultado');
-    caixa.hidden = false;
-    caixa.innerHTML = `<span class="t">${esc(u.at || '')}</span>` + esc(u.ok
-      ? t('familia.viu', { nomes: (u.names || []).join(', ') || t('familia.ninguem'), n: u.unknown ?? 0 })
-      : t(`familia.erro_${u.reason}`));
-  }
+  $('familia-ultima').textContent = !u ? '' : (u.ok
+    ? t('familia.ultima', { hora: u.at || '', texto: t('familia.viu', { nomes: (u.names || []).join(', ') || t('familia.ninguem'), n: u.unknown ?? 0 }) })
+    : t('familia.ultima', { hora: u.at || '', texto: t(`familia.erro_${u.reason}`) }));
   pintarResumo();
 }
 
@@ -1321,6 +1329,7 @@ async function carregarFamilia() {
   try {
     pintarFamilia(await api('/api/robot/familia/estado'));
   } catch (e) {
+    integracoes.familia = null;
     if (e.status === 404 || e.status === 405) { $('familia-bloco').hidden = true; return; }
     pill($('p-familia'), false, erroDaPonte(e, 'familia'), 'danger');
     return;
@@ -1357,7 +1366,13 @@ async function amostraFamilia(id, botao) {
   const caixa = $('familia-resultado');
   botao.disabled = true;
   caixa.hidden = false;
-  caixa.innerHTML = `<span class="t">${esc(t('familia.capturando'))}</span>${esc(t('familia.capturando_dica'))}`;
+  // Três segundos para a pessoa olhar para a câmera ANTES de o quadro ser
+  // tirado — senão a amostra é de quem estava lá quando o botão foi clicado.
+  for (let n = 3; n > 0; n--) {
+    caixa.innerHTML = `<span class="t">${esc(t('familia.contagem', { n }))}</span>${esc(t('familia.capturando_dica'))}`;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  caixa.innerHTML = `<span class="t">${esc(t('familia.capturando'))}</span>`;
   try {
     const r = await api(`/api/robot/familia/perfis/${encodeURIComponent(id)}/amostras`, { method: 'POST', body: '{}' });
     caixa.innerHTML = r.ok
@@ -1393,11 +1408,14 @@ function itensDoRegistro(detalhe) {
   const itens = [];
   const grupos = String(detalhe || '').split('·');
   for (const g of grupos) {
-    const m = g.match(/^\s*(indispon[ií]vel|n[aã]o configurado|unavailable|not configured)\s*:\s*(.*)$/i);
+    // Três grupos, como o gateway escreve desde o 0.4.6: "indisponivel:",
+    // "fora do ar:" (servidor MCP caído, canal desconectado) e "nao configurado:".
+    const m = g.match(/^\s*(indispon[ií]vel|fora do ar|n[aã]o configurado|unavailable|unhealthy|down|not configured)\s*:\s*(.*)$/i);
     if (!m) continue;
-    const estado = /indispon|unavail/i.test(m[1]) ? 'unavailable' : 'not_configured';
+    const estado = /indispon|unavail/i.test(m[1]) ? 'unavailable'
+      : /fora do ar|unhealthy|down/i.test(m[1]) ? 'unhealthy' : 'not_configured';
     for (const par of m[2].split(',')) {
-      const pm = par.trim().match(/^([a-z_][\w.-]*)\s*(?:\(([^)]*)\))?$/i);
+      const pm = par.trim().match(/^([^\s(),]+)\s*(?:\(([^)]*)\))?$/);
       if (pm) itens.push({ nome: pm[1], estado, motivo: pm[2] || '' });
     }
   }
@@ -1422,7 +1440,7 @@ function pintarDiagnostico(d) {
     const motivo = t(chave).startsWith('diag.') ? it.motivo : t(chave);
     const acaoChave = `diag.acao_${it.nome}_${it.motivo}`;
     const acao = t(acaoChave).startsWith('diag.') ? '' : t(acaoChave);
-    linhas.push(`<div class="item"><span class="badge ${it.estado === 'unavailable' ? 'warning' : 'muted'}">${esc(t(`diag.${it.estado}`))}</span>
+    linhas.push(`<div class="item"><span class="badge ${it.estado === 'unhealthy' ? 'danger' : it.estado === 'unavailable' ? 'warning' : 'muted'}">${esc(t(`diag.${it.estado}`))}</span>
       <div class="meio"><div class="nome">${esc(it.nome)} <span class="desc">· ${esc(t('diag.origem_gateway'))}</span></div>
       <div class="desc">${esc(motivo)}${acao ? ' — ' + esc(acao) : ''}</div></div></div>`);
   }
@@ -1439,6 +1457,12 @@ function pintarDiagnostico(d) {
       <div class="meio"><div class="nome">${esc(nome)} <span class="desc">· ${esc(t(origem))}</span></div>
       <div class="desc">${esc(t(`diag.local_${nome}_${st}`))}</div></div></div>`);
   }
+  if (caps && !reg.itens.length && caps.status !== 'ok') {
+    // A frase não rendeu itens: mostra o check inteiro, com o próximo passo.
+    linhas.push(`<div class="item"><span class="badge warning">${esc(caps.status)}</span>
+      <div class="meio"><div class="nome">${esc(caps.label || caps.id)}</div>
+      <div class="desc">${esc(caps.detail || '')}${caps.next_step ? ' — ' + esc(caps.next_step) : ''}</div></div></div>`);
+  }
   caixa.innerHTML = linhas.join('') || `<div class="vazio">${esc(t('diag.vazio'))}</div>`;
   const outros = (d.checks || []).filter((c) => c.id !== 'tools.capabilities');
   const ordem = { error: 0, fail: 0, warning: 1, not_configured: 2, skipped: 3, ok: 4 };
@@ -1454,10 +1478,17 @@ function pintarDiagnostico(d) {
   $('diagnostico-info').textContent = d.generated_at ? t('diag.gerado', { quando: d.generated_at }) : '';
 }
 
+async function estadoDaMusicaSo() {
+  // Para o diagnóstico basta o estado: nada de pedir player e aparelhos à
+  // Spotify só para colorir uma linha.
+  try { pintarMusica(await api('/api/robot/musica/estado')); }
+  catch (e) { integracoes.musica = null; }
+}
+
 async function carregarDiagnostico() {
   // As integrações locais entram no mesmo registro: busca o estado de cada
   // uma antes, para não mostrar "não conferido" para o que dá para conferir.
-  await Promise.allSettled([carregarCasa(), carregarMusica()]);
+  await Promise.allSettled([carregarCasa(), estadoDaMusicaSo(), carregarVisao(), carregarFamilia()]);
   try {
     pintarDiagnostico(await api('/api/robot/diagnostico'));
   } catch (e) {
@@ -1663,7 +1694,10 @@ function ligar() {
 
   // Família. O interruptor grava sozinho: é uma decisão, não um ajuste fino.
   $('familia-ligada').addEventListener('change', async (e) => {
-    await salvarConversa({ family_recognition_enabled: e.target.checked });
+    const ok = await salvarConversa({ family_recognition_enabled: e.target.checked });
+    // Falhou a gravação? A caixa volta ao que o robô tem de verdade — uma
+    // caixa "desligada" com o robô reconhecendo seria a pior mentira.
+    if (!ok) await carregarConversa();
     carregarFamilia();
   });
   $('familia-menor').addEventListener('change', (e) => $('campo-familia-responsavel').hidden = !e.target.checked);

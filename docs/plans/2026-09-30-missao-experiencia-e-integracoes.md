@@ -217,6 +217,49 @@ Requisito de integração exato, na ordem em que o painel do robô tropeça:
   `http://127.0.0.1:8125/spotify/callback`), conta Premium para controlar.
 - **Família:** cadastro só com consentimento, pelo painel (Ajustes › Família).
 
+## 9. Revisão de código (30/09, 03:30) — o que foi corrigido e o que fica dito
+
+Um revisor independente (só leitura) reproduziu 21 achados nos módulos novos.
+Corrigidos, com teste, no commit seguinte a este registro:
+
+- serviço de rostos: recusa `Origin`/`Host` de fora (DNS rebinding), exige
+  `application/json`/`image/jpeg`, cap de 8 Mpx lido do SOF antes de
+  decodificar, decodificação fora do laço de eventos, `/saude` responde mesmo
+  com a base torta;
+- núcleo de rostos: tranca em toda mutação + temporário único (escritas
+  concorrentes corrompiam `perfis.json`), `store_corrupt` em vez de "base
+  vazia" (evitava órfãos), vetores NaN/infinito/dimensão errada nunca decidem
+  (`no_embedding`/ilegível), guardas positivas, teto conta só amostras
+  legíveis, **segunda amostra tem de parecer a primeira** (`different_person`),
+  atribuição um-para-um (duas pessoas não viram "Maria"), responsável aparado;
+- robô: `pede_reconhecer` não dispara em "quem é a pessoa mais rica do
+  mundo"/"who is that"; catch-all (um erro não cala o laço de voz); timeout
+  5 s; ≤ 10 rostos e nomes ≤ 40 no que volta da ponte; `bridge_token_rejected`
+  distinto; sem proxy do ambiente e sem redirecionamento; quadro de 0,5 s para
+  cadastrar; "não reconhecida" em vez de "não cadastrada"; `Ponte` das
+  integrações se reconfigura quando a URL/chave muda (como o chat) e diz
+  `bridge_not_configured` sem URL;
+- painel: contagem de 3 s antes da amostra; última captura numa linha própria;
+  interruptor da família volta ao gravado se a escrita falhar; desligar a
+  visão desliga a nuvem junto; diagnóstico lê o grupo "fora do ar" e nomes
+  `mcp/*`, espera visão/família e não consulta player/aparelhos da Spotify só
+  para colorir uma linha; texto de privacidade honesto (**o nome reconhecido
+  vai ao modelo de conversa**; a chave mora na pasta do dono).
+
+Dito e não mudado (decisão de postura, registrada):
+
+- **Sem token no robô wireless**, as rotas novas (`familia/*`, `casa/*`,
+  `musica/*`, `diagnostico`) ficam alcançáveis por qualquer aparelho da LAN —
+  a mesma postura do painel inteiro e do próprio daemon `:8000` (que instala e
+  roda apps sem credencial). Um aparelho da LAN já move o robô, vê a câmera e
+  conversa com o modelo; o que estas rotas somam é ler nomes de perfis e
+  ligar o comando de aparelhos por voz. Mitigação futura: exigir o token
+  persistente nestas rotas mesmo em `no_robo` (o painel já sabe carregá-lo).
+- **Os nomes reconhecidos vão ao modelo** (é a função) e a resposta do modelo
+  com os nomes entra no chat e no histórico, como qualquer resposta. A
+  assinatura biométrica nunca sai do PC.
+- Robô ↔ ponte é HTTP na LAN (quadros, nomes, token do HA na configuração).
+
 ## PRÓXIMA AÇÃO EXATA
 
 Quando o robô voltar à rede (o vigia instala o RC `e01830599ded` por estado):

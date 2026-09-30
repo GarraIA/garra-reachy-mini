@@ -100,7 +100,7 @@ def test_a_visao_tem_todos_os_controles_pedidos() -> None:
     assert '<option value="auto"' in bloco and '<option value="local"' in bloco and '<option value="openrouter"' in bloco
     # o aviso de privacidade acompanha a caixa da nuvem
     assert "$('visao-nuvem-aviso').hidden = !$('visao-nuvem').checked" in JS
-    assert "vision_cloud_enabled: $('visao-nuvem').checked" in JS
+    assert "vision_cloud_enabled: ligada && $('visao-nuvem').checked" in JS  # desligar a visão desliga a nuvem
 
 
 def test_a_casa_configura_e_mostra_mas_nao_executa() -> None:
@@ -164,6 +164,16 @@ def test_itens_do_registro_leem_a_frase_do_gateway() -> None:
         {"nome": "device_read", "estado": "unavailable", "motivo": "no_devices"},
         {"nome": "bash", "estado": "not_configured", "motivo": "not_configured"},
     ]
+    # o terceiro grupo do gateway ("fora do ar") e nomes com barra
+    frase2 = "9 visivel(is) · fora do ar: github__list_issues (failed), mcp/* (retrying)"
+    script2 = trecho + f"\nconsole.log(JSON.stringify(itensDoRegistro({json.dumps(frase2)})));"
+    r2 = subprocess.run(["node", "-e", script2], capture_output=True, text=True, timeout=20)
+    saida2 = json.loads(r2.stdout)
+    assert saida2["visiveis"] == 9
+    assert saida2["itens"] == [
+        {"nome": "github__list_issues", "estado": "unhealthy", "motivo": "failed"},
+        {"nome": "mcp/*", "estado": "unhealthy", "motivo": "retrying"},
+    ]
 
 
 # ─── tradução e acessibilidade ───────────────────────────────────────────────
@@ -181,7 +191,7 @@ def test_todo_texto_da_tela_tem_traducao_nos_dois_idiomas() -> None:
                      "model_missing", "model_without_vision", "cloud_disabled", "auth_failed", "timeout",
                      "bad_image", "provider_error"]),
     ("familia.amostra_", ["no_face", "many_faces", "too_small", "blurry", "too_dark", "too_bright", "no_embedding",
-                          "enough_samples"]),
+                          "enough_samples", "different_person"]),
     ("familia.erro_", ["disabled", "camera_unavailable", "stale_frame", "bridge_unreachable", "service_offline",
                        "timeout", "bad_image", "service_error", "not_found", "consent_required",
                        "guardian_required", "invalid_name"]),
@@ -189,6 +199,8 @@ def test_todo_texto_da_tela_tem_traducao_nos_dois_idiomas() -> None:
     ("musica.estado_", ["not_configured", "not_connected", "connected"]),
     ("musica.erro_", ["premium_required", "no_active_device", "rate_limited", "auth_expired", "not_connected"]),
     ("diag.status_", ["ok", "warning", "error", "not_configured", "skipped"]),
+    ("diag.", ["unavailable", "not_configured", "unhealthy", "ok", "unknown"]),
+    ("familia.erro_", ["store_corrupt", "bridge_invalid_response", "bridge_token_rejected"]),
 ])
 def test_os_codigos_do_servidor_tem_texto(prefixo, codigos) -> None:
     en = _dicionario("en")

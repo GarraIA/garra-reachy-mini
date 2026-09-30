@@ -24,12 +24,14 @@ class ErroFamilia(Exception):
 
 
 _VAZIO = {"state": "offline", "engine": None, "profiles": None, "unreadable_profiles": None,
-          "threshold": None, "margin": None, "max_samples": None}
+          "threshold": None, "margin": None, "max_samples": None, "error": None}
 
 
 class Familia:
     def __init__(self, http: httpx.Client | None = None) -> None:
-        self.http = http or httpx.Client(base_url=SERVICO, timeout=TIMEOUT_S)
+        # `trust_env=False`: um HTTP_PROXY no ambiente do companion mandaria a
+        # imagem da câmera para o proxy em vez do loopback.
+        self.http = http or httpx.Client(base_url=SERVICO, timeout=TIMEOUT_S, trust_env=False)
 
     def _pedir(self, metodo: str, caminho: str, json=None, jpeg: bytes | None = None) -> dict:
         try:
@@ -53,13 +55,19 @@ class Familia:
         return corpo
 
     def estado(self) -> dict:
+        """`offline` é serviço parado; `error` é serviço de pé com problema
+        (base corrompida, resposta torta) — o painel diz coisas diferentes."""
         try:
             s = self._pedir("GET", "/saude")
-        except ErroFamilia:
-            return dict(_VAZIO)
-        return {"state": "ok", "engine": s.get("engine"), "profiles": s.get("profiles"),
-                "unreadable_profiles": s.get("unreadable_profiles"), "threshold": s.get("threshold"),
-                "margin": s.get("margin"), "max_samples": s.get("max_samples")}
+        except ErroFamilia as e:
+            if e.codigo == "service_offline":
+                return dict(_VAZIO)
+            return dict(_VAZIO, state="error", error=e.codigo)
+        estado = {"state": "ok" if s.get("ok", True) else "error", "engine": s.get("engine"),
+                  "profiles": s.get("profiles"), "unreadable_profiles": s.get("unreadable_profiles"),
+                  "threshold": s.get("threshold"), "margin": s.get("margin"), "max_samples": s.get("max_samples"),
+                  "error": None if s.get("ok", True) else str(s.get("error") or "service_error")}
+        return estado
 
     def perfis(self) -> list[dict]:
         return list(self._pedir("GET", "/perfis").get("profiles") or [])

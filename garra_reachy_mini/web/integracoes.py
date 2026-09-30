@@ -22,15 +22,36 @@ class Ponte:
 
     def __init__(self, base_url: str, token: str | None, transport=None,
                  timeout_s: float = TIMEOUT_S) -> None:
+        self._timeout_s = timeout_s
+        self._montar(base_url, token, transport)
+
+    def _montar(self, base_url: str, token: str | None, transport=None) -> None:
         self.base = (base_url or "").rstrip("/")
+        self._token = token or None
         cabecalhos = {"Authorization": f"Bearer {token}"} if token else {}
-        self._http = httpx.AsyncClient(base_url=self.base, headers=cabecalhos, timeout=timeout_s,
-                                       transport=transport)
+        self._http = httpx.AsyncClient(base_url=self.base or "http://ponte.invalida", headers=cabecalhos,
+                                       timeout=self._timeout_s, transport=transport)
+
+    def reconfigurar(self, base_url: str, token: str | None, transport=None) -> bool:
+        """Aponta para outra ponte sem reiniciar o app (a página `:8042` grava a
+        URL e a chave novas; casa, música e família têm de segui-las como o
+        chat segue). Devolve `True` quando algo mudou. O cliente antigo é
+        descartado sem `aclose()`, pelo mesmo motivo do chat: isto roda no
+        supervisor, fora do loop de evento."""
+        if ((base_url or "").rstrip("/"), token or None) == (self.base, self._token):
+            return False
+        self._montar(base_url, token, transport)
+        return True
+
+    def __repr__(self) -> str:
+        return f"Ponte({self.base or '(sem URL)'})"
 
     async def pedir(self, metodo: str, caminho: str, corpo: Any = None,
                     params: dict | None = None, timeout_s: float | None = None) -> JSONResponse:
         """Repassa a resposta da ponte tal qual — status e JSON — ou explica
         por que a ponte não respondeu."""
+        if not self.base:
+            return JSONResponse({"erro": "bridge_not_configured"}, status_code=503)
         try:
             r = await self._http.request(metodo, caminho, json=corpo, params=params,
                                          timeout=timeout_s or TIMEOUT_S)

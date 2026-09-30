@@ -70,14 +70,14 @@ def fam():
 def test_estado_quando_o_servico_responde(fam) -> None:
     f, s = fam
     assert f.estado() == {"state": "ok", "engine": "yunet+sface", "profiles": 1, "unreadable_profiles": 0,
-                          "threshold": 0.45, "margin": 0.1, "max_samples": 5}
+                          "threshold": 0.45, "margin": 0.1, "max_samples": 5, "error": None}
 
 
 def test_estado_quando_o_servico_esta_fora(fam) -> None:
     f, s = fam
     s.fora = True
     assert f.estado() == {"state": "offline", "engine": None, "profiles": None, "unreadable_profiles": None,
-                          "threshold": None, "margin": None, "max_samples": None}
+                          "threshold": None, "margin": None, "max_samples": None, "error": None}
 
 
 def test_perfis_e_criar(fam) -> None:
@@ -125,14 +125,33 @@ def test_servico_fora_ou_lento_e_codigo_sem_imagem(fam, falha, codigo) -> None:
     assert "\\x01" not in str(e.value) and JPEG not in str(e.value).encode("latin-1", "ignore")
 
 
-def test_resposta_que_nao_e_json_e_service_error() -> None:
+def test_resposta_que_nao_e_json_e_service_error_e_nao_offline() -> None:
+    """Serviço de pé respondendo lixo não é "parado": o painel mandaria ligar
+    o que já está ligado."""
     def handler(request):
         return httpx.Response(200, content=b"<html>")
     f = familia.Familia(http=httpx.Client(base_url="http://127.0.0.1:8127", transport=httpx.MockTransport(handler)))
     with pytest.raises(familia.ErroFamilia) as e:
         f.perfis()
     assert e.value.codigo == "service_error"
-    assert f.estado()["state"] == "offline"
+    assert f.estado() == dict(familia._VAZIO, state="error", error="service_error")
+
+
+def test_base_corrompida_no_servico_e_estado_de_erro_com_codigo() -> None:
+    def handler(request):
+        return httpx.Response(200, json={"ok": False, "engine": "yunet+sface", "error": "store_corrupt",
+                                         "profiles": None, "unreadable_profiles": None, "threshold": 0.45,
+                                         "margin": 0.1, "max_samples": 5})
+    f = familia.Familia(http=httpx.Client(base_url="http://127.0.0.1:8127", transport=httpx.MockTransport(handler)))
+    e = f.estado()
+    assert e["state"] == "error" and e["error"] == "store_corrupt" and e["engine"] == "yunet+sface"
+
+
+def test_o_cliente_ignora_proxy_do_ambiente(monkeypatch) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("http_proxy", "http://proxy.example:3128")
+    f = familia.Familia()
+    assert f.http.trust_env is False
 
 
 def test_o_servico_padrao_e_o_loopback() -> None:

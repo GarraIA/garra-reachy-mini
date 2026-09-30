@@ -31,7 +31,13 @@ import requests
 from .robo.intencoes import normalizar
 
 IDADE_MAXIMA_S = 2.0
-TIMEOUT_S = 20.0
+# Comparar leva ~15 ms; o que demora é o serviço parado. Um turno de voz não
+# pode ficar mudo 20 s esperando: 5 s e "não consegui reconhecer agora".
+TIMEOUT_S = 5.0
+# O que se aceita de volta da ponte: rostos numa cena doméstica cabem em dez,
+# e nome de perfil tem 40 letras. Mais do que isso não é o nosso serviço.
+ROSTOS_MAX = 10
+NOME_MAX = 40
 
 # O que conta como "quem?". Depois de normalizado (sem acento, minúsculas).
 # Perguntas de conhecimento ("quem inventou", "quem é o presidente") ficam de
@@ -40,15 +46,17 @@ _GATILHOS = [
     r"\bquem (esta|ta|e que esta|e que ta) (ai|aqui|na sala|na sua frente|na frente|comigo|com voce)\b",
     r"\bquem (sao|estao) (ai|aqui|na sala|na sua frente)\b",
     r"\bquem sou eu\b",
-    r"\bquem (e|sao) (essa|esta|essas|estas|aquela|aquelas|a|as) pessoa",
+    # "quem é essa pessoa" só com o dedo apontado: demonstrativo, e não o
+    # artigo — "quem é a pessoa mais rica do mundo" é pergunta de almanaque.
+    r"\bquem (e|sao) (essa|esta|essas|estas|aquela|aquelas) pessoa",
     r"\b(voce|vc|tu) (me )?(conhece|reconhece|lembra de mim)\b",
     r"\bme (conhece|reconhece)\b",
     r"\blembra de mim\b",
     r"\bsabe quem (eu sou|esta aqui|esta ai|ta aqui|ta ai|e essa|e esta|sao ess|sao est)\b",
     r"\bwho am i\b",
     r"\bdo you (know|recognize|remember) me\b",
-    r"\bwho is (here|there|this|that|in front of you|with you)\b",
-    r"\bwho('s| is| are) (these|those) people\b",
+    r"\bwho is (here|there|in front of you|with you)\b",
+    r"\bwho('s| is| are) (this|that|these|those) (person|people|guy|woman|man|lady|kid)s?\b",
 ]
 _GATILHOS_RE = [re.compile(g) for g in _GATILHOS]
 
@@ -57,6 +65,7 @@ MOTIVOS = {
     "camera_unavailable": "a câmera não está entregando imagem",
     "stale_frame": "a última imagem da câmera é velha demais",
     "bridge_unreachable": "o companion no computador não respondeu",
+    "bridge_token_rejected": "o companion recusou o token deste robô",
     "service_offline": "o serviço de rostos no computador está parado",
     "timeout": "o serviço de rostos demorou demais",
     "bad_image": "a imagem da câmera veio inválida",
@@ -112,10 +121,15 @@ class ClienteFamilia:
         self.base = (base_url or "").rstrip("/")
         self._cab = {"Authorization": f"Bearer {token}"} if token else {}
         self.timeout_s = timeout_s
+        # Sem proxy do ambiente e sem seguir redirecionamento: a imagem da
+        # câmera vai para a ponte configurada e para mais nenhum lugar.
+        self.sessao = requests.Session()
+        self.sessao.trust_env = False
 
     def _post(self, caminho: str, corpo: dict[str, Any]) -> dict[str, Any]:
         try:
-            r = requests.post(f"{self.base}{caminho}", json=corpo, headers=self._cab, timeout=self.timeout_s)
+            r = self.sessao.post(f"{self.base}{caminho}", json=corpo, headers=self._cab,
+                                 timeout=self.timeout_s, allow_redirects=False)
         except requests.Timeout as e:
             raise ErroDaPonte("timeout", "ponte") from e
         except requests.RequestException as e:
@@ -127,6 +141,8 @@ class ClienteFamilia:
         if 200 <= r.status_code < 300 and isinstance(dados, dict):
             return dados
         codigo = str(dados.get("erro") or "service_error") if isinstance(dados, dict) else "service_error"
+        if codigo == "token inválido":
+            codigo = "bridge_token_rejected"
         raise ErroDaPonte(codigo if codigo in MOTIVOS else "service_error",
                           str(dados.get("detalhe") or r.status_code) if isinstance(dados, dict) else "")
 
@@ -135,7 +151,12 @@ class ClienteFamilia:
 
 
 class Familia:
-    """Um pedido, um quadro, uma lista de nomes. Publica quantos, nunca quem."""
+    """Um pedido, um quadro, uma lista de nomes.
+
+    Os EVENTOS levam quantos, nunca quem. Os nomes vão a dois lugares só: ao
+    envelope deste pedido (o modelo responde com eles) e a `status()`, que é o
+    painel do dono mostrando a última captura.
+    """
 
     def __init__(self, hub, cliente, eventos, hora: Callable[[], str] | None = None) -> None:
         """`cliente` é um `ClienteFamilia` — ou uma função que devolve um."""
@@ -167,15 +188,24 @@ class Familia:
             r = self.cliente.reconhecer(quadro.jpeg)
         except ErroDaPonte as e:
             return self._falhou(e.codigo if e.codigo in MOTIVOS else "service_error", correlacao, origem)
-        rostos = r.get("faces") if isinstance(r.get("faces"), list) else []
+        except Exception:  # noqa: BLE001 — um erro aqui não pode calar o laço de voz
+            return self._falhou("service_error", correlacao, origem)
+        # O que volta é da ponte, mas entra no envelope: limita e apara.
+        rostos = [x for x in (r.get("faces") if isinstance(r.get("faces"), list) else []) if isinstance(x, dict)]
+        rostos = rostos[:ROSTOS_MAX]
         nomes, perfis, desconhecidos = [], [], 0
         for rosto in rostos:
-            if isinstance(rosto, dict) and rosto.get("known") is True and isinstance(rosto.get("name"), str):
-                nomes.append(rosto["name"])
-                perfis.append(str(rosto.get("profile_id") or ""))
+            nome = rosto.get("name")
+            if rosto.get("known") is True and isinstance(nome, str) and nome.strip():
+                nomes.append(" ".join(nome.split())[:NOME_MAX])
+                perfis.append(str(rosto.get("profile_id") or "")[:32])
             else:
                 desconhecidos += 1
-        visto = Reconhecidos(nomes, desconhecidos, len(rostos), capturado_em, int(r.get("ms") or 0), perfis)
+        try:
+            ms = int(r.get("ms") or 0)
+        except (TypeError, ValueError):
+            ms = 0
+        visto = Reconhecidos(nomes, desconhecidos, len(rostos), capturado_em, ms, perfis)
         self.eventos.publicar("family.completed", correlation_id=correlacao, source=origem,
                               known=len(nomes), unknown=desconhecidos, faces=len(rostos), ms=visto.ms)
         self._ultimo = {"ok": True, "at": capturado_em, "captured_at": capturado_em, "names": list(nomes),

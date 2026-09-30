@@ -11,10 +11,15 @@ Endpoints (JSON; imagem vai como corpo `image/jpeg` cru):
     PATCH  /perfis/{id}                  -> {"active": bool}
     DELETE /perfis/{id}                  -> apaga perfil E vetores
     POST   /perfis/{id}/amostras         -> corpo JPEG; {"ok", "samples", "quality"} ou {"ok": false, "reason"}
+                                            (reason: no_face, many_faces, too_small, blurry, too_dark,
+                                             too_bright, no_embedding, enough_samples, different_person)
     DELETE /perfis/{id}/amostras         -> zera as amostras (recadastrar)
     POST   /reconhecer                   -> corpo JPEG; {"faces": [...], "ms"}
 
-Nenhuma imagem é gravada ou logada: entra, vira números, morre.
+Nenhuma imagem é gravada ou logada: entra, vira números, morre. Só quem está
+nesta máquina fala com ele: pedido com `Origin` ou com `Host` de fora é 403
+(um site aberto no navegador daqui poderia, por DNS rebinding, chegar ao
+loopback), o JSON tem de vir como JSON e a imagem como `image/jpeg`.
 
 Uso:
     rosto_env/bin/python garra_reachy_mini/tools/servidor_rostos.py
@@ -22,6 +27,7 @@ Uso:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
@@ -48,14 +54,45 @@ PASTA_MODELOS = Path.home() / ".local" / "share" / "garra-reachy" / "modelos"
 DETECTOR = "face_detection_yunet_2023mar.onnx"
 EXTRATOR = "face_recognition_sface_2021dec.onnx"
 IMAGEM_MAX_BYTES = 4 * 1024 * 1024
+# Um JPEG de 1 MB pode declarar 10000×10000 e custar 1,5 GB para decodificar.
+# O robô manda no máximo 1280×720; 8 Mpx é folga, não limite.
+PIXELS_MAX = 8_000_000
+# Só quem está NESTA máquina fala com o serviço — e um navegador aberto aqui
+# também está nesta máquina (DNS rebinding manda `Host` de fora e `Origin`).
+HOSTS_DAQUI = {"127.0.0.1", "localhost", "[::1]"}
 
 _STATUS = {"not_found": 404, "consent_required": 400, "guardian_required": 400, "invalid_name": 400,
-           "bad_image": 400, "bad_request": 400}
+           "bad_image": 400, "bad_request": 400, "forbidden_origin": 403, "unsupported_media_type": 415,
+           "store_corrupt": 500}
 
 
 def _erro(codigo: str, detalhe: str = "") -> JSONResponse:
     return JSONResponse({"ok": False, "error": {"code": codigo, "message": detalhe or codigo}},
                         status_code=_STATUS.get(codigo, 500))
+
+
+def _dimensoes_jpeg(dados: bytes) -> tuple[int, int] | None:
+    """(largura, altura) do primeiro SOF, sem decodificar; None se não achar."""
+    i, n = 2, len(dados)
+    while i + 4 <= n:
+        if dados[i] != 0xFF:
+            i += 1
+            continue
+        marcador = dados[i + 1]
+        if marcador in (0xD8, 0x01) or 0xD0 <= marcador <= 0xD7 or marcador == 0xFF:
+            i += 2 if marcador != 0xFF else 1
+            continue
+        if marcador == 0xD9 or marcador == 0xDA:
+            return None
+        tamanho = int.from_bytes(dados[i + 2:i + 4], "big")
+        if marcador in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            if i + 9 <= n:
+                altura = int.from_bytes(dados[i + 5:i + 7], "big")
+                largura = int.from_bytes(dados[i + 7:i + 9], "big")
+                return largura, altura
+            return None
+        i += 2 + max(tamanho, 2)
+    return None
 
 
 def _validar_jpeg(dados: bytes) -> None:
@@ -65,9 +102,28 @@ def _validar_jpeg(dados: bytes) -> None:
         raise rostos.ErroRostos("bad_image", f"{len(dados)} bytes")
     if dados[:2] != b"\xff\xd8" or dados[-2:] != b"\xff\xd9":
         raise rostos.ErroRostos("bad_image", "não é JPEG")
+    dims = _dimensoes_jpeg(bytes(dados))
+    if dims and dims[0] * dims[1] > PIXELS_MAX:
+        raise rostos.ErroRostos("bad_image", f"{dims[0]}x{dims[1]}: pixels demais")
+
+
+def _so_daqui(request: Request) -> None:
+    """Recusa o que veio por um navegador (Origin) ou para outro nome (Host)."""
+    if request.headers.get("origin") is not None:
+        raise rostos.ErroRostos("forbidden_origin", "pedido com Origin")
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if host and host not in HOSTS_DAQUI:
+        raise rostos.ErroRostos("forbidden_origin", "Host de fora")
+
+
+def _exigir_tipo(request: Request, prefixo: str) -> None:
+    tipo = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if not tipo.startswith(prefixo):
+        raise rostos.ErroRostos("unsupported_media_type", f"esperava {prefixo}")
 
 
 async def _json(request: Request) -> dict:
+    _exigir_tipo(request, "application/json")
     try:
         corpo = json.loads(await request.body() or b"null")
     except ValueError:
@@ -75,6 +131,16 @@ async def _json(request: Request) -> dict:
     if not isinstance(corpo, dict):
         raise rostos.ErroRostos("bad_request", "esperava um objeto JSON")
     return corpo
+
+
+async def _imagem(request: Request) -> bytes:
+    _exigir_tipo(request, "image/jpeg")
+    tamanho = request.headers.get("content-length")
+    if tamanho and tamanho.isdigit() and int(tamanho) > IMAGEM_MAX_BYTES:
+        raise rostos.ErroRostos("bad_image", f"{tamanho} bytes")
+    dados = bytes(await request.body())
+    _validar_jpeg(dados)
+    return dados
 
 
 class MotorOpenCV:
@@ -131,9 +197,23 @@ def montar(reconhecedor: rostos.Reconhecedor, motor_nome: str = "yunet+sface") -
     async def _tratar(_request: Request, erro: rostos.ErroRostos):
         return _erro(erro.codigo, erro.detalhe)
 
+    @app.middleware("http")
+    async def _porteiro(request: Request, chamar):
+        try:
+            _so_daqui(request)
+        except rostos.ErroRostos as e:
+            return _erro(e.codigo, e.detalhe)
+        return await chamar(request)
+
     @app.get("/saude")
     def saude():
-        perfis = base.perfis()
+        try:
+            perfis = base.perfis()
+        except rostos.ErroRostos as e:
+            # A saúde responde mesmo com a base torta: é como o painel fica sabendo.
+            return {"ok": False, "engine": motor_nome, "error": e.codigo, "profiles": None,
+                    "unreadable_profiles": None, "threshold": reconhecedor.limiar,
+                    "margin": reconhecedor.margem, "max_samples": rostos.AMOSTRAS_MAX}
         return {"ok": True, "engine": motor_nome, "profiles": len(perfis),
                 "unreadable_profiles": sum(1 for p in perfis if not p["samples_readable"]),
                 "threshold": reconhecedor.limiar, "margin": reconhecedor.margem,
@@ -170,19 +250,19 @@ def montar(reconhecedor: rostos.Reconhecedor, motor_nome: str = "yunet+sface") -
 
     @app.post("/perfis/{perfil_id}/amostras")
     async def amostra(perfil_id: str, request: Request):
-        dados = await request.body()
-        _validar_jpeg(dados)
-        resultado = reconhecedor.cadastrar(perfil_id, bytes(dados))
+        dados = await _imagem(request)
+        resultado = await asyncio.to_thread(reconhecedor.cadastrar, perfil_id, dados)
         log.info("amostra id=%s ok=%s motivo=%s amostras=%s", perfil_id, resultado["ok"],
                  resultado.get("reason"), resultado.get("samples"))
         return resultado
 
     @app.post("/reconhecer")
     async def reconhecer(request: Request):
-        dados = await request.body()
-        _validar_jpeg(dados)
+        dados = await _imagem(request)
         inicio = time.monotonic()
-        rostos_vistos = reconhecedor.reconhecer(bytes(dados))
+        # Fora do laço de eventos: decodificar e comparar leva milissegundos,
+        # mas uma imagem grande levaria a saúde junto.
+        rostos_vistos = await asyncio.to_thread(reconhecedor.reconhecer, dados)
         ms = round((time.monotonic() - inicio) * 1000, 1)
         # Só contagens: quem foi visto é conversa da casa, não do journal.
         log.info("reconhecer rostos=%d conhecidos=%d ms=%s", len(rostos_vistos),

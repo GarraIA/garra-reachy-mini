@@ -267,3 +267,113 @@ def test_perfil_desconhecido_e_erro(fam) -> None:
     with pytest.raises(rostos.ErroRostos) as e:
         fam.cadastrar("nao-existe", imagem(1))
     assert e.value.codigo == "not_found"
+
+
+# ─── achados da revisão (30/09) ──────────────────────────────────────────────
+def test_escritas_concorrentes_nao_corrompem_os_perfis(fam) -> None:
+    """Seis threads alternando flags: o arquivo tem de continuar legível e
+    com os mesmos perfis."""
+    import threading
+    perfis = [cadastrar(fam, f"P{i}", 10 + i, amostras=1) for i in range(3)]
+    erros: list[BaseException] = []
+
+    def alternar(pid: str) -> None:
+        try:
+            for _ in range(25):
+                fam.base.desativar(pid)
+                fam.base.ativar(pid)
+        except BaseException as e:  # noqa: BLE001
+            erros.append(e)
+
+    fios = [threading.Thread(target=alternar, args=(p["id"],)) for p in perfis for _ in range(2)]
+    for f in fios:
+        f.start()
+    for f in fios:
+        f.join()
+    assert erros == []
+    assert sorted(p["name"] for p in fam.base.perfis()) == ["P0", "P1", "P2"]
+    assert all(p["active"] for p in fam.base.perfis())
+
+
+def test_metadados_corrompidos_nao_viram_base_vazia(fam) -> None:
+    """Arquivo torto = erro dito, não "zero perfis": senão a próxima escrita
+    sobrescreve e os vetores ficam órfãos no disco."""
+    maria = cadastrar(fam, "Maria", 1)
+    (fam._pasta_teste / "perfis.json").write_text("{corrompido")
+    with pytest.raises(rostos.ErroRostos) as e:
+        fam.base.perfis()
+    assert e.value.codigo == "store_corrupt"
+    with pytest.raises(rostos.ErroRostos):
+        fam.base.criar("João", CONSENTE)
+    assert (fam._pasta_teste / f"{maria['id']}.emb").exists()
+    (fam._pasta_teste / "perfis.json").write_text('["lista", "errada"]')
+    with pytest.raises(rostos.ErroRostos) as e:
+        fam.base.perfis()
+    assert e.value.codigo == "store_corrupt"
+
+
+@pytest.mark.parametrize("ruim", [
+    np.array([np.nan] * 128, dtype=np.float32),
+    np.array([np.inf] + [0.0] * 127, dtype=np.float32),
+    np.zeros(128, dtype=np.float32),
+    np.ones(64, dtype=np.float32),
+])
+def test_vetor_invalido_e_desconhecido_e_nao_conhecido(fam, ruim) -> None:
+    cadastrar(fam, "Maria", 1)
+    cena = imagem(60)
+    fam._motor_teste.por_imagem[cena] = [rosto(ruim)]
+    [v] = fam.reconhecer(cena)
+    assert v["known"] is False and v["reason"] == "no_embedding"
+    p = fam.base.criar("João", CONSENTE)
+    fam._motor_teste.por_imagem[imagem(61)] = [rosto(ruim)]
+    r = fam.cadastrar(p["id"], imagem(61))
+    assert r["ok"] is False and r["reason"] == "no_embedding"
+
+
+def test_vetor_guardado_com_outra_dimensao_e_ilegivel_e_nao_derruba(fam) -> None:
+    maria = cadastrar(fam, "Maria", 1)
+    claro = json.dumps({"dim": 512, "v": [[0.1] * 512]}).encode()
+    (fam._pasta_teste / f"{maria['id']}.emb").write_bytes(fam.base._fernet.encrypt(claro))
+    assert fam.base.perfis()[0]["samples_readable"] is False
+    cena = imagem(62)
+    fam._motor_teste.por_imagem[cena] = [rosto(vetor(1))]
+    [v] = fam.reconhecer(cena)
+    assert v["known"] is False
+
+
+def test_segunda_amostra_de_outra_pessoa_e_recusada(fam) -> None:
+    """Quem entra no perfil da Maria tem de parecer a Maria: senão qualquer
+    um que passou pela câmera vira "Maria" com score 1,0."""
+    p = fam.base.criar("Maria", CONSENTE)
+    fam._motor_teste.por_imagem[imagem(70)] = [rosto(vetor(1))]
+    assert fam.cadastrar(p["id"], imagem(70))["ok"]
+    fam._motor_teste.por_imagem[imagem(71)] = [rosto(vetor(2))]
+    r = fam.cadastrar(p["id"], imagem(71))
+    assert r["ok"] is False and r["reason"] == "different_person"
+    assert fam.base.perfis()[0]["samples"] == 1
+    fam._motor_teste.por_imagem[imagem(72)] = [rosto(vetor(1, ruido=0.05))]
+    assert fam.cadastrar(p["id"], imagem(72))["ok"] is True
+
+
+def test_duas_pessoas_na_cena_nao_recebem_o_mesmo_nome(fam) -> None:
+    cadastrar(fam, "Maria", 1)
+    cena = imagem(80)
+    fam._motor_teste.por_imagem[cena] = [rosto(vetor(1, ruido=0.02)), rosto(vetor(1, ruido=0.03), caixa=(400, 80))]
+    vistos = fam.reconhecer(cena)
+    assert [v["known"] for v in vistos].count(True) == 1
+    assert vistos[0]["known"] is True, "o mais parecido leva o nome"
+
+
+def test_responsavel_e_aparado_como_o_nome(fam) -> None:
+    p = fam.base.criar("Bebê", {"accepted": True, "by": "Pai", "minor": True, "guardian": "x" * 200})
+    assert len(p["consent"]["guardian"]) == rostos.NOME_MAX
+
+
+def test_teto_de_amostras_conta_so_as_legiveis(fam) -> None:
+    maria = cadastrar(fam, "Maria", 1, amostras=rostos.AMOSTRAS_MAX)
+    (fam._pasta_teste / "chave").unlink()
+    outro = rostos.Reconhecedor(rostos.Base(fam._pasta_teste), fam._motor_teste)
+    outro._motor_teste = fam._motor_teste
+    fam._motor_teste.por_imagem[imagem(90)] = [rosto(vetor(1))]
+    r = outro.cadastrar(maria["id"], imagem(90))
+    assert r["ok"] is True and r["samples"] == 1

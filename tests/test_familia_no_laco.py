@@ -55,7 +55,7 @@ def test_por_voz_o_robo_reconhece_e_o_modelo_recebe_os_nomes(montar, caplog) -> 
     [mensagem] = cena.cerebro.recebidas
     linhas = mensagem.split("\n")
     assert linhas[0].startswith("[PESSOAS RECONHECIDAS") and "21:40:05" in linhas[0]
-    assert "> Maria" in linhas and "> 1 pessoa desconhecida (não cadastrada)" in linhas
+    assert "> Maria" in linhas and "> 1 pessoa não reconhecida" in linhas
     assert envelope.pedido_de(mensagem) == "quem está aí?"
     assert cena.voz.faladas == ["Estou vendo a Maria e mais uma pessoa."]
     assert len(cena.cliente.chamadas) == 1, "um quadro por pedido"

@@ -59,7 +59,8 @@ def servico(tmp_path):
     motor = MotorFalso()
     rec = rostos.Reconhecedor(rostos.Base(tmp_path / "rostos"), motor)
     app = mod.montar(rec, motor_nome="falso")
-    cliente = TestClient(app)
+    # Como a ponte de verdade chega: pelo loopback, com o Host daqui.
+    cliente = TestClient(app, base_url="http://127.0.0.1:8127")
     cliente.motor, cliente.pasta, cliente.mod = motor, tmp_path / "rostos", mod
     return cliente
 
@@ -191,3 +192,52 @@ def test_motor_de_verdade_so_carrega_ao_pedir() -> None:
     topo = fonte.split("class MotorOpenCV")[0]
     assert "import cv2" not in topo
     assert "import cv2" in fonte.split("class MotorOpenCV")[1]
+
+
+# ─── achados da revisão (30/09) ──────────────────────────────────────────────
+def jpeg_com_sof(largura: int, altura: int) -> bytes:
+    """Um JPEG mínimo com um SOF0 declarando as dimensões (só cabeçalho)."""
+    sof = b"\xff\xc0" + (17).to_bytes(2, "big") + b"\x08" + altura.to_bytes(2, "big") + largura.to_bytes(2, "big") + b"\x03" + b"\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+    return b"\xff\xd8" + sof + b"\x00" * 32 + b"\xff\xd9"
+
+
+def test_pedido_de_navegador_de_fora_e_recusado(servico) -> None:
+    """DNS rebinding: um site aberto no PC manda o navegador falar com
+    127.0.0.1:8127 com `Origin` e um `Host` que não é o nosso."""
+    r = servico.post("/perfis", json={"name": "Maria", "consent": CONSENTE}, headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "forbidden_origin"
+    r = servico.get("/perfis", headers={"Host": "evil.example:8127"})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "forbidden_origin"
+    assert servico.get("/perfis").json()["profiles"] == []
+    assert servico.get("/perfis", headers={"Host": "localhost:8127"}).status_code == 200
+
+
+def test_json_exige_content_type_json(servico) -> None:
+    r = servico.post("/perfis", content=json.dumps({"name": "Maria", "consent": CONSENTE}), headers={"content-type": "text/plain"})
+    assert r.status_code == 415 and r.json()["error"]["code"] == "unsupported_media_type"
+    assert servico.get("/perfis").json()["profiles"] == []
+
+
+def test_imagem_exige_content_type_jpeg(servico) -> None:
+    p = criar(servico)
+    r = servico.post(f"/perfis/{p['id']}/amostras", content=jpeg(1), headers={"content-type": "application/octet-stream"})
+    assert r.status_code == 415
+
+
+def test_imagem_com_pixels_demais_e_recusada_antes_de_decodificar(servico) -> None:
+    p = criar(servico)
+    bomba = jpeg_com_sof(10000, 10000)
+    r = servico.post(f"/perfis/{p['id']}/amostras", content=bomba, headers={"content-type": "image/jpeg"})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "bad_image" and "pixel" in r.json()["error"]["message"]
+    normal = jpeg_com_sof(1280, 720)
+    servico.motor.por_imagem[normal] = [rosto(vetor(1))]
+    assert servico.post(f"/perfis/{p['id']}/amostras", content=normal, headers={"content-type": "image/jpeg"}).json()["ok"] is True
+
+
+def test_base_corrompida_e_erro_dito_e_a_saude_continua_respondendo(servico) -> None:
+    criar(servico)
+    (servico.pasta / "perfis.json").write_text("{torto")
+    r = servico.get("/perfis")
+    assert r.status_code == 500 and r.json()["error"]["code"] == "store_corrupt"
+    s = servico.get("/saude")
+    assert s.status_code == 200 and s.json()["ok"] is False and s.json()["error"] == "store_corrupt"

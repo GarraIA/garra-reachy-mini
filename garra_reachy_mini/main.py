@@ -156,6 +156,7 @@ class GarraReachyMini(ReachyMiniApp):
         self.hub: FrameHub | None = None
         self.comportamento: Comportamento | None = None
         self.chat: PonteChat | None = None
+        self.integracoes: PonteIntegracoes | None = None
         # A escuta de contexto e o caderno. Um por app: a memória do que foi
         # ouvido tem de sobreviver entre turnos, e o painel precisa alcançar a
         # MESMA que o laço de voz usa.
@@ -283,6 +284,9 @@ class GarraReachyMini(ReachyMiniApp):
         self.olho = visao.Olho(hub, self._cliente_de_visao, controlador.eventos)
         # A família: o mesmo quadro, comparado com os perfis no computador.
         self.familia = familia.Familia(hub, self._cliente_da_familia, controlador.eventos)
+        # Casa, música, família e diagnóstico pela ponte; o supervisor a
+        # reponta quando a configuração muda, como faz com o chat.
+        self.integracoes = PonteIntegracoes(cfg.gateway_url, cfg.gateway_key)
         self.servicos.conectar(controlador.eventos)
 
         estado = controlador.status()
@@ -392,7 +396,7 @@ class GarraReachyMini(ReachyMiniApp):
                 acompanhamento=self.acompanhamento,
                 olho=self.olho,
                 familia=self.familia,
-                integracoes=PonteIntegracoes(cfg.gateway_url, cfg.gateway_key),
+                integracoes=self.integracoes,
                 servicos=self.servicos,
                 falar=self._falar_async,
                 calar=self._calar_agora,
@@ -542,6 +546,9 @@ class GarraReachyMini(ReachyMiniApp):
                     cfg.gateway_url, cfg.gateway_key, cfg.agent_id):
                 log.info("Chat do painel repontado para %s (agente %s).",
                          cfg.gateway_url, cfg.agent_id)
+            if self.integracoes is not None and self.integracoes.reconfigurar(
+                    cfg.gateway_url, cfg.gateway_key):
+                log.info("Integrações repontadas para %s.", cfg.gateway_url)
             voz = VozClient(cfg.voz_url, cfg.voz_token)
             if voz.pronto():
                 saude = {}

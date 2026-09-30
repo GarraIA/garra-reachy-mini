@@ -292,9 +292,14 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
             raise _erro(400, "perfil inválido", "bad_request")
         return perfil_id
 
-    def _quadro_agora() -> bytes:
-        quadro = ctx.hub.instantaneo(idade_maxima_s=familia_mod.IDADE_MAXIMA_S) if ctx.hub else None
-        if quadro is None or float(quadro.idade_s) > familia_mod.IDADE_MAXIMA_S:
+    # Para CADASTRAR, o quadro é de agora mesmo (0,5 s): a pessoa acabou de se
+    # posicionar depois da contagem do painel, e um quadro de 2 s atrás pode ser
+    # de quem passou antes.
+    IDADE_DA_AMOSTRA_S = 0.5
+
+    def _quadro_agora(idade_maxima_s: float = IDADE_DA_AMOSTRA_S) -> bytes:
+        quadro = ctx.hub.instantaneo(idade_maxima_s=idade_maxima_s) if ctx.hub else None
+        if quadro is None or float(quadro.idade_s) > idade_maxima_s:
             raise _erro(503, familia_mod.explicar("camera_unavailable"), "camera_unavailable")
         return quadro.jpeg
 

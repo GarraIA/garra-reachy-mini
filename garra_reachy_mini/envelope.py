@@ -105,13 +105,15 @@ def _bloco_pessoas(pessoas: Any) -> str | None:
         rostos = int(getattr(pessoas, "rostos", 0) or 0)
         linhas = [_PESSOAS.format(quando=_limpo(getattr(pessoas, "capturado_em", "?")))]
         linhas += [f"> {_limpo(n)}" for n in nomes]
+        # "Não reconhecida", e não "não cadastrada": abaixo do limiar, ângulo
+        # ruim ou dois parecidos também dão desconhecido, e a pessoa pode
+        # muito bem estar cadastrada.
         if desconhecidos:
-            plural = "pessoas desconhecidas" if desconhecidos > 1 else "pessoa desconhecida"
-            prefixo = "ninguém cadastrado; " if not nomes else ""
-            linhas.append(f"> {prefixo}{desconhecidos} {plural} (não cadastradas)"
-                          if desconhecidos > 1 else f"> {prefixo}1 pessoa desconhecida (não cadastrada)")
+            prefixo = "ninguém reconhecido; " if not nomes else ""
+            linhas.append(f"> {prefixo}{desconhecidos} pessoas não reconhecidas"
+                          if desconhecidos > 1 else f"> {prefixo}1 pessoa não reconhecida")
         elif not nomes:
-            linhas.append("> nenhum rosto na imagem" if rostos == 0 else "> ninguém cadastrado")
+            linhas.append("> nenhum rosto na imagem" if rostos == 0 else "> ninguém reconhecido")
         linhas.append(_FIM_PESSOAS)
         return "\n".join(linhas)
     motivo = getattr(pessoas, "motivo", None)

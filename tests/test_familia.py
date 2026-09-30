@@ -189,7 +189,7 @@ def test_o_bloco_de_pessoas_e_citado_e_avisa_que_nao_e_quem_fala() -> None:
                                  capturado_em="21:40:05", ms=11)
     m = envelope.compor("quem está aí?", pessoas=visto)
     assert m.startswith("[PESSOAS RECONHECIDAS — quadro capturado às 21:40:05")
-    assert "> Maria\n> Jo(ão)\n> 1 pessoa desconhecida (não cadastrada)" in m
+    assert "> Maria\n> Jo(ão)\n> 1 pessoa não reconhecida" in m
     assert "NÃO diz quem está FALANDO" in m and "NÃO autoriza nada" in m
     assert "[FIM DAS PESSOAS RECONHECIDAS]" in m
     assert m.endswith(f"{envelope.MARCA_PEDIDO}\nquem está aí?")
@@ -199,7 +199,7 @@ def test_o_bloco_de_pessoas_e_citado_e_avisa_que_nao_e_quem_fala() -> None:
 def test_ninguem_e_nenhum_rosto_tem_frase_propria() -> None:
     ninguem = familia.Reconhecidos(nomes=[], desconhecidos=2, rostos=2, capturado_em="21:40:05", ms=9)
     m = envelope.compor("quem está aí?", pessoas=ninguem)
-    assert "> ninguém cadastrado; 2 pessoas desconhecidas (não cadastradas)" in m
+    assert "> ninguém reconhecido; 2 pessoas não reconhecidas" in m
     vazio = familia.Reconhecidos(nomes=[], desconhecidos=0, rostos=0, capturado_em="21:40:05", ms=9)
     m = envelope.compor("quem está aí?", pessoas=vazio)
     assert "> nenhum rosto na imagem" in m
@@ -250,11 +250,11 @@ def test_o_cliente_manda_a_imagem_em_base64_com_o_token(monkeypatch) -> None:
         def json(self):
             return MARIA_E_UM_ESTRANHO
 
-    def post(url, json=None, headers=None, timeout=None):
+    def post(self, url, json=None, headers=None, timeout=None, allow_redirects=True):
         chamadas.append((url, json, headers, timeout))
         return R()
 
-    monkeypatch.setattr(familia.requests, "post", post)
+    monkeypatch.setattr(familia.requests.Session, "post", post)
     r = familia.ClienteFamilia("http://10.0.0.24:8126/", "tok").reconhecer(JPEG)
     assert r == MARIA_E_UM_ESTRANHO
     [(url, corpo, cab, timeout)] = chamadas
@@ -270,15 +270,15 @@ def test_o_cliente_traduz_erro_da_ponte(monkeypatch) -> None:
         def json(self):
             return {"erro": "service_offline", "detalhe": "de mentira"}
 
-    monkeypatch.setattr(familia.requests, "post", lambda *a, **k: R())
+    monkeypatch.setattr(familia.requests.Session, "post", lambda self, *a, **k: R())
     with pytest.raises(familia.ErroDaPonte) as e:
         familia.ClienteFamilia("http://ponte", "tok").reconhecer(JPEG)
     assert e.value.codigo == "service_offline"
 
-    def cai(*a, **k):
+    def cai(self, *a, **k):
         raise familia.requests.ConnectionError("recusou")
 
-    monkeypatch.setattr(familia.requests, "post", cai)
+    monkeypatch.setattr(familia.requests.Session, "post", cai)
     with pytest.raises(familia.ErroDaPonte) as e:
         familia.ClienteFamilia("http://ponte", "tok").reconhecer(JPEG)
     assert e.value.codigo == "bridge_unreachable"
@@ -289,3 +289,76 @@ def test_a_configuracao_tem_o_interruptor_desligado_por_padrao() -> None:
     assert conversa.normalizar({})["family_recognition_enabled"] is False
     assert conversa.normalizar({"family_recognition_enabled": True})["family_recognition_enabled"] is True
     assert "family_recognition_enabled" in conversa.BOOLEANOS
+
+
+# ─── achados da revisão (30/09) ──────────────────────────────────────────────
+@pytest.mark.parametrize("pedido", [
+    "quem é a pessoa mais rica do mundo?", "quem é a pessoa que inventou o telefone",
+    "who is this actor", "who is that", "quem são as pessoas mais altas do mundo",
+])
+def test_pergunta_de_conhecimento_nao_liga_a_camera(pedido) -> None:
+    assert familia.pede_reconhecer(pedido) is False
+
+
+@pytest.mark.parametrize("pedido", ["quem é essa pessoa aqui?", "quem é esta pessoa na sua frente", "who is this person here"])
+def test_pergunta_sobre_quem_esta_diante_do_robo_liga(pedido) -> None:
+    assert familia.pede_reconhecer(pedido) is True
+
+
+def test_excecao_inesperada_da_ponte_nao_derruba_o_laco() -> None:
+    class Estoura:
+        def reconhecer(self, jpeg):
+            raise RuntimeError("bum")
+
+    visto = fam(cliente=Estoura()).reconhecer(LIGADO)
+    assert isinstance(visto, familia.SemReconhecimento) and visto.motivo == "service_error"
+
+
+def test_resposta_torta_da_ponte_e_desconhecido_e_nao_crash() -> None:
+    torta = {"faces": [{"known": True, "name": "x" * 500, "box": "nao"}, {"known": True, "name": ["lista"]},
+                       "nao-e-dict"] + [{"known": True, "name": f"P{i}"} for i in range(30)], "ms": "muitos"}
+    visto = fam(cliente=Cliente([torta])).reconhecer(LIGADO)
+    assert isinstance(visto, familia.Reconhecidos)
+    assert visto.rostos <= familia.ROSTOS_MAX and all(len(n) <= 40 for n in visto.nomes)
+    assert visto.ms == 0
+
+
+def test_o_cliente_traduz_token_recusado_pela_ponte(monkeypatch) -> None:
+    class R:
+        status_code = 401
+
+        def json(self):
+            return {"erro": "token inválido"}
+
+    monkeypatch.setattr(familia.requests.Session, "post", lambda self, *a, **k: R())
+    with pytest.raises(familia.ErroDaPonte) as e:
+        familia.ClienteFamilia("http://ponte", "tok").reconhecer(JPEG)
+    assert e.value.codigo == "bridge_token_rejected"
+    assert familia.explicar("bridge_token_rejected")
+
+
+def test_o_cliente_ignora_proxy_e_redirecionamento(monkeypatch) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
+    c = familia.ClienteFamilia("http://ponte", "tok")
+    assert c.sessao.trust_env is False
+    chamadas = []
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"faces": [], "ms": 1}
+
+    def post(self, url, **kw):
+        chamadas.append(kw)
+        return R()
+
+    monkeypatch.setattr(familia.requests.Session, "post", post)
+    c.reconhecer(JPEG)
+    assert chamadas[0]["allow_redirects"] is False and chamadas[0]["timeout"] == familia.TIMEOUT_S <= 6
+
+
+def test_desconhecido_no_envelope_nao_afirma_que_nao_e_cadastrado() -> None:
+    visto = familia.Reconhecidos(nomes=[], desconhecidos=1, rostos=1, capturado_em="21:40:05", ms=9)
+    m = envelope.compor("quem está aí?", pessoas=visto)
+    assert "não cadastrad" not in m and "não reconhecida" in m

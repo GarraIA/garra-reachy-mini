@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -52,11 +54,15 @@ BRILHO_MAXIMO = 220.0
 LIMIAR_SEMELHANCA = 0.45
 # O melhor tem de ganhar do segundo por esta margem, senão é "desconhecido".
 MARGEM_MINIMA = 0.10
+# Da segunda amostra em diante, ela tem de parecer com as que já estão no
+# perfil — senão quem passou pela câmera no momento errado vira "Maria".
+MESMA_PESSOA_MINIMA = 0.35
+DIMENSAO = 128
 NOME_MAX = 40
 _NOME = re.compile(r"^[^\W\d_][\w .'\-]{0,39}$")
 
 MOTIVOS_DA_AMOSTRA = ("no_face", "many_faces", "too_small", "blurry", "too_dark", "too_bright",
-                      "no_embedding", "enough_samples")
+                      "no_embedding", "enough_samples", "different_person")
 MOTIVOS_DO_DESCONHECIDO = ("no_embedding", "no_profiles", "below_threshold", "ambiguous")
 
 
@@ -90,7 +96,7 @@ def _consentimento(dado) -> dict:
     if not por:
         raise ErroRostos("consent_required", "falta quem consentiu")
     menor = bool(dado.get("minor"))
-    responsavel = str(dado.get("guardian") or "").strip() or None
+    responsavel = str(dado.get("guardian") or "").strip()[:NOME_MAX] or None
     if menor and not responsavel:
         raise ErroRostos("guardian_required", "menor de idade só com o responsável registrado")
     return {"accepted": True, "by": por[:NOME_MAX], "minor": menor, "guardian": responsavel,
@@ -104,26 +110,36 @@ def _nome(dado) -> str:
     return nome
 
 
-def _unitario(v: np.ndarray) -> np.ndarray:
-    v = np.asarray(v, dtype=np.float32).reshape(-1)
+def _unitario(v) -> np.ndarray | None:
+    """O vetor normalizado — ou None se não é um vetor de rosto válido (NaN,
+    infinito, zero, ou de outra dimensão). Um vetor torto nunca decide nada."""
+    try:
+        v = np.asarray(v, dtype=np.float32).reshape(-1)
+    except (TypeError, ValueError):
+        return None
+    if v.shape != (DIMENSAO,) or not np.all(np.isfinite(v)):
+        return None
     n = float(np.linalg.norm(v))
-    return v / n if n > 0 else v
+    if not n > 0:
+        return None
+    return v / n
 
 
 def _escrever(caminho: Path, dados: bytes) -> None:
-    """Grava atômico e só para o dono, sem depender do umask de quem roda."""
-    tmp = caminho.with_name(caminho.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    """Grava atômico e só para o dono, sem depender do umask de quem roda.
+    O temporário tem nome único: dois escritores com o mesmo `.tmp` deixavam
+    um arquivo pela metade no lugar do outro."""
+    fd, tmp = tempfile.mkstemp(prefix=caminho.name + ".", suffix=".tmp", dir=caminho.parent)
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(dados)
             f.flush()
             os.fsync(f.fileno())
+        os.replace(tmp, caminho)
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        Path(tmp).unlink(missing_ok=True)
         raise
-    os.replace(tmp, caminho)
 
 
 class Base:
@@ -133,6 +149,9 @@ class Base:
         self.pasta = Path(pasta)
         self.pasta.mkdir(parents=True, exist_ok=True)
         os.chmod(self.pasta, 0o700)
+        # Um escritor por vez: as rotas do serviço rodam em threads e cada
+        # mutação é ler-mudar-gravar do arquivo inteiro.
+        self._tranca = threading.RLock()
         self._fernet = Fernet(self._chave())
 
     # ─── arquivos ────────────────────────────────────────────────────────────
@@ -152,31 +171,45 @@ class Base:
         return self.pasta / f"{perfil_id}.emb"
 
     def _ler(self) -> list[dict]:
+        """Os perfis do arquivo. Arquivo torto é ERRO, não base vazia: tratar
+        como vazia faria a próxima escrita sobrescrevê-lo e deixaria os
+        vetores órfãos no disco, sem como apagá-los pelo painel."""
         caminho = self._caminho_metadados()
         if not caminho.exists():
             return []
         try:
             dados = json.loads(caminho.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return []
-        return list(dados.get("perfis") or [])
+        except (OSError, ValueError) as e:
+            raise ErroRostos("store_corrupt", f"perfis.json ilegível ({type(e).__name__})")
+        perfis = dados.get("perfis") if isinstance(dados, dict) else None
+        if not isinstance(perfis, list) or not all(
+                isinstance(p, dict) and isinstance(p.get("id"), str) and isinstance(p.get("name"), str)
+                and isinstance(p.get("consent"), dict) for p in perfis):
+            raise ErroRostos("store_corrupt", "perfis.json com forma inesperada")
+        return perfis
 
     def _gravar(self, perfis: list[dict]) -> None:
         _escrever(self._caminho_metadados(), json.dumps({"perfis": perfis}, ensure_ascii=False, indent=1).encode())
 
     def _ler_vetores(self, perfil_id: str) -> list[np.ndarray] | None:
-        """Lista de vetores; [] sem amostras; None se existem mas não abrem."""
+        """Lista de vetores; [] sem amostras; None se existem mas não abrem
+        (chave trocada) ou não servem (outro modelo: dimensão diferente)."""
         caminho = self._caminho_vetores(perfil_id)
         if not caminho.exists():
             return []
         try:
-            claro = self._fernet.decrypt(caminho.read_bytes())
-            return [_unitario(np.asarray(v, dtype=np.float32)) for v in json.loads(claro)["v"]]
-        except (InvalidToken, OSError, ValueError, KeyError, TypeError):
+            claro = json.loads(self._fernet.decrypt(caminho.read_bytes()))
+            if int(claro.get("dim", DIMENSAO)) != DIMENSAO:
+                return None
+            vetores = [_unitario(v) for v in claro["v"]]
+        except (InvalidToken, OSError, ValueError, KeyError, TypeError, AttributeError):
             return None
+        if any(v is None for v in vetores):
+            return None
+        return vetores
 
     def _gravar_vetores(self, perfil_id: str, vetores: list[np.ndarray]) -> None:
-        claro = json.dumps({"v": [[float(x) for x in v] for v in vetores]}).encode()
+        claro = json.dumps({"dim": DIMENSAO, "v": [[float(x) for x in v] for v in vetores]}).encode()
         _escrever(self._caminho_vetores(perfil_id), self._fernet.encrypt(claro))
 
     # ─── perfis ──────────────────────────────────────────────────────────────
@@ -186,7 +219,8 @@ class Base:
                 "consent": dict(p["consent"]), "created_at": p["created_at"], "samples_readable": legivel}
 
     def perfis(self) -> list[dict]:
-        return [self._publico(p) for p in self._ler()]
+        with self._tranca:
+            return [self._publico(p) for p in self._ler()]
 
     def _achar(self, perfis: list[dict], perfil_id: str) -> dict:
         for p in perfis:
@@ -195,29 +229,34 @@ class Base:
         raise ErroRostos("not_found", "perfil não existe")
 
     def perfil(self, perfil_id: str) -> dict:
-        return self._publico(self._achar(self._ler(), perfil_id))
+        with self._tranca:
+            return self._publico(self._achar(self._ler(), perfil_id))
 
     def criar(self, nome, consentimento) -> dict:
         consent = _consentimento(consentimento)
-        perfis = self._ler()
-        p = {"id": uuid.uuid4().hex[:12], "name": _nome(nome), "active": True, "samples": 0,
-             "consent": consent, "created_at": _agora_iso()}
-        perfis.append(p)
-        self._gravar(perfis)
-        return self._publico(p)
+        nome = _nome(nome)
+        with self._tranca:
+            perfis = self._ler()
+            p = {"id": uuid.uuid4().hex[:12], "name": nome, "active": True, "samples": 0,
+                 "consent": consent, "created_at": _agora_iso()}
+            perfis.append(p)
+            self._gravar(perfis)
+            return self._publico(p)
 
     def apagar(self, perfil_id: str) -> None:
-        perfis = self._ler()
-        self._achar(perfis, perfil_id)
-        self._caminho_vetores(perfil_id).unlink(missing_ok=True)
-        self._gravar([p for p in perfis if p["id"] != perfil_id])
+        with self._tranca:
+            perfis = self._ler()
+            self._achar(perfis, perfil_id)
+            self._caminho_vetores(perfil_id).unlink(missing_ok=True)
+            self._gravar([p for p in perfis if p["id"] != perfil_id])
 
     def _ativo(self, perfil_id: str, ativo: bool) -> dict:
-        perfis = self._ler()
-        p = self._achar(perfis, perfil_id)
-        p["active"] = ativo
-        self._gravar(perfis)
-        return self._publico(p)
+        with self._tranca:
+            perfis = self._ler()
+            p = self._achar(perfis, perfil_id)
+            p["active"] = ativo
+            self._gravar(perfis)
+            return self._publico(p)
 
     def ativar(self, perfil_id: str) -> dict:
         return self._ativo(perfil_id, True)
@@ -226,38 +265,49 @@ class Base:
         return self._ativo(perfil_id, False)
 
     def limpar_amostras(self, perfil_id: str) -> int:
-        perfis = self._ler()
-        p = self._achar(perfis, perfil_id)
-        antes = int(p["samples"])
-        self._caminho_vetores(perfil_id).unlink(missing_ok=True)
-        p["samples"] = 0
-        self._gravar(perfis)
-        return antes
+        with self._tranca:
+            perfis = self._ler()
+            p = self._achar(perfis, perfil_id)
+            antes = int(p["samples"])
+            self._caminho_vetores(perfil_id).unlink(missing_ok=True)
+            p["samples"] = 0
+            self._gravar(perfis)
+            return antes
+
+    def vetores_legiveis(self, perfil_id: str) -> list[np.ndarray]:
+        """Os vetores do perfil que abrem com a chave de agora ([] se nenhum)."""
+        with self._tranca:
+            return self._ler_vetores(perfil_id) or []
 
     def guardar_vetor(self, perfil_id: str, vetor: np.ndarray) -> int:
         """Acrescenta um vetor ao perfil; devolve quantos ficaram."""
-        perfis = self._ler()
-        p = self._achar(perfis, perfil_id)
-        atuais = self._ler_vetores(perfil_id)
-        if atuais is None:
-            # Os antigos não abrem com a chave de agora: recomeça o perfil em vez
-            # de misturar vetores que ninguém consegue ler.
-            atuais = []
-        atuais.append(_unitario(vetor))
-        self._gravar_vetores(perfil_id, atuais)
-        p["samples"] = len(atuais)
-        self._gravar(perfis)
-        return len(atuais)
+        unitario = _unitario(vetor)
+        if unitario is None:
+            raise ErroRostos("no_embedding", "vetor inválido")
+        with self._tranca:
+            perfis = self._ler()
+            p = self._achar(perfis, perfil_id)
+            atuais = self._ler_vetores(perfil_id)
+            if atuais is None:
+                # Os antigos não abrem com a chave de agora: recomeça o perfil em
+                # vez de misturar vetores que ninguém consegue ler.
+                atuais = []
+            atuais.append(unitario)
+            self._gravar_vetores(perfil_id, atuais)
+            p["samples"] = len(atuais)
+            self._gravar(perfis)
+            return len(atuais)
 
     def galeria(self) -> list[tuple[dict, list[np.ndarray]]]:
         """Perfis ativos com vetores legíveis — o que o reconhecimento compara."""
         saida = []
-        for p in self._ler():
-            if not p["active"] or not p["samples"]:
-                continue
-            vetores = self._ler_vetores(p["id"])
-            if vetores:
-                saida.append((self._publico(p), vetores))
+        with self._tranca:
+            for p in self._ler():
+                if not p["active"] or not p["samples"]:
+                    continue
+                vetores = self._ler_vetores(p["id"])
+                if vetores:
+                    saida.append((self._publico(p), vetores))
         return saida
 
 
@@ -288,43 +338,62 @@ class Reconhecedor:
         self.margem = float(margem)
 
     def cadastrar(self, perfil_id: str, jpeg: bytes) -> dict:
-        """Uma amostra: exige UM rosto bom; guarda o vetor e descarta a imagem."""
+        """Uma amostra: exige UM rosto bom, parecido com as amostras que o
+        perfil já tem; guarda o vetor e descarta a imagem."""
         perfil = self.base.perfil(perfil_id)
-        if perfil["samples"] >= AMOSTRAS_MAX:
-            return {"ok": False, "reason": "enough_samples", "samples": perfil["samples"]}
+        atuais = self.base.vetores_legiveis(perfil_id)
+        # O teto conta as amostras LEGÍVEIS: cinco ilegíveis não são cinco.
+        if len(atuais) >= AMOSTRAS_MAX:
+            return {"ok": False, "reason": "enough_samples", "samples": len(atuais)}
         rostos = self.motor.detectar(jpeg)
         motivo = _qualidade(rostos)
         if motivo:
             return {"ok": False, "reason": motivo, "samples": perfil["samples"]}
         [r] = rostos
-        n = self.base.guardar_vetor(perfil_id, r.embedding)
+        e = _unitario(r.embedding)
+        if e is None:
+            return {"ok": False, "reason": "no_embedding", "samples": perfil["samples"]}
+        if atuais and max(float(e @ v) for v in atuais) < MESMA_PESSOA_MINIMA:
+            return {"ok": False, "reason": "different_person", "samples": len(atuais)}
+        n = self.base.guardar_vetor(perfil_id, e)
         return {"ok": True, "samples": n,
                 "quality": {"size_px": int(min(r.caixa[2], r.caixa[3])), "sharpness": float(r.nitidez),
                             "brightness": float(r.brilho)}}
 
     def reconhecer(self, jpeg: bytes) -> list[dict]:
-        """Um item por rosto na imagem; nada é gravado."""
+        """Um item por rosto na imagem; nada é gravado. Cada perfil vai para no
+        máximo UM rosto — o mais parecido — senão duas pessoas viram "Maria"."""
         galeria = self.base.galeria()
+        rostos = self.motor.detectar(jpeg)
         vistos = []
-        for r in self.motor.detectar(jpeg):
+        candidatos: list[tuple[float, int, dict, float]] = []   # (melhor, índice do rosto, perfil, segundo)
+        for i, r in enumerate(rostos):
             visto = {"box": [int(x) for x in r.caixa], "known": False, "profile_id": None, "name": None,
                      "score": None, "reason": None}
-            if r.embedding is None:
+            e = _unitario(r.embedding)
+            if e is None:
                 visto["reason"] = "no_embedding"
             elif not galeria:
                 visto["reason"] = "no_profiles"
             else:
-                e = _unitario(r.embedding)
                 pontos = sorted(((max(float(e @ v) for v in vetores), p) for p, vetores in galeria),
                                 key=lambda par: par[0], reverse=True)
                 melhor, perfil = pontos[0]
                 segundo = pontos[1][0] if len(pontos) > 1 else -1.0
                 visto["score"] = round(melhor, 4)
-                if melhor < self.limiar:
+                # Guardas POSITIVAS: um NaN que escapasse cairia em "desconhecido".
+                if not melhor >= self.limiar:
                     visto["reason"] = "below_threshold"
-                elif melhor - segundo < self.margem:
+                elif not (melhor - segundo) >= self.margem:
                     visto["reason"] = "ambiguous"
                 else:
-                    visto.update(known=True, profile_id=perfil["id"], name=perfil["name"])
+                    candidatos.append((melhor, i, perfil, segundo))
             vistos.append(visto)
+        usados: set[str] = set()
+        for melhor, i, perfil, _segundo in sorted(candidatos, key=lambda c: c[0], reverse=True):
+            if perfil["id"] in usados:
+                vistos[i]["reason"] = "ambiguous"
+                continue
+            usados.add(perfil["id"])
+            vistos[i].update(known=True, profile_id=perfil["id"], name=perfil["name"])
         return vistos
