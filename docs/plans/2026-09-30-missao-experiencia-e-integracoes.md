@@ -174,7 +174,7 @@ citado no envelope do pedido, como o contexto do ambiente.
 | Painel 5 telas | **implementado + validado real (Chrome headless)** | 320/390/768/1280/1920 × 7 telas: 0 rolagem horizontal, 0 alvo < 44 px no toque, 0 erro JS; capturas em `~/.local/state/garra-reachy/validacao-1.11.0/2026-09-30-painel/` |
 | Suíte | 1502 passed, 1 skipped | `pytest -q` |
 | Painel × ponte real (PC, sem robô) | **validado real** | simulado com as integrações: família ok/0 perfis, casa not_configured, música not_configured, diagnóstico 22 checks, visão local pronta (capturas com dados reais na mesma pasta) |
-| RC no Space privado | **feito** | `michelbr/garra_reachy_mini_rc` sha `e01830599ded` (commit `ef0ebbc`) |
+| RC no Space privado | **feito** | `michelbr/garra_reachy_mini_rc` sha `e06944a5f30d` (commit `94b9e25`) |
 | RC no robô | **bloqueado: robô fora da rede** (30/09 02:15–) | vigia `esperar_e_instalar.sh` instala por estado quando ele voltar |
 | Publicação v1.4.1 | **bloqueado pelo OK único do Michel** | decisão 1 |
 
@@ -262,7 +262,7 @@ Dito e não mudado (decisão de postura, registrada):
 
 ## PRÓXIMA AÇÃO EXATA
 
-Quando o robô voltar à rede (o vigia instala o RC `e01830599ded` por estado):
+Quando o robô voltar à rede (o vigia instala o RC `e06944a5f30d` por estado):
 validar de verdade — "o que você está vendo?" por voz e pelo chat, "quem está
 aí?" com um cadastro consentido, regressão de voz/frase/relógio/câmera/apps/
 STOP, o painel no celular, o Diagnóstico com o gateway de verdade. Depois:
