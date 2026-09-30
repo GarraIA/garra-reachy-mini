@@ -164,6 +164,19 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   todas as letras que reconhecer um rosto **não** diz quem está falando e
   **não** autoriza nada; eventos levam contagens, nunca nomes.
 
+- **A visão local convive com os outros modelos da GPU.** Medido no PC com o
+  robô: um pedido de visão que obriga o Ollama a despejar um modelo ocupado
+  (um 27B gerando por minutos) faz o agendador parar a fila inteira — a
+  visão esperou 154 s e os embeddings da memória do gateway esperaram junto,
+  derrubando o chat. Agora o provedor local só pede quando o modelo de visão
+  já está na GPU ou cabe sem despejar ninguém grande; senão responde na hora
+  "o computador está ocupado com outro modelo" (e, com a nuvem permitida, usa
+  a nuvem). Carregar é uma fase à parte (20 s), as opções são fixas (contexto
+  4096, tudo na GPU: na CPU um quadro levou mais de dois minutos) e o modelo
+  fica quente por 10 min. No robô: 5,1 s na primeira pergunta, 1,8 s nas
+  seguintes. O painel diz "pronto na GPU", "carrega no primeiro pedido" ou
+  "GPU ocupada por outro modelo".
+
 - **Diagnóstico item a item.** Ajustes › Diagnóstico lê o Capability Registry
   do gateway e mostra cada capacidade com nome, origem, estado, motivo e o que
   fazer — separando "não configurado" (escolha) de "indisponível" (defeito) —
@@ -179,6 +192,11 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   rotas `/api/olhar`, `/api/casa/*`, `/api/musica/*`, `/api/rostos/*`,
   `/api/diagnostico`. `build_info.capabilities` anuncia `vision`, `home`,
   `music`, `family`, `diagnostics`, `panel_screens`.
+
+- Medido no robô: o evento de status pelo WebSocket traz só o controlador, e
+  o painel pintava "câmera indisponível" e "sem escuta" a cada ação; agora
+  junta com o último status completo. Botões pequenos (caderno, perfis) com
+  44 px no toque; câmera em duas colunas no desktop.
 
 ### Medido e não adotado
 

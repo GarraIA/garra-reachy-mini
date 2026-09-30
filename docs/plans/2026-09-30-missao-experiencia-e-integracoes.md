@@ -158,24 +158,25 @@ citado no envelope do pedido, como o contexto do ambiente.
   hoje continuam (suíte de testes do painel verde).
 - Casa/Spotify/Família: ver cada frente ao ser aberta.
 
-## 6. Estado (30/09, 02:40)
+## 6. Estado (30/09, 10:10 — robô de volta, validação em hardware)
 
 | Requisito | Estado | Evidência |
 |---|---|---|
 | Registry — causas de cada item | feito | §2.1 (config, não código); `tools.capabilities` = 11 visíveis · `device_*` (no_devices) · `bash` (not_configured) |
-| Registry — apresentação item a item no painel | **implementado + validado em teste** | `test_painel_telas.py::test_itens_do_registro_leem_a_frase_do_gateway`; rota viva: `GET :8126/api/diagnostico` → 22 checks |
-| Registry — agregação no core | **bloqueado (handoff, §8)** | GarraRUST só leitura |
-| Visão local | **implementado + validado real (PC)** | `qwen2.5vl:7b` descreveu `cena1/cena2` (30/09 00:43); `test_visao*`, `test_ponte_visao` |
-| Visão nuvem opt-in | implementado + validado em teste | `OPENROUTER_API_KEY` copiada ao `companion.env` (30/09); chamada real fica para a validação no robô |
-| Visão por voz/texto no robô | implementado; **validação real pendente** (instalar RC) | `test_visao_no_laco.py` |
-| Casa | implementado + validado em teste (fakes de HA e gateway) | `test_casa_*`; real **bloqueado**: não há Home Assistant configurado nesta casa |
-| Spotify | implementado até a fronteira de autorização; validado em teste | `test_musica_*`; real **bloqueado**: sem Client ID (app de desenvolvedor do Michel) |
-| Família | implementado + serviço real ativo no PC | `garra-reachy-faces.service` ativo, `/saude` ok, 0 perfis; real **bloqueado pelo consentimento** (cadastro guiado pelo painel, com o Michel) |
-| Painel 5 telas | **implementado + validado real (Chrome headless)** | 320/390/768/1280/1920 × 7 telas: 0 rolagem horizontal, 0 alvo < 44 px no toque, 0 erro JS; capturas em `~/.local/state/garra-reachy/validacao-1.11.0/2026-09-30-painel/` |
-| Suíte | 1502 passed, 1 skipped | `pytest -q` |
-| Painel × ponte real (PC, sem robô) | **validado real** | simulado com as integrações: família ok/0 perfis, casa not_configured, música not_configured, diagnóstico 22 checks, visão local pronta (capturas com dados reais na mesma pasta) |
-| RC no Space privado | **feito** | `michelbr/garra_reachy_mini_rc` sha `e06944a5f30d` (commit `94b9e25`) |
-| RC no robô | **bloqueado: robô fora da rede** (30/09 02:15–) | vigia `esperar_e_instalar.sh` instala por estado quando ele voltar |
+| Registry — apresentação item a item | **validado real no robô** | Ajustes › Diagnóstico renderizado pelo robô contra o gateway 0.4.7 (§11) |
+| Registry — agregação no core | **handoff (§8.1)** | GarraRUST só leitura |
+| Smoke em hardware (página, câmera, apps, movimentos, expressões, STOP, TTS) | **validado real** | `validacao-1.11.0/2026-09-30-robo/smoke.log` |
+| Visão local — painel | **validado real** | fria 5,1 s, quente 1,8 s; 3 posições de cabeça → 3 quadros e 3 descrições diferentes (`visao-robo-3.log`) |
+| Visão local — chat | **validado real** | 2 cenas diferentes; "o que eu estou segurando?" → "não estou vendo ninguém" (sem inventar) |
+| Visão local — voz | **validado real** | "o que você está vendo?" / "o que tem na sua frente?" com cenas diferentes, visão 1,35–1,38 s (`voz-visao.log`) |
+| Visão — negativos | **validado real** | modelo inexistente → `model_missing`; endpoint fora → `provider_offline`; nuvem sem opt-in → `cloud_disabled`; desligada → `disabled`, e o chat diz que não vê |
+| Visão × GPU (Hera) | **resolvido por admissão** (§10) | testes com o 27B residente; incidente real das 08:50–09:30 como evidência |
+| Casa | implementado; validado real até a fronteira | onboarding com URL inválida/fora da casa/token curto/HA sem resposta → códigos certos; nada gravado; `device_*` segue `no_devices` (verdade). **Real: sem Home Assistant nesta casa** |
+| Spotify | implementado; validado real até a autorização | Client ID inválido/válido, erros sem conta (409), volume fora da faixa (400), `/spotify/conectar` → authorize com PKCE S256, redirect loopback, sem secret; callback com erro/`state` errado → 400; voz recusada (painel, chat e voz). **Real: precisa do Client ID do Michel** |
+| Família | implementado; validado real sem cadastrar ninguém | serviço de pé; reconhecer num quadro real (0 perfis → 0 rostos em 45–108 ms); consentimento, menor sem responsável, desativar, apagar, 404 depois; eventos só com contagens. **Cadastro real: fronteira do consentimento** |
+| Painel 5 telas no robô | **validado real** | 7 telas em 390 px: 0 rolagem, STOP e nav visíveis, status real; stream + trocas de aba + 5 recargas: 0 cliente de câmera sobrando |
+| Correções vindas do hardware | feitas, com teste | evento de status apagava câmera/voz; timeout/carga da visão; alvos mini 25→44 px; favicon; câmera 2 colunas no desktop |
+| Suíte | 1552 passed, 1 skipped; pyflakes limpo | |
 | Publicação v1.4.1 | **bloqueado pelo OK único do Michel** | decisão 1 |
 
 ## 7. Validação (comandos)
@@ -260,10 +261,71 @@ Dito e não mudado (decisão de postura, registrada):
   assinatura biométrica nunca sai do PC.
 - Robô ↔ ponte é HTTP na LAN (quadros, nomes, token do HA na configuração).
 
+## 10. GPU, Ollama e a visão local (30/09, medido)
+
+**Quem ocupa a GPU (RTX 4090, 24,5 GB):** STT `garra-stt` 2,5 GB e voz
+`garra-reachy-voice` 6,1 GB, sempre; o Ollama (unidade de usuário
+`ollama.service`) serve três clientes — o **job diário da Hera** "Resumo diário
+8:30 — Emails importantes 24h" (Hermes cron `8b1d8a060800`, `Qwen3.8-27B`,
+20,2 GB, 11–12 GB na GPU e o resto na CPU, ~2,4 tok/s, das 08:30 até ~09:50
+hoje), o **embedding da memória do gateway** (`qwen3-embedding:0.6b`, 5,8 GB
+por usar contexto de 32 k) e a **visão do robô** (`qwen2.5vl:7b`).
+
+**Quem parou o Ollama às 09:20:12:** nem esta sessão nem a Hera (o job dela
+caiu junto e se recuperou). O systemd registra, no mesmo instante, um
+`systemctl` vindo de **outra aba do GNOME Terminal** (`vte-spawn-9139802b…`,
+já fechada; esta sessão roda em `vte-spawn-bbcf1bd1…`) com parada + recarga
+— o padrão de `systemctl --user disable --now ollama` — e a unidade, que
+subia no boot desde 27/09, ficou `disabled`. **Esta sessão religou o serviço
+com `start` às 09:21:25 (sem `enable`)**: voltou a visão local, o embedding
+do gateway e o job da Hera (terminou `ok` às 09:49). Se o `disable` foi
+decisão do Michel, o Ollama está de pé agora mas **não sobe no próximo boot**.
+
+**Por que a visão travava (e o chat junto):** para carregar um modelo que
+exige despejar outro que está OCUPADO, o agendador do Ollama para a fila
+inteira até o outro terminar. A visão esperou o 27B por 154 s; os embeddings
+do gateway ficaram atrás dela (17–23 s, um de 3m48s) e o chat do Garra caiu
+com 502 às 09:07 e às 09:25. Controle: sem visão pendente, o mesmo embedding
+respondeu em 0,13 s.
+
+**Medidas:**
+
+| Onde | Carga | Descrição de um quadro 720p |
+|---|---|---|
+| GPU livre (ctx 4096, `num_gpu` 999) | 2,6 s (5,1 GiB; 6,9 GB no nvidia-smi) | 0,9–1,0 s |
+| CPU (`num_gpu` 0) com o 27B dividindo a CPU | 7,3 s (sem despejo) | 131–156 s |
+| residente na CPU e pedido sem `num_gpu` | — | 1m45s (o Ollama reaproveita o runner da CPU) |
+
+**Solução (commit `8a9f786`):** porta de admissão no provedor local. Só pede
+ao Ollama quando o modelo de visão já está na GPU com as nossas opções, ou
+quando cabe no que está livre mais o que é de modelos pequenos (despejo
+instantâneo); com um modelo grande (≥ 10 GB, pedidos de minutos) ocupando a
+VRAM, responde `provider_busy` na hora — sem entrar na fila de ninguém — e,
+com a nuvem permitida, vai para ela. Carga como fase à parte (20 s), opções
+fixas (num_ctx 4096, num_gpu 999), quente por 10 min. Nada da Hera, do
+gateway ou do Ollama foi reconfigurado.
+
+**Custo aceito e opções para o dono:** durante o job das 08:30 (~1 h/dia) a
+visão local responde "o computador está ocupado com outro modelo". Para ter
+visão local também nessa janela, as alavancas são do dono da Hera/do PC:
+limitar as camadas do 27B na GPU (`num_gpu` no Modelfile/pedido da Hera) ou
+mudar o horário do job; reservar VRAM para a visão (mantê-la carregada)
+deixaria o 27B ~30 % mais lento. Com a nuvem ligada no painel, a visão segue
+funcionando nessa janela pela OpenRouter.
+
+## 11. Registro de capacidades, como o robô mostra (30/09, 09:03)
+
+`11 capacidades visíveis ao modelo` (como o gateway diz) · `device_execute` e
+`device_read` **indisponíveis — nenhum aparelho registrado no gateway**, ação:
+conectar o Home Assistant em Controle › Casa · `bash` **não configurado —
+intencional, sem sandbox** · integrações do painel: `vision` ok (robô),
+`home`/`music` não configuradas (companion), `family` desligada (companion).
+O pill global do gateway segue "Atenção" por causa da agregação no core (§8.1).
+
 ## PRÓXIMA AÇÃO EXATA
 
-Quando o robô voltar à rede (o vigia instala o RC `e06944a5f30d` por estado):
-validar de verdade — "o que você está vendo?" por voz e pelo chat, "quem está
-aí?" com um cadastro consentido, regressão de voz/frase/relógio/câmera/apps/
-STOP, o painel no celular, o Diagnóstico com o gateway de verdade. Depois:
-relatório final (formato §12 da missão) e o pedido único de OK para publicar.
+Publicar o RC final (commit com este registro) no Space privado, instalar no
+robô por estado, repetir no build final: painel (5 telas × 5 larguras,
+capturas), visão fria/quente, família/casa/música até as fronteiras, e deixar
+a observação de recursos (robô + GPU) rodando antes do relatório e do pedido
+único de OK.

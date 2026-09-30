@@ -249,6 +249,12 @@ it cannot see right now — it never describes from memory.
   picture of your home leave it, and the panel shows the warning whenever it is
   on. A local failure never falls back to the cloud silently.
 - **Test connection** and **Analyze current frame** are in the same card.
+- **Sharing the GPU.** Local vision never waits behind another model that is
+  busy on the same Ollama: waiting there stalls Ollama's whole queue (other
+  clients too). When a large model holds the GPU, the robot says right away
+  that the computer is busy with another model — or uses the cloud, if you
+  allowed it. On a free GPU the first question takes a few seconds (the model
+  loads) and the next ones about two; the model stays loaded for 10 minutes.
 
 ### Home (Home Assistant, 1.4.1)
 
