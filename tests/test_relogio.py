@@ -144,3 +144,24 @@ def test_a_hora_nao_vira_evento_nem_log(ac, caplog) -> None:
     ac.montar("que horas são?", 10.0, conf)
     assert "21:20" not in json.dumps(ac.eventos.historico(50), ensure_ascii=False)
     assert "21:20" not in caplog.text
+
+
+# ─── a hora das capturas é a da casa (medido no robô em 30/09) ───────────────
+def test_hora_curta_usa_o_fuso_configurado_e_nao_o_do_sistema() -> None:
+    """O robô sai de fábrica em Londres: a visão dizia "quadro capturado às
+    16:14" enquanto o bloco AGORA dizia "onze e quatorze" (fuso da casa)."""
+    import datetime as dt
+    instante = dt.datetime(2026, 9, 30, 15, 14, 45, tzinfo=dt.timezone.utc)
+    assert relogio.hora_curta("America/New_York", instante) == "11:14:45"
+    assert relogio.hora_curta("Europe/London", instante) == "16:14:45"
+    # sem fuso (ou inválido): o do sistema, como antes
+    assert relogio.hora_curta("", instante) == instante.astimezone().strftime("%H:%M:%S")
+    assert relogio.hora_curta("Lua/Mare_Tranquilitatis", instante) == instante.astimezone().strftime("%H:%M:%S")
+
+
+def test_o_app_passa_a_hora_da_casa_para_a_visao_e_a_familia() -> None:
+    import inspect
+    from garra_reachy_mini import main
+    fonte = inspect.getsource(main.GarraReachyMini._montar_robo)
+    assert "visao.Olho(hub, self._cliente_de_visao, controlador.eventos, hora=self._hora_da_casa)" in fonte
+    assert "familia.Familia(hub, self._cliente_da_familia, controlador.eventos, hora=self._hora_da_casa)" in fonte

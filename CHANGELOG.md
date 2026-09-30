@@ -201,6 +201,10 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   `/api/diagnostico`. `build_info.capabilities` anuncia `vision`, `home`,
   `music`, `family`, `diagnostics`, `panel_screens`.
 
+- Medido no robô: as capturas da visão e da família saíam carimbadas no relógio
+  do sistema do robô (Londres, de fábrica) — "quadro capturado às 16:14"
+  junto de "agora são onze e quatorze". Agora usam o fuso da casa
+  (`clock_timezone`), o mesmo do bloco AGORA.
 - Medido no robô: o evento de status pelo WebSocket traz só o controlador, e
   o painel pintava "câmera indisponível" e "sem escuta" a cada ação; agora
   junta com o último status completo. Botões pequenos (caderno, perfis) com

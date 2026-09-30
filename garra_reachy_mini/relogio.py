@@ -48,6 +48,12 @@ def agora(fuso: Any = "", instante: dt.datetime | None = None) -> dt.datetime:
     return instante.astimezone(zona) if zona is not None else instante.astimezone()
 
 
+def hora_curta(fuso: Any = "", instante: dt.datetime | None = None) -> str:
+    """HH:MM:SS no fuso da casa — para carimbar capturas (visão, família) com
+    a mesma hora que o bloco AGORA usa. Sem fuso válido, a do sistema."""
+    return agora(fuso, instante).strftime("%H:%M:%S")
+
+
 def por_extenso(quando: dt.datetime) -> str:
     """`terça-feira, 29 de setembro de 2026, 21:20`. Sem depender do idioma do
     sistema, que no robô é inglês."""

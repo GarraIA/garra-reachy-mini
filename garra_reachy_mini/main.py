@@ -52,7 +52,7 @@ from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from . import servicos as servicos_mod
-from . import casa, familia, musica, visao
+from . import casa, familia, musica, relogio, visao
 from .segmentador import Segmentador
 from .servicos import Servicos
 from .voz import VozClient, frases, limpar_para_voz
@@ -282,9 +282,9 @@ class GarraReachyMini(ReachyMiniApp):
         self.acompanhamento = Acompanhamento(controlador.eventos)
         # A visão: o mesmo `FrameHub` do painel, um quadro por pedido. O cliente
         # da ponte é montado a cada olhada, com a URL e o token de agora.
-        self.olho = visao.Olho(hub, self._cliente_de_visao, controlador.eventos)
+        self.olho = visao.Olho(hub, self._cliente_de_visao, controlador.eventos, hora=self._hora_da_casa)
         # A família: o mesmo quadro, comparado com os perfis no computador.
-        self.familia = familia.Familia(hub, self._cliente_da_familia, controlador.eventos)
+        self.familia = familia.Familia(hub, self._cliente_da_familia, controlador.eventos, hora=self._hora_da_casa)
         # Casa, música, família e diagnóstico pela ponte; o supervisor a
         # reponta quando a configuração muda, como faz com o chat.
         self.integracoes = PonteIntegracoes(cfg.gateway_url, cfg.gateway_key)
@@ -422,6 +422,15 @@ class GarraReachyMini(ReachyMiniApp):
             raise RuntimeError("a voz ainda não está pronta")
         r = await asyncio.to_thread(self._falar_texto, texto, False)
         return r.value if isinstance(r, ResultadoFala) else ResultadoFala.FALADA.value
+
+    def _hora_da_casa(self) -> str:
+        """A hora das capturas no fuso da casa (`clock_timezone`), e não no do
+        sistema do robô, que sai de fábrica em Londres."""
+        try:
+            fuso = Config.carregar().conversa.get("clock_timezone")
+        except Exception:  # noqa: BLE001 — carimbo de hora não derruba a visão
+            fuso = ""
+        return relogio.hora_curta(fuso)
 
     def _cliente_de_visao(self) -> visao.ClienteVisao:
         cfg = Config.carregar()
