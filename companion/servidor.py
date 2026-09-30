@@ -15,9 +15,9 @@ import asyncio
 import logging
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from . import agente, agente_teste, modo, ponte, reachy, seguranca, unidade, voz
+from . import agente, agente_teste, modo, musica, ponte, reachy, seguranca, unidade, voz
 
 HOST = "127.0.0.1"
 PORTA = 8125
@@ -52,6 +52,65 @@ async def preflight(resto: str, request: Request):
 @app.get("/api/health")
 async def health():
     return {"ok": True, "service": "garra-reachy-companion", "port": PORTA}
+
+
+# ── Spotify: conectar a conta, só por aqui ──────────────────────────────────
+# A Spotify só aceita redirect por HTTPS ou por IP de loopback literal. Este
+# servidor escuta em 127.0.0.1: é o único lugar da casa onde o callback é
+# válido. O celular, no painel do robô, vê o endereço e a explicação.
+_spotify: musica.Spotify | None = None
+
+
+def _sp() -> musica.Spotify:
+    global _spotify
+    if _spotify is None:
+        _spotify = musica.Spotify()
+    return _spotify
+
+
+def _pagina(titulo: str, texto: str, status: int = 200) -> HTMLResponse:
+    from html import escape
+    corpo = (f"<!doctype html><meta charset='utf-8'><title>{escape(titulo)}</title>"
+             f"<body style='font-family:system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem'>"
+             f"<h1>{escape(titulo)}</h1><p>{escape(texto)}</p></body>")
+    return HTMLResponse(corpo, status_code=status)
+
+
+@app.get("/spotify/conectar")
+async def spotify_conectar():
+    try:
+        inicio = await asyncio.to_thread(_sp().iniciar_conexao)
+    except musica.ErroMusica as e:
+        if e.codigo == "not_configured":
+            return _pagina("Spotify", "Falta o Client ID. Configure no painel do robô, em Ajustes → "
+                           "Integrações → Spotify, e volte aqui.", 409)
+        return _pagina("Spotify", f"Não foi possível começar a conexão ({e.codigo}).", 502)
+    return RedirectResponse(inicio["url"], status_code=302)
+
+
+@app.get("/spotify/callback")
+async def spotify_callback(request: Request):
+    q = request.query_params
+    if q.get("error"):
+        return _pagina("Spotify", f"A Spotify recusou a conexão: {q.get('error')}. Nada foi gravado.", 400)
+    code, state = q.get("code") or "", q.get("state") or ""
+    if not code or not state:
+        return _pagina("Spotify", "Faltou o código ou o state na volta da Spotify.", 400)
+    try:
+        estado = await asyncio.to_thread(_sp().concluir, code, state)
+    except musica.ErroMusica as e:
+        if e.codigo == "invalid_state":
+            return _pagina("Spotify", "Esta volta não corresponde a uma conexão começada aqui (state "
+                           "inválido ou vencido). Comece de novo pelo painel.", 400)
+        return _pagina("Spotify", f"A conexão não foi concluída ({e.codigo}).", 502)
+    quem = (estado.get("user") or {}).get("display_name") or "a conta"
+    return _pagina("Spotify conectado", f"Conectado como {quem}. Pode fechar esta aba e voltar ao "
+                   "painel do robô.")
+
+
+@app.get("/api/spotify/estado")
+async def spotify_estado():
+    return await asyncio.to_thread(_sp().estado)
 
 
 # ── voz ──────────────────────────────────────────────────────────────────────

@@ -51,7 +51,7 @@ from .robo.backends import BackendSdk, BackendSimulado
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from . import servicos as servicos_mod
-from . import visao
+from . import musica, visao
 from .segmentador import Segmentador
 from .servicos import Servicos
 from .voz import VozClient, frases, limpar_para_voz
@@ -902,6 +902,17 @@ class GarraReachyMini(ReachyMiniApp):
                     if intencao.resposta_imediata:
                         falar(intencao.resposta_imediata)
                     return
+
+            # Música por voz: a política da Spotify proíbe assistente de voz, e
+            # a recusa é fixa — não passa pelo modelo, que nem fica sabendo.
+            # Depois dos atalhos locais: "pare" vale mais que qualquer pedido.
+            if musica.pede_controle(texto):
+                controlador.eventos.publicar(
+                    "chat.message", correlation_id=correlacao, role="assistant",
+                    content=musica.RECUSA_POR_VOZ, source="garra")
+                falar(musica.RECUSA_POR_VOZ)
+                gestos.ouvindo()
+                return
 
             # Sem cérebro nenhum: os atalhos locais acima ainda obedecem, mas
             # conversar é impossível. Dizer isso a cada frase vira ladainha, e

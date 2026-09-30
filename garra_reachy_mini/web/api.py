@@ -36,6 +36,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 
 from .. import armazenamento, build_info, conversa, envelope, recursos
 from .. import caderno as caderno_mod
+from .. import musica as musica_mod
 from .. import visao as visao_mod
 from ..acompanhamento import Acompanhamento
 from ..robo.acoes import PRIO_AMBIENTE, ControladorRobo
@@ -266,6 +267,50 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
         if not isinstance(corpo.get("enabled"), bool):
             raise _erro(400, "informe enabled", "bad_request")
         return await repassar("POST", "/api/casa/voz", {"enabled": corpo["enabled"]})
+
+    # ── música (Spotify) ─────────────────────────────────────────────────────
+    # Conectar a conta não passa por aqui (é no navegador do PC, por loopback);
+    # o painel só mostra o endereço. Comandar, sim — e nada disto vai ao modelo.
+    @r.get("/musica/estado")
+    async def musica_estado() -> Any:
+        return await repassar("GET", "/api/musica/estado")
+
+    @r.post("/musica/configurar")
+    async def musica_configurar(corpo: dict[str, Any] = Body(...)) -> Any:
+        client_id = corpo.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip():
+            raise _erro(400, "informe client_id", "bad_request")
+        return await repassar("POST", "/api/musica/configurar", {"client_id": client_id.strip()})
+
+    @r.delete("/musica")
+    async def musica_desconectar() -> Any:
+        return await repassar("DELETE", "/api/musica")
+
+    @r.get("/musica/dispositivos")
+    async def musica_dispositivos() -> Any:
+        return await repassar("GET", "/api/musica/dispositivos")
+
+    @r.get("/musica/reproducao")
+    async def musica_reproducao() -> Any:
+        return await repassar("GET", "/api/musica/reproducao")
+
+    @r.post("/musica/acao")
+    async def musica_acao(corpo: dict[str, Any] = Body(...)) -> Any:
+        acao = corpo.get("action")
+        if acao not in ("play", "pause", "next", "previous", "volume", "transfer"):
+            raise _erro(400, "ação desconhecida", "bad_request")
+        pedido: dict[str, Any] = {"action": acao}
+        if acao == "volume":
+            pct = corpo.get("percent")
+            if not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 100:
+                raise _erro(400, "percent de 0 a 100", "bad_request")
+            pedido["percent"] = pct
+        if acao == "transfer":
+            alvo = corpo.get("device_id")
+            if not isinstance(alvo, str) or not alvo:
+                raise _erro(400, "informe device_id", "bad_request")
+            pedido["device_id"] = alvo
+        return await repassar("POST", "/api/musica/acao", pedido)
 
     return r
 
@@ -799,6 +844,12 @@ def _rotas_chat(ctx: ContextoWeb) -> APIRouter:
         # a mensagem montada é entre o app e o modelo.
         ac = ctx.acompanhamento
         conf = await asyncio.to_thread(_conversa_atual)
+        if musica_mod.pede_controle(texto):
+            # Política da Spotify: assistente não controla por voz nem por
+            # modelo. A recusa é fixa e não passa pelo modelo.
+            ctx.eventos.publicar("chat.message", correlation_id=correlacao, role="assistant",
+                                 content=musica_mod.RECUSA_POR_VOZ, source="garra")
+            return {"content": musica_mod.RECUSA_POR_VOZ, "refused": "spotify_policy"}
         visto = None
         if ctx.olho is not None and visao_mod.pede_visao(texto):
             visto = await asyncio.to_thread(ctx.olho.olhar, texto, conf, correlacao, "chat")

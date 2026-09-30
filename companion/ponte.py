@@ -44,7 +44,7 @@ import urllib.parse
 
 import httpx
 
-from . import agente, casa as casa_mod, modo, visao
+from . import agente, casa as casa_mod, modo, musica as musica_mod, visao
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -274,12 +274,18 @@ def _preferencias_da_query(q) -> visao.Preferencias | None:
 
 
 _casa = None
+_musica = None
+_STATUS_DA_MUSICA = {"invalid_client_id": 400, "bad_request": 400, "not_configured": 409,
+                     "not_connected": 409, "restricted_device": 409, "invalid_state": 400,
+                     "auth_failed": 401, "auth_expired": 401, "premium_required": 402,
+                     "no_active_device": 404, "rate_limited": 429, "unreachable": 502,
+                     "timeout": 504, "spotify_error": 502}
 _STATUS_DA_CASA = {"invalid_url": 400, "invalid_token": 400, "unreachable": 502, "unauthorized": 401,
                    "not_configured": 409, "config_error": 500, "gateway_restart_failed": 502}
 
 
 def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None,
-           casa=None) -> FastAPI:
+           casa=None, musica=None) -> FastAPI:
     """Devolve o app da ponte já com o token e a chave real do gateway.
 
     `visao_local`/`visao_nuvem` são os provedores de visão; sem eles, os de
@@ -288,10 +294,11 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
     """
     # Módulo, não closure: o `app` é um só e as rotas ficam registradas na
     # primeira chamada; o que `montar` decide depois precisa valer também.
-    global _olho_local, _olho_nuvem, _casa
+    global _olho_local, _olho_nuvem, _casa, _musica
     _olho_local = visao_local or visao.Local()
     _olho_nuvem = visao_nuvem or visao.Nuvem(chave=os.environ.get("OPENROUTER_API_KEY"))
     _casa = casa or casa_mod.Casa(chave_gateway=chave_gateway)
+    _musica = musica or musica_mod.Spotify()
 
     @app.api_route("/ping", methods=["GET", "HEAD"])
     async def saude(request: Request) -> Response:
@@ -559,6 +566,78 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
                                 headers={"Cache-Control": "no-store"})
         except casa_mod.ErroCasa as e:
             return _erro_da_casa(e)
+
+    # ── música (Spotify) ─────────────────────────────────────────────────────
+    # O painel do robô comanda por aqui. Conectar a conta NÃO é por aqui: é no
+    # navegador do PC, por loopback (`servidor.py`), como a Spotify exige.
+    def _erro_da_musica(e: musica_mod.ErroMusica) -> JSONResponse:
+        log.info("musica: %s", e.codigo)
+        cabecalhos = {"Cache-Control": "no-store"}
+        if e.retry_after_s is not None:
+            cabecalhos["Retry-After"] = str(e.retry_after_s)
+        return JSONResponse({"erro": e.codigo, "detalhe": e.detalhe[:120]},
+                            status_code=_STATUS_DA_MUSICA.get(e.codigo, 502), headers=cabecalhos)
+
+    async def _musica_rota(request: Request, chamada, *args) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            return JSONResponse(await asyncio.to_thread(chamada, *args),
+                                headers={"Cache-Control": "no-store"})
+        except musica_mod.ErroMusica as e:
+            return _erro_da_musica(e)
+
+    @app.get("/api/musica/estado")
+    async def musica_estado(request: Request) -> Response:
+        return await _musica_rota(request, _musica.estado)
+
+    @app.post("/api/musica/configurar")
+    async def musica_configurar(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            corpo = json.loads(await request.body())
+        except ValueError:
+            corpo = None
+        if not isinstance(corpo, dict) or not isinstance(corpo.get("client_id"), str):
+            return JSONResponse({"erro": "bad_request"}, status_code=400)
+        return await _musica_rota(request, _musica.configurar, corpo["client_id"])
+
+    @app.delete("/api/musica")
+    async def musica_desconectar(request: Request) -> Response:
+        return await _musica_rota(request, _musica.desconectar)
+
+    @app.get("/api/musica/dispositivos")
+    async def musica_dispositivos(request: Request) -> Response:
+        return await _musica_rota(request, lambda: {"devices": _musica.dispositivos()})
+
+    @app.get("/api/musica/reproducao")
+    async def musica_reproducao(request: Request) -> Response:
+        return await _musica_rota(request, lambda: _musica.reproducao() or {})
+
+    @app.post("/api/musica/acao")
+    async def musica_acao(request: Request) -> Response:
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401)
+        try:
+            corpo = json.loads(await request.body())
+        except ValueError:
+            corpo = None
+        acao = corpo.get("action") if isinstance(corpo, dict) else None
+        if acao not in musica_mod.ACOES:
+            return JSONResponse({"erro": "bad_request"}, status_code=400)
+        args: dict = {}
+        if acao == "volume":
+            pct = corpo.get("percent")
+            if not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 100:
+                return JSONResponse({"erro": "bad_request"}, status_code=400)
+            args["percent"] = pct
+        if acao == "transfer":
+            alvo = corpo.get("device_id")
+            if not isinstance(alvo, str) or not alvo or len(alvo) > 100:
+                return JSONResponse({"erro": "bad_request"}, status_code=400)
+            args["device_id"] = alvo
+        return await _musica_rota(request, lambda: _musica.acionar(acao, **args))
 
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
