@@ -1410,9 +1410,11 @@ function pintarDiagnostico(d) {
   const reg = itensDoRegistro(caps ? caps.detail : '');
   const caixa = $('diagnostico-capacidades');
   const linhas = [];
+  // O número é o do gateway, como ele o diz ("11 visíveis"); os itens abaixo
+  // são os que ele destaca. Nada de aritmética por cima de uma frase.
   if (reg.visiveis !== null) {
     linhas.push(`<div class="item"><span class="badge ok">${esc(t('diag.disponivel'))}</span>
-      <div class="meio"><div class="nome">${esc(t('diag.visiveis', { n: reg.visiveis - reg.itens.length }))}</div>
+      <div class="meio"><div class="nome">${esc(t('diag.visiveis', { n: reg.visiveis }))}</div>
       <div class="desc">${esc(t('diag.visiveis_dica'))}</div></div></div>`);
   }
   for (const it of reg.itens) {
@@ -1453,6 +1455,9 @@ function pintarDiagnostico(d) {
 }
 
 async function carregarDiagnostico() {
+  // As integrações locais entram no mesmo registro: busca o estado de cada
+  // uma antes, para não mostrar "não conferido" para o que dá para conferir.
+  await Promise.allSettled([carregarCasa(), carregarMusica()]);
   try {
     pintarDiagnostico(await api('/api/robot/diagnostico'));
   } catch (e) {

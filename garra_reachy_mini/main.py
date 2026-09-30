@@ -1316,11 +1316,17 @@ def _rodar_simulado() -> None:
     servicos.marcar("brain", False, codigo="not_running")
     app = FastAPI(title="Garra Reachy Mini (simulated)")
     preparar(app, politica)
+    # As integrações também no simulado: é assim que o painel se valida num
+    # PC com a ponte de verdade, sem robô. O quadro é o sintético do backend.
+    eventos = controlador.eventos
     montar(app, ContextoWeb(
-        controlador=controlador, hub=hub, eventos=controlador.eventos,
+        controlador=controlador, hub=hub, eventos=eventos,
         politica=politica, servicos=servicos,
         chat=PonteChat(cfg.gateway_url, cfg.gateway_key, cfg.agent_id),
-        acompanhamento=Acompanhamento(controlador.eventos),
+        acompanhamento=Acompanhamento(eventos),
+        olho=visao.Olho(hub, lambda: visao.ClienteVisao(cfg.gateway_url, cfg.gateway_key), eventos),
+        familia=familia.Familia(hub, lambda: familia.ClienteFamilia(cfg.gateway_url, cfg.gateway_key), eventos),
+        integracoes=PonteIntegracoes(cfg.gateway_url, cfg.gateway_key),
         dir_estatico=Path(__file__).resolve().parent / "static",
     ))
     print(f"\nModo simulado (sem robô). Painel em {politica.url_visivel}/reachy\n")
