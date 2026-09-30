@@ -48,10 +48,13 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
     escreveu — entre 0,13 e 0,62 quando errou a frase, entre 0,83 e 0,99 quando
     a palavra era outra mesmo. O corte ficou em 0,75.
 
-    Na build final, no robô: **19 de 21** frases com "Fala Garra" respondidas
-    por voz, e **1 falsa ativação em 16** frases parecidas ("Falta garra nesse
-    time", que chegou como "falta a garra"). "Fala galera", "fala para" e "fala
-    agora" não ativaram.
+    Com o filtro, no robô: **22 de 26** frases com "Fala Garra" respondidas por
+    voz, e **2 falsas ativações em 21** frases parecidas — "Falta garra nesse
+    time" (chegou como "falta a garra") e "Fala, cara, tudo bem com você?"
+    (chegou como "falo cara"), as duas com a transcrição em dúvida. "Fala
+    galera", "fala para" e "fala agora" não ativaram nenhuma vez. Frase
+    parecida dita no começo de uma fala ainda pode chamar o robô; ficou mais
+    raro, não impossível.
 
     O filtro tem preço: com a voz do Michel, "fala cara" ouvido com 91% de
     confiança era ele chamando, e não foi conferido. Para quem prefere ser
@@ -123,10 +126,14 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   `stopping` — o deadlock que só reiniciar o daemon resolve. Depois do
   reinício: sem erro, 37 °C, torque ligado. Aconteceu uma vez; a causa não foi
   achada.
-- **Gravações que o robô não reconhece de jeito nenhum.** Duas das 21 frases
+- **Chamadas que o robô não reconhece de jeito nenhum.** Quatro das 26 frases
   positivas chegaram com um começo que não lembra a frase nem de longe, e aí
   não há segunda escuta. O diagnóstico não mostra o que foi ouvido nesses
   casos, de propósito.
+- **Comparar a probabilidade média das duas escutas** pode separar melhor a
+  chamada de verdade da frase parecida: nas 12 chamadas medidas, a transcrição
+  com a dica ficou mais provável que a sem dica em 10; na única falsa ativação
+  medida com esse dado, ficou menos. É uma medida só. Não entrou.
 
 ## 1.4.0 — 2026-09-29
 

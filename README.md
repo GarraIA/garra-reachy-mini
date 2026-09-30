@@ -188,8 +188,8 @@ speakers into the robot: 6 right out of 30. Three things deal with it:
   within three letters of the phrase **and the transcription itself was unsure
   of it**, the robot sends the same audio to the voice server once more,
   telling it which phrase to expect, and answers only if the phrase then comes
-  out exact. On the robot: 19 of 21 calls answered, and 1 false activation in
-  16 look-alike sentences. The phrase is never given as a hint to *every*
+  out exact. On the robot: 22 of 26 calls answered, and 2 false activations in
+  21 look-alike sentences. The phrase is never given as a hint to *every*
   transcription — that makes noise turn into a call — and not even every time
   the beginning looks alike: that made "Fala galera, beleza?" call the robot.
 - **Double-check even when the transcription was sure** (off by default) trades
