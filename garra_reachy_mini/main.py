@@ -512,7 +512,7 @@ class GarraReachyMini(ReachyMiniApp):
         """
         conv = Config.carregar().conversa
         ligada = conv.get("music_voice_enabled") is True
-        if pedido.contextual and (not ligada or time.monotonic() >= self._musica_ate):
+        if pedido.contextual and (not ligada or not self._musica_em_assunto()):
             return None
         resultado = None
         if pedido.operacao == "capability":
@@ -585,6 +585,18 @@ class GarraReachyMini(ReachyMiniApp):
                          duration_ms=int((time.monotonic() - inicio) * 1000))
         self._lembrar_musica(resultado)
         return resultado
+
+    def _musica_em_assunto(self) -> bool:
+        """Há música no assunto? A lembrança do robô primeiro; sem ela (o app
+        acabou de subir, a música veio do celular), pergunta ao PC."""
+        if time.monotonic() < self._musica_ate:
+            return True
+        agora = self._cliente_da_musica().reproducao()
+        if not agora:
+            return False
+        self._musica_ate = time.monotonic() + MUSICA_ASSUNTO_S
+        self._musica_tocando = bool(agora.get("is_playing"))
+        return True
 
     def _lembrar_musica(self, r: dict | None) -> None:
         if not r or r.get("status") in (None, "pending", "unavailable", "failed"):

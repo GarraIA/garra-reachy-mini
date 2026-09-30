@@ -28,6 +28,8 @@ from .robo.intencoes import normalizar
 # Menor que o teto do laço de voz (main.MUSICA_PRAZO_S): o robô não fica surdo esperando.
 TIMEOUT_S = 25.0
 TIMEOUT_ABAFAR_S = 6.0
+# "Há música?" antes de um comando solto: uma leitura do player (~1 s medido).
+TIMEOUT_ESTADO_S = 4.0
 
 DESLIGADO = ("O comando de música por voz está desligado. Dá para ligar no painel do robô, "
              "em Controle › Música.")
@@ -178,8 +180,10 @@ def pedido_da_ferramenta(operacao: str, consulta: str | None, volume: int | None
 
 
 # ── o que o modelo fica sabendo ──────────────────────────────────────────────
+# Tocar, ouvir, volume, cantar: o STT erra o comando ("Toco até o Califórnia"),
+# e sem a situação o modelo concluía "não consigo tocar música" (medido em 30/09).
 _FALA_DE_MUSICA = re.compile(r"\b(spotify|musica|musicas|playlist|playlists|faixa|cancao|album|cantor|cantora|"
-                             r"banda|music|song|songs)\b")
+                             r"banda|music|song|songs|toca|toco|toque|tocar|tocando|ouvir|volume|canta|cantando)\b")
 # Com música no assunto, "volume", "som", "alto" também são sobre ela.
 _NO_ASSUNTO = re.compile(r"\b(volume|som|alto|baixo|tocar|toca|tocando|pausa|proxima|anterior)\b")
 # Com a música tocando e a frase de ativação perdida nela: sinal de que alguém
@@ -203,10 +207,12 @@ def pede_atencao(texto: str) -> bool:
 def situacao(habilitada: bool) -> str:
     """Uma frase de fato do sistema para o modelo — sem nada vindo da Spotify."""
     if habilitada:
-        return ("Música: o robô controla o Spotify do computador por comando de voz. Para tocar, a pessoa "
-                "diz, por exemplo: 'Garra, toca Hotel California', 'toca uma música', 'pausa', 'próxima' "
-                "ou 'que música está tocando?'. Se ela quiser isso, diga que é só pedir assim; não diga "
-                "que não tem acesso ao Spotify.")
+        return ("Música: o robô controla o Spotify do computador por comando de voz — tocar, pausar, "
+                "continuar, próxima, anterior, volume, fila e 'que música está tocando'. Quem executa é o "
+                "próprio robô, quando entende o comando; se o pedido chegou até você, ele não entendeu. "
+                "Você não sabe o que está tocando nem se algo está tocando: não invente. Se parecer um pedido "
+                "de música, peça para repetir, por exemplo: 'Garra, toca Hotel California'. Nunca diga que "
+                "não consegue tocar música ou mudar o volume dela.")
     return ("Música: o robô sabe controlar o Spotify do computador, mas o comando por voz está desligado "
             "no painel do robô, em Controle › Música. Diga isso, sem afirmar que o recurso não existe.")
 
@@ -257,6 +263,18 @@ class ClienteMusica:
             except (requests.RequestException, ValueError):
                 return None
         return None
+
+    def reproducao(self) -> dict | None:
+        """O que o player do PC diz agora, ou `None` (nada tocando, ou sem resposta)."""
+        if not self.base:
+            return None
+        try:
+            r = self.sessao.get(f"{self.base}/api/musica/reproducao", headers=self._cab, timeout=TIMEOUT_ESTADO_S,
+                                allow_redirects=False)
+            dados = r.json()
+        except (requests.RequestException, ValueError):
+            return None
+        return dados if r.status_code == 200 and isinstance(dados, dict) and dados else None
 
     def abafar(self, request_id: str) -> dict | None:
         return self._sem_erro("/api/musica/abafar", request_id)

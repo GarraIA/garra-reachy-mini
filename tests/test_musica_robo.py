@@ -224,7 +224,9 @@ def test_cliente_nao_reenvia_quando_o_pc_so_demorou(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("texto,no_assunto,esperado", [
-    ("aumento de volume", True, True), ("aumento de volume", False, False),
+    # "volume" leva a situação sempre (o modelo negava a capacidade); "som" e
+    # "alto" só com música no assunto
+    ("aumento de volume", True, True), ("aumento de volume", False, True), ("tá muito alto esse som", False, False),
     ("tá muito alto esse som", True, True), ("que horas são?", True, False),
     ("você sabe mexer no meu spotify?", False, True),
 ])
@@ -238,3 +240,36 @@ def test_fala_de_musica_com_musica_no_assunto(texto, no_assunto, esperado) -> No
 ])
 def test_quem_tentou_chamar_com_a_musica_tocando(texto, esperado) -> None:
     assert musica.pede_atencao(texto) is esperado
+
+
+@pytest.mark.parametrize("texto", ["Toco até o Califórnia.", "que você está tocando", "Fala H. Abaixa o volume.",
+                                   "quero ouvir alguma coisa", "quem canta isso?"])
+def test_situacao_vai_quando_a_frase_fala_de_tocar_ouvir_ou_volume(texto) -> None:
+    assert musica.fala_de_musica(texto) is True
+
+
+def test_situacao_proibe_inventar_estado_e_negar_o_recurso() -> None:
+    t = musica.situacao(True)
+    assert "não sabe o que está tocando" in t and "Nunca diga que não consegue" in t
+    assert "repetir" in t
+
+
+def test_reproducao_pela_ponte(monkeypatch) -> None:
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"is_playing": True, "plays_on": "spotatui", "item": {"name": "x"}}
+
+    chamadas = []
+
+    def get(self, url, headers=None, timeout=None, allow_redirects=True):
+        chamadas.append((url, timeout))
+        return R()
+
+    monkeypatch.setattr(musica.requests.Session, "get", get)
+    assert musica.ClienteMusica("http://ponte", "tok").reproducao()["plays_on"] == "spotatui"
+    assert chamadas == [("http://ponte/api/musica/reproducao", musica.TIMEOUT_ESTADO_S)]
+    monkeypatch.setattr(musica.requests.Session, "get",
+                        lambda self, *a, **k: (_ for _ in ()).throw(requests.ConnectionError("x")))
+    assert musica.ClienteMusica("http://ponte", "tok").reproducao() is None

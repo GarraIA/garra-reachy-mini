@@ -300,3 +300,21 @@ def test_talvez_seja_musica_para_o_modelo_saber(texto, esperado) -> None:
 ])
 def test_frase_de_ativacao_estropiada_no_comeco(texto, esperado) -> None:
     assert interpretar(texto) == esperado, texto
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    # o que o STT do robô escreveu na segunda rodada (RC2, 30/09)
+    ("toco hotel Califórnia", P("play_track", "hotel Califórnia")),
+    ("Fala, cara, que o música está tocando.", P("now_playing")),
+    ("Fala H. Abaixe o volume.", P("change_volume", volume=-15, contextual=True)),
+    ("que você está tocando?", P("now_playing")),
+    ("o que você está tocando?", P("now_playing")),
+])
+def test_variantes_do_stt_na_segunda_rodada(texto, esperado) -> None:
+    assert interpretar(texto) == esperado, texto
+
+
+@pytest.mark.parametrize("texto", ["fala que horas são", "fala mais alto", "fala comigo", "eu toco violão",
+                                   "toco de árvore", "fala a verdade"])
+def test_variantes_que_continuam_nao_sendo_comando(texto) -> None:
+    assert interpretar(texto) is None, texto

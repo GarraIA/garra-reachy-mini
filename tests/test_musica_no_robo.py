@@ -52,6 +52,9 @@ class ClienteFalso:
         r = self.respostas.get(pedido["operation"], tocando())
         return None if r is None else {**r, "operation": pedido["operation"], "request_id": pedido["request_id"]}
 
+    def reproducao(self) -> dict | None:
+        return None
+
     def abafar(self, rid: str) -> dict:
         self.abafados.append(rid)
         return {"ducked": True}
@@ -259,3 +262,21 @@ def test_sem_musica_tocando_ninguem_abaixa_nada(montar) -> None:
     cena.alguem_fala()
     time.sleep(0.5)
     assert cena.cliente.abafados == [] and not cena.eventos("music.listen_duck")
+
+
+def test_comando_solto_pergunta_ao_pc_quando_o_robo_nao_sabe(montar) -> None:
+    # Logo depois de o app reiniciar, a janela de assunto está vazia — mas a
+    # música pode estar tocando (ou pausada) no computador.
+    cliente = ClienteFalso()
+    cliente.reproducao = lambda: {"is_playing": False, "plays_on": "spotatui", "item": {"name": "x"}}
+    cena = montar(LIGADA, ["Fala Garra, continua"], cliente=cliente)
+    falar_e_esperar_resposta(cena)
+    assert [p["operation"] for p in cena.cliente.pedidos] == ["resume"] and cena.cerebro.recebidas == []
+
+
+def test_comando_solto_sem_musica_no_pc_vai_ao_modelo(montar) -> None:
+    cliente = ClienteFalso()
+    cliente.reproducao = lambda: None
+    cena = montar(LIGADA, ["Fala Garra, próxima"], ["Próxima o quê?"], cliente=cliente)
+    cena.alguem_fala()
+    assert cena.cliente.pedidos == [] and cena.cerebro.recebidas == ["próxima"]

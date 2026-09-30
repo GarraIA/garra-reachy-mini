@@ -48,7 +48,7 @@ _BORDA = "\"'“”‘’«».,;:!?()[]{}<> \t"
 # música estropiou ("fala gata", "fala galera", "ela agarra", medidos em 30/09),
 # que numa sessão de ativação aberta chega junto com o pedido.
 _INICIO = re.compile(r"^(?:(?:ei|hey|oi|ok|ola|opa|garra|garraia|robo|reachy|mini|por favor|please|entao|"
-                     r"falar? g\w*|fala a garra|ela agarra|"
+                     r"falar? (?:g\w*|c\w{1,4}|\w)|fala a garra|ela agarra|"
                      r"(?:use|usa|abre|abra|liga|ligue) o spotify e)(?:\s+|$))+")
 _FIM = re.compile(r"(?:\s+(?:por favor|please|agora|ai|pra mim|para mim|pra gente|para a gente|garra|"
                   r"obrigado|obrigada|now|for me|no spotify|pelo spotify|on spotify))+$")
@@ -58,7 +58,9 @@ _PEDIR = r"(?:(?:voce |vc )?(?:pode|poderia|podia|consegue|conseguiria)\s+)?"
 _ENFEITE = r"(?: ai| la| pra mim| para mim| pra gente| para a gente)?"
 # "Toca X" é música. "Coloca/põe/bota X" é pôr qualquer coisa em qualquer lugar —
 # só vira música com música dita ("a música X", "X no Spotify").
-_TOCAR_FORTE = r"(?:toca|toque|tocar|reproduz|reproduza|reproduzir|solta|solte)" + _ENFEITE
+# "toco" é o "toca" que o STT do robô escreve (medido em 30/09); ninguém diz
+# "toco X" a um robô, e a frase é ancorada no começo ("eu toco violão" não é).
+_TOCAR_FORTE = r"(?:toca|toco|toque|tocar|reproduz|reproduza|reproduzir|solta|solte)" + _ENFEITE
 _POR = r"(?:coloca|coloque|colocar|poe|ponha|bota|bote|botar)" + _ENFEITE
 _TOCAR = r"(?:" + _TOCAR_FORTE + r"|" + _POR + r")"
 _DAR_PLAY = r"(?:da|de|dar|manda|mande|aperta|aperte)\s+(?:um\s+|o\s+)?play"
@@ -138,6 +140,8 @@ _REGRAS: list[tuple[re.Pattern[str], str, bool]] = [
     (_c(r"(?:que|qual) (?:musica|cancao|faixa) (?:e essa|e esta|esta tocando|ta tocando|toca agora)"),
      "now_playing", False),
     (_c(r"(?:que|qual) (?:e )?a (?:musica|cancao) que (?:esta|ta) tocando"), "now_playing", False),
+    (_c(r"(?:que|qual) (?:o|a) (?:musica|cancao|faixa) (?:e essa|esta tocando|ta tocando)"), "now_playing", False),
+    (_c(r"(?:o )?que (?:voce|vc) (?:esta|ta) tocando"), "now_playing", False),
     (_c(r"(?:o )?que (?:esta|ta) tocando"), "now_playing", False),
     (_c(r"qual (?:e |eh )?(?:essa|esta) (?:musica|cancao)"), "now_playing", False),
     (_c(r"quem (?:canta|esta cantando|ta cantando) (?:essa|esta) (?:musica|cancao)|quem (?:esta|ta) cantando"),
@@ -181,7 +185,7 @@ _SOBE = ("aumenta", "aumente", "aumentar", "aumento", "sobe", "suba", "subir")
 
 # O que vem depois de "toca" e não é música: tocar em alguém, no sino, no violão.
 _NAO_E_MUSICA = re.compile(
-    r"^(?:(?:n[ao]s?|em|pelo|pela)\b.*|aqui|ai|la|isso aqui|de novo|"
+    r"^(?:(?:n[ao]s?|em|pelo|pela|de)\b.*|aqui|ai|la|isso aqui|"
     r"(?:(?:o|a|um|uma|no|na|meu|minha)\s+)?(?:campainha|sino|sinos|telefone|celular|interfone|alarme|buzina|"
     r"sirene|violao|guitarra|piano|bateria|flauta|teclado|sanfona|pandeiro|instrumento|tambor|corneta|trompete|"
     r"saxofone|cavaquinho|ukulele)(?:\s.*)?|comigo|contigo|com voce|com a gente|junto|juntos|pra gente)$")
