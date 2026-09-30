@@ -321,6 +321,30 @@ intencional, sem sandbox** · integrações do painel: `vision` ok (robô),
 `home`/`music` não configuradas (companion), `family` desligada (companion).
 O pill global do gateway segue "Atenção" por causa da agregação no core (§8.1).
 
+## 11b. Segunda revisão independente (30/09, tarde — diff `94b9e25..493edbb`)
+
+Corrigido com teste no commit `f98dcca` (11 achados; os de peso):
+
+- **Admissão da visão:** "pronto" passa a exigir o runner inteiro na GPU com o
+  nosso contexto (um runner em parte na GPU passava e a recarga exigia despejar
+  o 27B ocupado); a VRAM do próprio runner conta na recarga; reconhecimento
+  também por digest; só embedding ou modelo minúsculo é despejável; sem tamanho
+  declarado não arrisca; nvidia-smi só para Ollama deste PC, todas as GPUs,
+  nunca esperando um nvidia-smi travado; livre = min(nvidia, total − contado
+  pelo Ollama); prazo único de 40 s na cadeia local → nuvem.
+- **Casa:** estado rápido (sem sondar o Home Assistant) para o turno de voz e o
+  resumo do INÍCIO; cache de 20 s do estado completo; gatilhos ampliados e
+  lembrete/anotação/telefonema excluídos.
+- **Painel:** "ocupada" antes de "pronta"; eventos de serviços guardados;
+  releitura do status completo por evento, no máximo a cada 10 s; resumo do
+  INÍCIO sem nomes de perfis; texto da GPU ocupada fiel ao comportamento.
+- **Unidades:** limite de reinícios em [Unit] (em [Service] era ignorado);
+  companion sem limite (é o caminho do robô ao cérebro).
+
+Registrado e não mudado: a carga fria tem prazo de 20 s (em disco lento uma
+carga legítima seria abortada; aqui leva 2,6 s); o `garra-stt.service`, que não
+é deste repositório, tem o limite de reinícios na seção errada.
+
 ## 12. Reversão
 
 - **Robô:** o build anterior bom é o RC `e27981eef8dc` (commit `41e9637`, a
