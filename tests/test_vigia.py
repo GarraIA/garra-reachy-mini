@@ -66,6 +66,7 @@ def cena(tmp_path, monkeypatch):
 
     def configurar(painel, **kw):
         regravados.append(painel)
+        cena.pedidos.append(kw)
         return {"ok": cena.robo_confirma}
 
     monkeypatch.setattr(reachy, "configurar", configurar)
@@ -75,6 +76,7 @@ def cena(tmp_path, monkeypatch):
 
     cena = montar
     cena.regravados = regravados
+    cena.pedidos = []
     cena.robo_confirma = True
     return cena
 
@@ -105,8 +107,23 @@ def test_depois_de_sumir_e_voltar_o_app_e_iniciado_de_novo(cena) -> None:
     v.uma_volta()
     robo.no_ar = False
     assert v.uma_volta()["status"] == "robot_unreachable"
+    assert v.uma_volta()["status"] == "robot_unreachable"
     robo.no_ar, robo.app = True, None            # voltou de um reinício
     assert v.uma_volta()["status"] == "app_started"
+
+
+def test_um_soluco_da_rede_nao_religa_o_app_que_o_dono_parou(cena) -> None:
+    """Uma volta sem resposta é o Wi-Fi piscando, não o robô reiniciando."""
+    robo = Robo(app=vigia.APP)
+    v = cena(robo)
+    v.uma_volta()
+    robo.app = None                               # o dono parou o app
+    assert v.uma_volta()["status"] == "app_not_running"
+    robo.no_ar = False
+    assert v.uma_volta()["status"] == "robot_unreachable"
+    robo.no_ar = True
+    assert v.uma_volta()["status"] == "app_not_running"
+    assert robo.iniciados == []
 
 
 def test_outro_app_rodando_nao_e_tocado(cena) -> None:
@@ -132,6 +149,8 @@ def test_computador_mudou_de_ip_o_robo_e_reapontado(cena) -> None:
     v = cena(Robo(app=vigia.APP, aponta_para="192.168.1.78"))
     assert v.uma_volta()["status"] == "address_updated"
     assert cena.regravados == [f"http://{ROBO}:8042"]
+    # Sozinho, o vigia só reaponta: o token não sai deste computador por ele.
+    assert cena.pedidos == [{"so_enderecos": True}]
 
 
 def test_regravacao_que_o_robo_nao_confirma_espera_antes_de_insistir(cena) -> None:
@@ -161,3 +180,101 @@ def test_o_ultimo_endereco_do_robo_e_lembrado(cena, tmp_path, monkeypatch) -> No
                                              ("1", True), ("", True), (None, True)])
 def test_o_vigia_se_desliga_pelo_ambiente(valor, esperado) -> None:
     assert vigia.ligado({} if valor is None else {"GARRA_VIGIA": valor}) is esperado
+
+
+# ─── o vigia não confia em quem responde ─────────────────────────────────────
+class Impostor(Robo):
+    """Responde como daemon, e diz que o robô mora em outro lugar."""
+
+    def __init__(self, diz_que_mora_em: str, **kw) -> None:
+        super().__init__(**kw)
+        self.diz, self.vistos = diz_que_mora_em, []
+
+    def get(self, url, timeout=None):
+        self.vistos.append(url)
+        if url.endswith("/api/daemon/status") and ROBO in url:
+            return Resposta({"state": "x", "version": "9", "wlan_ip": self.diz})
+        return super().get(url, timeout)
+
+    def post(self, url, timeout=None):
+        self.vistos.append(url)
+        return super().post(url, timeout)
+
+
+@pytest.mark.parametrize("alvo", ["203.0.113.9", "evil.example", "127.0.0.1"])
+def test_o_endereco_que_a_resposta_diz_nao_e_seguido(cena, tmp_path, alvo) -> None:
+    """Achado alto da revisão: `wlan_ip` mandava o vigia (e o token) a qualquer host."""
+    falso = Impostor(alvo, app=vigia.APP, aponta_para="192.168.1.78")
+    v = cena(falso)
+    estado = v.uma_volta()
+    assert estado["robot"] == ROBO
+    assert all(alvo not in url for url in falso.vistos)
+    assert cena.regravados == [f"http://{ROBO}:8042"]
+    assert alvo not in (tmp_path / "robo.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("host", ["203.0.113.9", "8.8.8.8", "0.0.0.0", "224.0.0.1"])
+def test_so_endereco_privado_e_procurado(cena, monkeypatch, host) -> None:
+    monkeypatch.setenv("GARRA_ROBO_HOST", host)
+    monkeypatch.setattr(vigia.socket, "gethostbyname",
+                        lambda _n: (_ for _ in ()).throw(OSError("sem mDNS")))
+    robo = Impostor("10.0.0.5")
+    assert cena(robo).uma_volta()["status"] == "robot_unreachable"
+    assert robo.vistos == []
+
+
+def test_nome_que_resolve_para_fora_da_casa_nao_e_procurado(cena, monkeypatch) -> None:
+    monkeypatch.setenv("GARRA_ROBO_HOST", "reachy-mini.local")
+    monkeypatch.setattr(vigia.socket, "gethostbyname", lambda _n: "203.0.113.9")
+    robo = Impostor("10.0.0.5")
+    assert cena(robo).uma_volta()["status"] == "robot_unreachable"
+    assert robo.vistos == []
+
+
+def test_o_nome_e_resolvido_aqui_e_a_conversa_e_com_o_numero(cena, monkeypatch) -> None:
+    monkeypatch.setenv("GARRA_ROBO_HOST", "reachy-mini.local")
+    monkeypatch.setattr(vigia.socket, "gethostbyname", lambda _n: ROBO)
+    estado = cena(Robo(app=vigia.APP)).uma_volta()
+    assert estado["status"] == "ok" and estado["robot"] == ROBO
+
+
+@pytest.mark.parametrize("gateway, voz_", [
+    ("http://meu-pc.local:8126", "http://meu-pc.local:8123"),     # nome, não IP
+    ("http://10.0.0.24:8126", "http://10.0.0.99:8123"),           # voz em outra máquina
+])
+def test_configuracao_feita_de_proposito_nao_e_sobrescrita(cena, gateway, voz_) -> None:
+    class Proposital(Robo):
+        def get(self, url, timeout=None):
+            if url.endswith("/api/config"):
+                return Resposta({"efetiva": {"gateway_url": gateway, "voz_url": voz_}})
+            return super().get(url, timeout)
+
+    assert cena(Proposital(app=vigia.APP)).uma_volta()["status"] == "custom_addresses"
+    assert cena.regravados == []
+
+
+def test_outro_endereco_deste_computador_nao_e_trocado(cena, monkeypatch) -> None:
+    """Cabo e Wi-Fi, ou VPN: `ip_lan` muda de ideia, e o robô estava certo."""
+    monkeypatch.setattr(vigia, "_e_deste_computador", lambda ip: ip == "192.168.1.78")
+    v = cena(Robo(app=vigia.APP, aponta_para="192.168.1.78"))
+    assert v.uma_volta()["status"] == "custom_addresses" and cena.regravados == []
+
+
+def test_reapontar_nao_reenvia_o_token(monkeypatch, tmp_path) -> None:
+    """`reachy.configurar(so_enderecos=True)` grava as duas URLs e mais nada."""
+    monkeypatch.setenv("GARRA_REACHY_CONF", str(tmp_path))
+    monkeypatch.setattr(voz, "ip_lan", lambda: "10.0.0.24")
+    monkeypatch.setattr(voz, "token", lambda: "SEGREDO-DO-TESTE")
+    gravados: list[dict] = []
+    monkeypatch.setattr(reachy, "_config_atual", lambda painel: {
+        "efetiva": {"gateway_url": "http://192.168.1.78:8126"},
+        "salva": {"gateway_url": "http://192.168.1.78:8126",
+                  "voz_url": "http://192.168.1.78:8123", "voz_token": "x", "gateway_key": "x"}})
+    monkeypatch.setattr(reachy, "_gravar", lambda painel, valores: gravados.append(dict(valores)))
+    monkeypatch.setattr(reachy, "_esperar_alcancar", lambda *a, **k: (False, {}))
+    relatorio = reachy.configurar("http://10.0.0.142:8042", so_enderecos=True)
+    assert relatorio["rolled_back"] is True and len(gravados) == 2
+    for valores in gravados:                      # a gravação e o desfazer
+        assert set(valores) == {"gateway_url", "voz_url"}
+        assert "SEGREDO-DO-TESTE" not in str(valores)
+    assert "SEGREDO-DO-TESTE" not in str(relatorio)

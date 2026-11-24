@@ -21,7 +21,8 @@ from typing import Any
 
 from .base import (LIVRE, SEM_FERRAMENTAS, Adaptador, Conversa, ErroDoAgente,
                    Saude, Trecho, achar_executavel, ambiente_do_agente,
-                   executar, pasta_de_trabalho, versao_de)
+                   com_historico, executar, neutralizar, nome_do_executavel, pasta_de_trabalho,
+                   versao_de)
 
 
 class Pi(Adaptador):
@@ -30,7 +31,7 @@ class Pi(Adaptador):
     interface = "cli"
     sessoes = True
     streaming = True
-    prazo_s = 90.0
+    prazo_s = 60.0       # abaixo do prazo do robô: sobra tempo para o reserva
 
     def __init__(self, executavel: str | None = None) -> None:
         self.executavel = executavel or achar_executavel(
@@ -50,7 +51,7 @@ class Pi(Adaptador):
             self._versao = versao_de(self.executavel)
         if self._versao is None:
             return Saude(False, "error", "`pi --version` não respondeu")
-        return Saude(True, "ok", self.executavel, self._versao)
+        return Saude(True, "ok", nome_do_executavel(self.executavel), self._versao)
 
     def credenciais(self) -> tuple[bool, str]:
         """O Pi tem como falar com algum modelo? Só no teste: custa 0,3 s."""
@@ -98,13 +99,19 @@ class Pi(Adaptador):
         if self.modelo:
             argv += ["--model", self.modelo]
         if instrucoes:
-            argv += ["--system-prompt", instrucoes]
-        # `--` antes do pedido: a transcrição pode começar com hífen.
-        argv += ["--", texto]
+            argv += ["--system-prompt", neutralizar(instrucoes)]
+        # `--` antes do pedido: a transcrição pode começar com hífen. E sem
+        # arroba: depois do `--` o Pi trata `@caminho` como arquivo a anexar,
+        # com ou sem `--no-tools` (medido no 0.87.1 com `@/etc/hostname`).
+        # Primeira vez desta conversa no Pi, e ela já tinha história (o Pi
+        # entrou como reserva no meio do assunto): o que a ponte lembra vai junto.
+        if conversa.ref is None and conversa.mensagens:
+            texto = com_historico(conversa, texto)
+        argv += ["--", neutralizar(texto)]
 
         partes: list[str] = []
         erro: str | None = None
-        for linha in executar(argv, prazo_s=self.prazo_s, cwd=pasta):
+        for linha in executar(argv, prazo_s=self.prazo(conversa), cwd=pasta):
             try:
                 evento = json.loads(linha)
             except ValueError:
@@ -123,8 +130,9 @@ class Pi(Adaptador):
                 erro = str(evento.get("message") or evento.get("error") or "erro")
         resposta = "".join(partes).strip()
         if not resposta:
+            # O texto do erro é do provedor do modelo: fica neste computador.
             if erro and any(p in erro.lower() for p in ("auth", "api key", "credential", "401")):
-                raise ErroDoAgente("auth", erro)
-            raise ErroDoAgente("bad_response", erro or "o Pi não devolveu texto")
+                raise ErroDoAgente("auth", "credencial recusada", interno=erro)
+            raise ErroDoAgente("bad_response", "o Pi não devolveu texto", interno=erro or "")
         conversa.ref = conversa.id
         return resposta

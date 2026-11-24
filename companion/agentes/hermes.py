@@ -23,9 +23,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from . import persona
 from .base import (LIVRE, RESTRITO, SEM_FERRAMENTAS, Adaptador, Conversa,
-                   ErroDoAgente, Saude, Trecho, achar_executavel, executar,
-                   pasta_de_trabalho, versao_de)
+                   ErroDoAgente, Saude, Trecho, achar_executavel, com_historico,
+                   executar, neutralizar, nome_do_executavel, pasta_de_trabalho,
+                   versao_de)
 
 # O que cada nível entrega ao Hermes em `-t`. `todo` é a menor lista que ele
 # aceita (planejamento de tarefas, sem efeito fora da conversa).
@@ -43,7 +45,9 @@ class Hermes(Adaptador):
     interface = "cli"
     sessoes = True
     streaming = True
-    prazo_s = 120.0
+    # Menor que o prazo do robô (120 s), de propósito: se o Hermes não
+    # responder, ainda sobra tempo para o agente reserva antes de o robô desistir.
+    prazo_s = 75.0
 
     def __init__(self, executavel: str | None = None) -> None:
         self.executavel = executavel or achar_executavel(
@@ -62,7 +66,7 @@ class Hermes(Adaptador):
             self._versao = versao_de(self.executavel)
         if self._versao is None:
             return Saude(False, "error", "`hermes --version` não respondeu")
-        return Saude(True, "ok", self.executavel, self._versao)
+        return Saude(True, "ok", nome_do_executavel(self.executavel), self._versao)
 
     def opcoes(self) -> list[dict[str, Any]]:
         return [{
@@ -90,16 +94,26 @@ class Hermes(Adaptador):
         if not self.executavel:
             raise ErroDoAgente("unavailable", "Hermes não está instalado")
         argv = [self.executavel, "chat", "--format", "stream-json"]
+        texto = neutralizar(texto)
         if conversa.ref:
             argv += ["--resume", conversa.ref]
-            pedido = texto
+            # Sem prompt de sistema na CLI, o papel do primeiro turno vira
+            # mensagem antiga e o Hermes volta a ser o Hermes. Um lembrete
+            # curto, a cada turno, mantém o nome e o jeito de falar.
+            aviso = persona.lembrete(neutralizar(instrucoes)) if instrucoes else ""
+            pedido = f"{aviso}\n\n{texto}" if aviso else texto
         else:
             lista = FERRAMENTAS[self.ferramentas]
             if lista:
                 argv += ["-t", lista]
+            # Sessão nova para uma conversa que já tinha história (o Hermes
+            # esqueceu a anterior): o que a ponte lembra vai junto, para o
+            # assunto não recomeçar do zero.
+            if conversa.mensagens:
+                texto = neutralizar(com_historico(conversa, texto))
             # O Hermes não tem flag de prompt de sistema na CLI: o papel vai na
             # frente do primeiro pedido, e a sessão o carrega dali em diante.
-            pedido = f"{instrucoes}\n\n{texto}" if instrucoes else texto
+            pedido = f"{neutralizar(instrucoes)}\n\n{texto}" if instrucoes else texto
         # `--query=…` num argumento só: a transcrição pode começar com hífen
         # ("- Oi, tudo bem?"), e separada do `-q` ela seria lida como flag.
         argv.append(f"--query={pedido}")
@@ -109,7 +123,7 @@ class Hermes(Adaptador):
         sessao: str | None = None
         erro: str | None = None
         try:
-            for linha in executar(argv, prazo_s=self.prazo_s,
+            for linha in executar(argv, prazo_s=self.prazo(conversa),
                                   cwd=pasta_de_trabalho(self.id)):
                 try:
                     evento = json.loads(linha)
@@ -129,11 +143,14 @@ class Hermes(Adaptador):
                     if evento.get("error") or evento.get("exit_code") not in (0, None):
                         erro = str(evento.get("error") or f"exit {evento.get('exit_code')}")
         except ErroDoAgente as e:
-            if conversa.ref and e.codigo == "unavailable":
+            perdida = any(p in e.interno.lower() for p in ("no session", "session not found"))
+            if conversa.ref and e.codigo == "unavailable" and perdida:
                 # A sessão não existe mais do lado do Hermes (apagada, ou outro
-                # perfil): quem chama abre outra, em vez de insistir nesta.
+                # perfil): quem chama abre outra, em vez de insistir nesta. Só
+                # quando o Hermes DIZ isso — um erro passageiro do provedor não
+                # é motivo para jogar a conversa fora.
                 conversa.ref = None
-                raise ErroDoAgente("session_lost", e.detalhe) from e
+                raise ErroDoAgente("session_lost", e.detalhe, e.interno) from e
             raise
         if erro:
             raise ErroDoAgente("bad_response", erro)

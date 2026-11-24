@@ -54,7 +54,7 @@ def main(argv: list[str]) -> int:
         if not argv or argv[0] == "listar":
             _listar(r)
         elif argv[0] == "usar" and len(argv) == 2:
-            r.escolher(argv[1])
+            r.escolher(argv[1], local=True)
             _listar(r)
         elif argv[0] == "testar" and len(argv) == 2:
             print(json.dumps(r.testar(argv[1]), ensure_ascii=False, indent=1))
@@ -62,7 +62,8 @@ def main(argv: list[str]) -> int:
             r.configurar(argv[1], {argv[2]: argv[3]}, local=True)
             _listar(r)
         elif argv[0] == "reserva" and len(argv) == 2:
-            r.definir_reserva(None if argv[1] in ("nenhum", "none", "") else argv[1])
+            r.definir_reserva(None if argv[1] in ("nenhum", "none", "") else argv[1],
+                              local=True)
             _listar(r)
         elif argv[0] == "adicionar" and len(argv) == 2:
             definicao = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
@@ -70,7 +71,7 @@ def main(argv: list[str]) -> int:
             print(f"adicionado: {novo.id} ({novo.nome}). Teste com: "
                   f"python -m companion.agentes testar {novo.id}")
         elif argv[0] == "remover" and len(argv) == 2:
-            r.remover(argv[1])
+            r.remover(argv[1], local=True)
             _listar(r)
         else:
             print(USO)

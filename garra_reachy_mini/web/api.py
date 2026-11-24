@@ -528,10 +528,16 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
     return r
 
 
+# Quantos testes de escuta em cinco minutos. Calibrar a sensibilidade pede uma
+# dúzia; mais que isso é alguém mantendo o robô ocupado ouvindo para o teste.
+TESTES_DE_ESCUTA_POR_5_MIN = 15
+
+
 # ─── rotas do robô ───────────────────────────────────────────────────────────
 def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
     r = APIRouter(prefix="/api/robot", tags=["robot"])
     ctrl = ctx.controlador
+    _testes_de_escuta: list[float] = []
 
     @r.get("/status")
     async def status() -> dict[str, Any]:
@@ -807,9 +813,18 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
             # Microfone liberado: esperar doze segundos por uma fala que não
             # tem como chegar seria fingir um teste.
             raise _erro(409, "a escuta está desligada", "listening_disabled")
+        # Enquanto o teste espera, a fala da sala não vira conversa. Um teto
+        # impede que alguém, repetindo o teste sem parar, deixe o robô surdo.
+        agora = time.monotonic()
+        _testes_de_escuta[:] = [t for t in _testes_de_escuta if t > agora - 300.0]
+        if len(_testes_de_escuta) >= TESTES_DE_ESCUTA_POR_5_MIN:
+            raise _erro(429, "testes de escuta demais; espere um pouco", "too_many_requests")
+        _testes_de_escuta.append(agora)
         resultado = await asyncio.to_thread(ctx.sondar_escuta, 12.0)
         if resultado is None:
             return {"heard": False}
+        if resultado.get("busy"):
+            raise _erro(409, "já há um teste de escuta em andamento", "listen_test_busy")
         return {"heard": True, **resultado}
 
     # ── observabilidade ─────────────────────────────────────────────────────

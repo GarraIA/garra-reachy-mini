@@ -89,6 +89,28 @@ computador da casa. O desenho e as medidas estão em
   errada. O painel distingue os dois, e a dica do computador inacessível passou
   a mencionar o firewall — que foi a causa de verdade.
 
+### Security
+
+Uma revisão independente do código novo, antes da entrega, achou três falhas
+altas. As três foram corrigidas, com teste (ver a especificação, seção 3):
+
+- **Pedido forjado pela ponte.** Cadastrar um "servidor HTTP" com base
+  `http://127.0.0.1:8125/api/voice/stop#` fazia a ponte chamar a API de
+  administração do companion. A base agora é só `esquema://host:porta`, e pela
+  rede não se cadastra este computador.
+- **Leitura de arquivo pelo Pi.** Um pedido `@/caminho` era anexado como arquivo
+  pelo Pi, mesmo sem ferramentas. O arroba não chega mais a executável nenhum.
+- **O vigia entregava o token** a qualquer aparelho que respondesse como robô.
+  Ele agora só fala com endereço da rede da casa que de fato respondeu, e
+  sozinho só regrava as duas URLs.
+
+E mais: pela rede não se troca nem se apaga agente criado neste computador, nem
+se põe em uso um agente sem restrição; agente escolhido que sumiu aparece como
+caído em vez de ser trocado em silêncio; `agentes.json` ilegível não é
+sobrescrito; agente HTTP tem prazo total e teto de tamanho; pedido que começa
+com hífen não vira opção de linha de comando; o teste de escuta não engole o
+"pare"; teto de 30 turnos por minuto na ponte.
+
 ### Changed
 
 - **A frase de ativação nasce ligada** em instalação nova. Quem já tinha a

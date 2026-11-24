@@ -104,14 +104,47 @@ qualquer pessoa na sala.
   pasta vazia, longe de qualquer repositório.
 - **Pela rede só se faz o que não afrouxa nada.** As rotas `/api/agentes*` ficam
   atrás do token que o robô guarda, e o painel do robô não pede senha. Por elas:
-  escolher, testar, opção segura, servidor HTTP **da casa** (loopback, rede
-  privada, `.local`). Receita de linha de comando e nível "completo" de
-  ferramentas só entram **neste computador**: `python -m companion.agentes` ou o
-  arquivo `agentes.json`.
+  escolher, testar, opção segura, servidor HTTP **de outro aparelho da casa**
+  (rede privada ou `.local`). Só **neste computador** (`python -m
+  companion.agentes`, ou o arquivo `agentes.json`): receita de linha de comando,
+  nível "completo" de ferramentas, servidor deste próprio computador (loopback)
+  ou de fora da casa, credencial, e pôr em uso — como ativo ou reserva — um
+  agente sem restrição de ferramentas.
+- **O que é do dono, a rede não troca.** Cada agente cadastrado guarda de onde
+  veio (`origin`). Pela rede só se substitui ou remove o que a rede criou, e
+  não se ocupa o nome de um agente conhecido (`hermes`, `claude`, `ollama`…).
+- **A escolha do dono não se desfaz sozinha.** Agente escolhido que não foi
+  encontrado (o Ollama desligado quando o companion subiu) aparece como caído e
+  é procurado de novo a cada minuto; a conversa da casa não passa, em silêncio,
+  para outro agente. `agentes.json` ilegível não é sobrescrito: uma cópia
+  (`agentes.json.ilegivel-<data>`) é guardada antes da primeira gravação.
 - **Comando de barra não atravessa** (`/mode code`, `/yolo`): mais de um agente
   trata isso como comando dele.
 - **A resposta do agente é dado.** O robô a limpa e fala; movimento e hardware
   passam pelo `ControladorRobo`, com os limites físicos de sempre.
+
+### Revisão independente de segurança (24/11/2026)
+
+Uma revisão feita por outro agente, só com o código, achou três falhas altas —
+todas corrigidas, cada uma com teste:
+
+| Achado | Como era | Como ficou |
+|---|---|---|
+| **Pedido forjado pela ponte (SSRF)** | A "base" de um servidor HTTP aceitava loopback e `#`/`?`: `http://127.0.0.1:8125/api/voice/stop#` fazia a ponte chamar a API de administração do companion — e, com o gateway do Garra em confiança de loopback, o agente com `bash`. | A base é só `esquema://host:porta`. Pela rede, nunca este computador. "Rede da casa" é lista explícita (RFC 1918, `fc00::/7`), não o `is_private` do Python — que aceita faixas de documentação e 6to4. O corpo de uma resposta de erro não volta para quem cadastrou. |
+| **Leitura de arquivo pelo Pi** | Depois do `--`, o Pi 0.87.1 trata `@caminho` como arquivo a anexar, com ou sem `--no-tools`: `@~/.ssh/id_ed25519` dito no chat do painel mandava a chave ao provedor do modelo. | O arroba do pedido e do papel vira `＠` antes de chegar a QUALQUER executável (`base.neutralizar`). |
+| **O vigia entregava o token** | Ele seguia o `wlan_ip` que a resposta dizia e regravava a configuração inteira — token incluso — em quem respondesse como robô, sem ninguém clicar. | Só fala com endereço da rede da casa, e o que vale é o que respondeu. Sozinho, reaponta só as duas URLs; o token só sai pela tela, por ação do dono. |
+
+E as médias: agente HTTP com prazo total e teto de tamanho (um servidor que
+goteja não prende mais a ponte); o teste de escuta não engole o "pare", é um por
+vez e tem teto; erro passageiro do Hermes não joga a conversa fora; o agente
+reserva tem sessão própria, cabe no prazo do robô e continua nos turnos
+seguintes; o que um programa imprime ao falhar não atravessa a ponte.
+
+**Fica como está, e é bom saber:** o painel do robô (porta 8042) não pede senha
+— é assim desde o 1.0. Quem está no Wi-Fi da casa conversa com o agente, lê o
+histórico, muda a frase de ativação e a personalidade. Tudo o que está acima
+limita o que essa pessoa consegue *além* disso (ferramentas, arquivos, este
+computador); não a impede de usar o robô. Visitas em rede de convidados.
 
 ## 4. Ativação por voz
 

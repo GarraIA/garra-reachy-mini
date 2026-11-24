@@ -33,7 +33,7 @@ from typing import Any, Callable
 import httpx
 
 from . import comando, http_openai, persona
-from .base import Adaptador, Conversa, ErroDoAgente, Saude, achar_executavel
+from .base import LIVRE, Adaptador, Conversa, ErroDoAgente, Saude, achar_executavel
 from .garra import Garra
 from .hermes import Hermes
 from .pi import Pi
@@ -45,6 +45,8 @@ PADRAO = "hermes"
 PREFERENCIA = ("hermes", "garra", "pi", "claude", "ollama")
 SAUDE_VALE_S = 10.0            # quanto dura uma saúde em cache
 PERSONALIZADOS_MAX = 12
+# De quanto em quanto se procura de novo um agente ESCOLHIDO que não foi achado.
+PROCURAR_AUSENTE_S = 60.0
 FRASE_DE_TESTE = "Responda apenas com a palavra: pronto"
 OLLAMA = "http://127.0.0.1:11434"
 # Teto do modelo local escolhido sozinho: a GPU é dividida com a voz.
@@ -76,6 +78,28 @@ def _ollama() -> http_openai.HttpOpenAI | None:
          "model": str(maior["name"]), "timeout_s": 120}, descoberto=True)
 
 
+class Ausente(Adaptador):
+    """O agente que o dono escolheu e que não foi encontrado.
+
+    Existe para a escolha não se desfazer sozinha: se o Ollama escolhido estava
+    desligado quando o companion subiu, o robô tem de dizer "o Ollama não
+    responde" — e não passar a mandar a conversa da casa, em silêncio, a um
+    agente de nuvem. O registro volta a procurá-lo de tempos em tempos.
+    """
+
+    interface = "unknown"
+
+    def __init__(self, ident: str) -> None:
+        self.id = ident
+        self.nome = ident.capitalize()
+
+    def saude(self) -> Saude:
+        return Saude(False, "not_installed", "o agente escolhido não foi encontrado")
+
+    def responder(self, conversa, texto, *, instrucoes, ao_trecho=None) -> str:
+        raise ErroDoAgente("unavailable", "o agente escolhido não foi encontrado")
+
+
 class Registro:
     def __init__(self, arquivo: Path | None = None, *, chave_gateway: str | None = None,
                  modelo_do_garra: Callable[[], str | None] | None = None,
@@ -95,6 +119,8 @@ class Registro:
         # abertas com ele (opções, remoção). A ponte liga isto às sessões.
         self.ao_mudar: Callable[[str], None] = lambda _id: None
         self._visto: float | None = None
+        self._ilegivel = False
+        self._procurado_em = 0.0
         self.recarregar()
 
     def _carimbo(self) -> float | None:
@@ -109,7 +135,10 @@ class Registro:
         É o que faz valer, sem reiniciar o companion, o que o dono muda pela
         linha de comando (`python -m companion.agentes`) ou editando o arquivo.
         """
-        if self._carimbo() != self._visto:
+        escolhido = self._agentes.get(self._estado.get("active") or "")
+        procurar = (isinstance(escolhido, Ausente)
+                    and time.monotonic() - self._procurado_em > PROCURAR_AUSENTE_S)
+        if self._carimbo() != self._visto or procurar:
             antes = set(self._agentes)
             self.recarregar()
             for ident in antes | set(self._agentes):
@@ -127,14 +156,20 @@ class Registro:
         return achados
 
     def _ler_arquivo(self) -> dict[str, Any]:
+        self._ilegivel = False
         try:
             dados = json.loads(self.arquivo.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {}
         except (OSError, ValueError):
-            log.warning("agentes.json ilegível — usando os padrões (o arquivo não é tocado)")
+            log.warning("agentes.json ilegível — usando os padrões; o arquivo fica "
+                        "como está, e uma cópia é guardada antes de qualquer gravação")
+            self._ilegivel = True
             return {}
-        return dados if isinstance(dados, dict) else {}
+        if not isinstance(dados, dict):
+            self._ilegivel = True
+            return {}
+        return dados
 
     def recarregar(self) -> None:
         """Procura de novo os agentes e relê `agentes.json`."""
@@ -143,9 +178,14 @@ class Registro:
             agentes = {a.id: a for a in self._descobrir()}
             proprios = []
             for definicao in (estado.get("custom") or [])[:PERSONALIZADOS_MAX]:
+                da_rede = isinstance(definicao, dict) and definicao.get("origin") == "network"
                 try:
                     if isinstance(definicao, dict) and definicao.get("kind") == "http":
-                        novo: Adaptador = http_openai.HttpOpenAI(definicao, local=True)
+                        # O que entrou pela rede segue valendo as regras da rede
+                        # a cada carga (nada de loopback, nada de credencial).
+                        novo: Adaptador = http_openai.HttpOpenAI(definicao, local=not da_rede)
+                    elif da_rede:
+                        raise ErroDoAgente("refused", "receita de comando marcada como da rede")
                     else:
                         novo = comando.Comando(definicao)
                 except ErroDoAgente as e:
@@ -155,7 +195,10 @@ class Registro:
                     log.warning("agente do dono `%s` tem o id de um descoberto — ignorado", novo.id)
                     continue
                 agentes[novo.id] = novo
-                proprios.append(dict(definicao))
+                # De onde veio: o que o dono criou neste computador, a rede não
+                # troca nem apaga. Sem a marca (arquivo escrito à mão), é do dono.
+                origem = "network" if definicao.get("origin") == "network" else "local"
+                proprios.append({**definicao, "origin": origem})
             opcoes = estado.get("options") if isinstance(estado.get("options"), dict) else {}
             for ident, valores in opcoes.items():
                 if ident in agentes and isinstance(valores, dict):
@@ -164,10 +207,15 @@ class Registro:
                         agentes[ident].configurar(valores, local=True)
                     except ErroDoAgente as e:
                         log.warning("opções de `%s` ignoradas (%s)", ident, e.detalhe)
+            ativo = str(estado.get("active") or "")
+            if estado.get("explicit") and ativo and ativo not in agentes:
+                # Escolhido e não encontrado: fica como AUSENTE, não é trocado.
+                agentes[ativo] = Ausente(ativo)
+                self._procurado_em = time.monotonic()
             self._agentes = agentes
             self._saude = {}
             self._estado = {
-                "active": str(estado.get("active") or ""),
+                "active": ativo,
                 "explicit": bool(estado.get("explicit")),
                 "fallback": str(estado.get("fallback") or ""),
                 "options": {i: dict(v) for i, v in opcoes.items() if isinstance(v, dict)},
@@ -177,6 +225,17 @@ class Registro:
 
     def _gravar(self) -> None:
         self.arquivo.parent.mkdir(parents=True, exist_ok=True)
+        if self._ilegivel:
+            # O arquivo que não deu para ler pode ser do dono com um erro de
+            # digitação: gravar por cima apagaria as receitas e opções dele.
+            copia = self.arquivo.with_name(
+                f"{self.arquivo.name}.ilegivel-{time.strftime('%Y%m%dT%H%M%S')}")
+            try:
+                os.replace(self.arquivo, copia)
+                log.warning("agentes.json ilegível guardado como %s", copia.name)
+            except OSError:
+                raise ErroDoAgente("refused", "agentes.json está ilegível e não pude guardá-lo")
+            self._ilegivel = False
         dados = {"version": 1, **self._estado}
         fd, temporario = tempfile.mkstemp(dir=str(self.arquivo.parent), prefix=".agentes-")
         try:
@@ -269,11 +328,22 @@ class Registro:
                     "default": PADRAO, "fallback": self._estado.get("fallback") or None}
 
     # ── escrita ──────────────────────────────────────────────────────────────
-    def escolher(self, ident: str) -> Adaptador:
+    def _so_daqui(self, agente: Adaptador, local: bool) -> None:
+        """Agente sem restrição só entra em uso por decisão tomada NESTE computador.
+
+        O dono pode ter cadastrado um agente com ferramentas só para testar; da
+        rede, ninguém o põe para atender (nem como reserva) a fala da sala.
+        """
+        if not local and agente.seguranca == LIVRE:
+            raise ErroDoAgente(
+                "refused", "agente sem restrição de ferramentas só se ativa neste computador")
+
+    def escolher(self, ident: str, *, local: bool = False) -> Adaptador:
         with self._trava:
             agente = self._agentes.get(ident)
-            if agente is None:
+            if agente is None or isinstance(agente, Ausente):
                 raise ErroDoAgente("refused", "agente desconhecido")
+            self._so_daqui(agente, local)
             self._estado["active"], self._estado["explicit"] = ident, True
             if self._estado.get("fallback") == ident:
                 self._estado["fallback"] = ""
@@ -281,12 +351,15 @@ class Registro:
         log.info("agente ativo: %s", ident)
         return agente
 
-    def definir_reserva(self, ident: str | None) -> None:
+    def definir_reserva(self, ident: str | None, *, local: bool = False) -> None:
+        efetivo = self.efetivo()
         with self._trava:
             if ident and ident not in self._agentes:
                 raise ErroDoAgente("refused", "agente desconhecido")
-            if ident and ident == self.escolhido:
+            if ident and (ident == self.escolhido or (efetivo and ident == efetivo.id)):
                 raise ErroDoAgente("refused", "o reserva não pode ser o próprio agente ativo")
+            if ident:
+                self._so_daqui(self._agentes[ident], local)
             self._estado["fallback"] = ident or ""
             self._gravar()
 
@@ -330,10 +403,21 @@ class Registro:
             limpa = dict(novo.receita)
         else:
             raise ErroDoAgente("refused", "kind: `http` ou `command`")
+        limpa["origin"] = "local" if local else "network"
         with self._trava:
             existente = self._agentes.get(novo.id)
             if existente is not None and existente.descoberto:
                 raise ErroDoAgente("refused", "já existe um agente descoberto com este id")
+            if not local:
+                # Pela rede não se toma o nome de um agente conhecido, nem se
+                # troca um agente que o dono cadastrou neste computador.
+                if novo.id in PREFERENCIA:
+                    raise ErroDoAgente("refused", "este id é reservado")
+                anterior = next((c for c in self._estado["custom"]
+                                 if c.get("id") == novo.id), None)
+                if anterior is not None and anterior.get("origin") != "network":
+                    raise ErroDoAgente(
+                        "refused", "já existe um agente com este id, criado neste computador")
             proprios = [c for c in self._estado["custom"] if c.get("id") != novo.id]
             if len(proprios) >= PERSONALIZADOS_MAX:
                 raise ErroDoAgente("refused", f"no máximo {PERSONALIZADOS_MAX} agentes do dono")
@@ -344,11 +428,16 @@ class Registro:
         self.ao_mudar(novo.id)
         return novo
 
-    def remover(self, ident: str) -> None:
+    def remover(self, ident: str, *, local: bool = False) -> None:
         with self._trava:
             agente = self._agentes.get(ident)
             if agente is None or agente.descoberto:
                 raise ErroDoAgente("refused", "só agentes do dono podem ser removidos")
+            origem = next((c.get("origin") for c in self._estado["custom"]
+                           if c.get("id") == ident), "local")
+            if not local and origem != "network":
+                # Pela rede só se desfaz o que pela rede se fez.
+                raise ErroDoAgente("refused", "este agente foi criado neste computador")
             del self._agentes[ident]
             self._estado["custom"] = [c for c in self._estado["custom"] if c.get("id") != ident]
             self._estado.get("options", {}).pop(ident, None)

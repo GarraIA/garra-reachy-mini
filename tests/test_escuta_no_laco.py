@@ -299,3 +299,41 @@ def test_chamar_o_robo_sem_pedir_nada_guarda_o_contexto_para_o_pedido(montar_cen
     [mensagem] = cena.cerebro.recebidas
     assert f": {CONVERSA_DA_SALA}" in mensagem
     assert envelope.pedido_de(mensagem) == "anota isso na lista de compras"
+
+
+def test_com_o_teste_de_escuta_armado_o_pare_continua_sendo_pare(montar_cena, monkeypatch) -> None:
+    """Achado da revisão: a sonda do painel engolia TODA fala, inclusive a
+    parada de emergência. "Pare" não é assunto de teste."""
+    monkeypatch.setenv("GARRA_ATALHOS_LOCAIS", "1")
+    cena = montar_cena({"wake_phrase_enabled": True}, ["pare", "bom dia a todos"], ["Parei."])
+    app = cena.app
+    app._sonda_escuta, app._trava_sonda = None, threading.Lock()
+    ouvido: list = []
+    fio = threading.Thread(target=lambda: ouvido.append(app._sondar_escuta(20.0)), daemon=True)
+    fio.start()
+    fim = time.monotonic() + 5
+    while app._sonda_escuta is None and time.monotonic() < fim:
+        time.sleep(0.01)
+    assert app._sonda_escuta is not None
+
+    def esperar(condicao, limite_s: float = 15.0) -> bool:
+        fim = time.monotonic() + limite_s
+        while time.monotonic() < fim:
+            if condicao():
+                return True
+            time.sleep(0.05)
+        return False
+
+    cena.mic.dizer()                              # "pare", com o teste armado
+    assert esperar(lambda: cena.ctrl.em_estop), "o pare não parou o robô"
+    assert cena.eventos("robot.estop")
+    assert ouvido == [], "o teste não pode ficar com a parada de emergência"
+    # O turno do "pare" termina (falado ou cancelado) antes da próxima fala.
+    esperar(lambda: cena.eventos("voice.turn.completed") or cena.eventos("voice.turn.cancelled"), 8.0)
+    time.sleep(0.5)
+
+    cena.mic.dizer()                              # a fala seguinte é do teste
+    fio.join(15)
+    assert ouvido and ouvido[0]["text"] == "bom dia a todos"
+    assert "bom dia" not in json.dumps(cena.cerebro.recebidas, ensure_ascii=False), \
+        "fala de teste não vai a agente nenhum"

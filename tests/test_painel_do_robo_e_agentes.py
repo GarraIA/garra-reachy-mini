@@ -225,6 +225,46 @@ def test_com_a_escuta_desligada_o_teste_nao_finge_esperar(painel) -> None:
     assert painel.sondas == [], "o microfone está liberado: não há o que esperar"
 
 
+def test_segundo_teste_de_escuta_ao_mesmo_tempo_e_recusado_na_hora(painel) -> None:
+    """Sem fila: cada espera ocuparia uma thread, e o robô ficaria só testando."""
+    painel.ctx.sondar_escuta = lambda prazo: {"busy": True}
+    r = painel.post("/api/robot/voice/test/listen")
+    assert r.status_code == 409 and r.json()["detail"]["error"]["code"] == "listen_test_busy"
+
+
+def test_o_teste_de_escuta_tem_teto(painel) -> None:
+    """Enquanto o teste espera, a fala da sala não vira conversa: repeti-lo sem
+    parar deixaria o robô surdo."""
+    from garra_reachy_mini.web import api
+    codigos = [painel.post("/api/robot/voice/test/listen").status_code
+               for _ in range(api.TESTES_DE_ESCUTA_POR_5_MIN + 2)]
+    assert codigos == [200] * api.TESTES_DE_ESCUTA_POR_5_MIN + [429, 429]
+    assert len(painel.sondas) == api.TESTES_DE_ESCUTA_POR_5_MIN
+
+
+def test_a_sonda_de_escuta_e_uma_por_vez_e_nao_faz_fila() -> None:
+    import threading
+    import time as _time
+    from garra_reachy_mini.main import GarraReachyMini
+    app = GarraReachyMini.__new__(GarraReachyMini)
+    app._falar_texto = lambda *a, **k: None
+    app._sonda_escuta, app._trava_sonda = None, threading.Lock()
+    primeiro: list = []
+    fio = threading.Thread(target=lambda: primeiro.append(app._sondar_escuta(5.0)), daemon=True)
+    fio.start()
+    fim = _time.monotonic() + 3
+    while app._sonda_escuta is None and _time.monotonic() < fim:
+        _time.sleep(0.01)
+    t0 = _time.monotonic()
+    assert app._sondar_escuta(5.0) == {"busy": True}
+    assert _time.monotonic() - t0 < 0.5, "a segunda sonda não pode esperar a primeira"
+    app._sonda_escuta["resultado"] = {"text": "oi"}
+    app._sonda_escuta["evento"].set()
+    fio.join(3)
+    assert primeiro == [{"text": "oi"}] and app._sonda_escuta is None
+    assert app._sondar_escuta(0.05) is None       # liberada: a próxima arma de novo
+
+
 def test_sem_laco_de_voz_o_teste_de_escuta_diz_isso(painel) -> None:
     painel.ctx.sondar_escuta = None
     assert painel.post("/api/robot/voice/test/listen").status_code == 503

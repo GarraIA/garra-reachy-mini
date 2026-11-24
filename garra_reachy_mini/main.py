@@ -509,18 +509,22 @@ class GarraReachyMini(ReachyMiniApp):
         """Arma a sonda e espera a próxima fala. `None`: ninguém falou a tempo.
 
         A fala que a sonda pega NÃO vira turno: o laço a entrega aqui e volta a
-        escutar. Uma sonda por vez — a segunda espera a primeira.
+        escutar. Uma sonda por vez — a segunda é recusada na hora (`{"busy":
+        True}`), em vez de fazer fila: cada espera ocuparia uma thread, e uma
+        fila de testes deixaria o robô sem atender ninguém.
         """
         if getattr(self, "_falar_texto", None) is None:
             return None          # sem laço de voz, não há quem ouça
-        with self._trava_sonda:
+        if not self._trava_sonda.acquire(blocking=False):
+            return {"busy": True}
+        try:
             sonda = {"evento": threading.Event(), "resultado": None}
             self._sonda_escuta = sonda
-            try:
-                sonda["evento"].wait(prazo_s)
-                return sonda["resultado"]
-            finally:
-                self._sonda_escuta = None
+            sonda["evento"].wait(prazo_s)
+            return sonda["resultado"]
+        finally:
+            self._sonda_escuta = None
+            self._trava_sonda.release()
 
     async def _falar_async(self, texto: str) -> str:
         """Fala pedida pelo painel. Nunca sobrepõe a fala do loop principal.
@@ -1161,8 +1165,11 @@ class GarraReachyMini(ReachyMiniApp):
             # ── teste de escuta pedido pelo painel ─────────────────────────
             # A fala é do teste: volta para quem pediu e não vai a lugar
             # nenhum — nem chat, nem contexto, nem agente, nem registro.
+            # Menos o "pare": parada de emergência não é assunto de teste, e
+            # segue o caminho de sempre mesmo com a sonda armada.
             sonda = getattr(self, "_sonda_escuta", None)
-            if sonda is not None and not sonda["evento"].is_set():
+            pare = bool(cfg.atalhos_locais and intencoes.reconhecer(texto).acao == "stop")
+            if sonda is not None and not sonda["evento"].is_set() and not pare:
                 ativ_teste = ativacao.Ativacao.de(Config.carregar().conversa)
                 quantos, como = ativacao.casar_alguma(ativacao.tokens(texto), ativ_teste)
                 sonda["resultado"] = {

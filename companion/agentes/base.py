@@ -22,6 +22,7 @@ Movimento, comando e hardware passam pelas interfaces validadas do robô.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import shutil
 import signal
@@ -53,10 +54,15 @@ class ErroDoAgente(RuntimeError):
     do lado do agente — quem chama abre outra).
     """
 
-    def __init__(self, codigo: str, detalhe: str = "") -> None:
+    def __init__(self, codigo: str, detalhe: str = "", interno: str = "") -> None:
         super().__init__(f"{codigo}: {detalhe}" if detalhe else codigo)
         self.codigo = codigo
+        # `detalhe` atravessa a ponte e chega ao painel do robô, que não pede
+        # senha: só o que pode ser lido por qualquer aparelho da casa.
         self.detalhe = detalhe[:TRECHO_DE_ERRO]
+        # `interno` é o que o programa imprimiu ao falhar. Fica neste
+        # computador: serve ao adaptador para entender a falha e ao log.
+        self.interno = interno[:400]
 
 
 @dataclass(frozen=True)
@@ -85,6 +91,14 @@ class Conversa:
     usada_em: float = field(default_factory=time.time)
     # Um turno por vez: dois pedidos na mesma conversa embaralhariam a ordem.
     trava: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # A mesma conversa, do lado do agente reserva (por id de agente). Cada
+    # reserva tem o SEU id de sessão: reaproveitar o desta faria um agente
+    # recusar "sessão já existe", ou retomar a de outro.
+    reservas: dict[str, "Conversa"] = field(default_factory=dict, repr=False)
+    # Até quando (relógio monotônico) o turno em curso pode durar. É a ponte
+    # que marca: o robô desiste em 120 s, e o agente reserva precisa caber no
+    # que sobrar depois de o escolhido não responder.
+    ate: float | None = field(default=None, repr=False)
 
 
 class Adaptador:
@@ -107,6 +121,12 @@ class Adaptador:
 
     def saude(self) -> Saude:
         raise NotImplementedError
+
+    def prazo(self, conversa: Conversa) -> float:
+        """Quanto este turno pode durar: o prazo do agente, ou o que sobrar."""
+        if conversa.ate is None:
+            return self.prazo_s
+        return max(5.0, min(self.prazo_s, conversa.ate - time.monotonic()))
 
     def responder(self, conversa: Conversa, texto: str, *, instrucoes: str,
                   ao_trecho: Trecho | None = None) -> str:
@@ -258,7 +278,9 @@ def executar(argv: list[str], *, entrada: str | None = None, prazo_s: float,
         raise ErroDoAgente("timeout", f"sem resposta em {prazo_s:.0f} s")
     if codigo != 0:
         fim = " ".join(" ".join(erros[-3:]).split())
-        raise ErroDoAgente("unavailable", f"saiu com código {codigo}: {fim}")
+        # O que o programa imprimiu não atravessa a ponte: pode trazer caminho,
+        # nome de usuário ou um pedaço do pedido.
+        raise ErroDoAgente("unavailable", f"saiu com código {codigo}", interno=fim)
 
 
 def versao_de(executavel: str, prazo_s: float = 6.0) -> str | None:
@@ -271,6 +293,38 @@ def versao_de(executavel: str, prazo_s: float = 6.0) -> str | None:
         return None
     linhas = (r.stdout or r.stderr or "").strip().splitlines()
     return linhas[0].strip()[:60] if linhas and r.returncode == 0 else None
+
+
+# As redes que são "da casa". Lista explícita, e não `ip.is_private`: para o
+# Python, "privado" é tudo que não é roteável na internet — o que inclui faixas
+# de documentação (203.0.113.0/24), de teste de desempenho e o 6to4 (2002::/16).
+_REDES_DA_CASA = tuple(ipaddress.ip_network(r) for r in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",     # RFC 1918
+    "169.254.0.0/16",                                    # cabo direto, sem DHCP
+    "fc00::/7",                                          # IPv6 local único
+))
+
+
+def da_rede_da_casa(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """`ip` é de uma rede local (e não deste computador, nem da internet)?"""
+    return any(ip.version == rede.version and ip in rede for rede in _REDES_DA_CASA)
+
+
+def neutralizar(texto: str) -> str:
+    """Tira do texto o que as CLIs de agente tratam como referência a arquivo.
+
+    Pi, Claude e Hermes expandem `@caminho` (e o Hermes, `@url:`) ANTES de o
+    modelo ver o pedido: medido no Pi 0.87.1, um pedido `@/etc/hostname` vira
+    "anexe este arquivo", com ou sem `--no-tools`. O pedido vem de um microfone
+    ou do chat do painel — de qualquer um na casa. O arroba vira o arroba de
+    largura inteira (＠): o modelo lê igual, e CLI nenhuma o trata como marca.
+    """
+    return texto.replace("@", "＠")
+
+
+def nome_do_executavel(caminho: str | None) -> str:
+    """Só o nome: o caminho inteiro traz o nome do usuário, e vai ao painel."""
+    return Path(caminho).name if caminho else ""
 
 
 def com_historico(conversa: Conversa, texto: str, turnos: int = 8) -> str:

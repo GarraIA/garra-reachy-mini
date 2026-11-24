@@ -17,37 +17,62 @@ import ipaddress
 import json
 import os
 import re
+import time
 import urllib.parse
 from typing import Any
 
 import httpx
 
 from .base import (SEM_FERRAMENTAS, Adaptador, Conversa, ErroDoAgente, Saude,
-                   Trecho)
+                   Trecho, da_rede_da_casa)
 
 _ID = re.compile(r"[a-z0-9][a-z0-9_-]{1,31}")
 _MODELO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}")
 _VARIAVEL = re.compile(r"[A-Z][A-Z0-9_]{2,63}")
 TURNOS = 12                       # quantas trocas anteriores vão junto
+# Tetos do que se aceita de volta. O prazo do httpx vale por LEITURA: um
+# servidor que goteja um byte por vez prenderia a conversa para sempre.
+RESPOSTA_MAX = 24_000             # caracteres de resposta
+LISTA_MAX = 512 * 1024            # bytes da lista de modelos
 # Modelos que não conversam: embeddings e afins aparecem na mesma lista.
 _NAO_CONVERSA = ("embed", "rerank", "whisper", "tts", "bge-", "nomic")
 
 
-def endereco_da_casa(url: str) -> bool:
+def endereco_da_casa(url: str, *, local: bool = True) -> bool:
+    """`url` é só `esquema://host[:porta]`, e o host é desta casa?
+
+    **Sem caminho, consulta, fragmento nem usuário.** O adaptador acrescenta
+    `/v1/chat/completions`; uma base como `http://127.0.0.1:8125/api/voice/stop#`
+    faria a ponte chamar OUTRA rota (o `#` engole o sufixo).
+
+    **Pela rede (`local=False`), nunca este computador.** Loopback alcança o
+    que só escuta aqui dentro — a API de administração do companion e o gateway
+    do Garra, que confiam em quem vem de loopback. Quem cadastra pelo painel do
+    robô aponta para outro aparelho da casa; um servidor deste computador o
+    dono cadastra daqui (`python -m companion.agentes adicionar`).
+    """
     try:
         partes = urllib.parse.urlsplit(url)
+        partes.port                              # levanta se a porta for lixo
     except ValueError:
         return False
     if partes.scheme not in ("http", "https") or not partes.hostname or len(url) > 200:
         return False
+    if (partes.username or partes.password or partes.query or partes.fragment
+            or partes.path not in ("", "/") or "#" in url or "?" in url):
+        return False
     nome = partes.hostname
-    if nome == "localhost" or nome.endswith(".local"):
+    if nome == "localhost":
+        return local
+    if nome.endswith(".local"):
         return True
     try:
         ip = ipaddress.ip_address(nome)
     except ValueError:
         return False
-    return ip.is_loopback or ip.is_private
+    if ip.is_loopback:
+        return local
+    return da_rede_da_casa(ip) and not ip.is_link_local
 
 
 def validar(definicao: Any, *, local: bool = False) -> dict[str, Any]:
@@ -63,8 +88,11 @@ def validar(definicao: Any, *, local: bool = False) -> dict[str, Any]:
     base = str(definicao.get("base_url") or "").strip().rstrip("/")
     if base.endswith("/v1"):
         base = base[:-3]
-    if not (endereco_da_casa(base) or (local and base.startswith("https://") and len(base) <= 200)):
-        raise recusa("base_url: http(s) de loopback, rede privada ou `.local`")
+    # Um servidor de fora da casa (https) só o dono cadastra, neste computador.
+    de_fora = local and base.startswith("https://") and _so_host(base)
+    if not (endereco_da_casa(base, local=local) or de_fora):
+        raise recusa("base_url: só `http(s)://host:porta`, de rede privada ou `.local`"
+                     + ("" if local else " (este computador só se cadastra nele mesmo)"))
     modelo = str(definicao.get("model") or "").strip()
     if modelo and not _MODELO.fullmatch(modelo):
         raise recusa("model: nome de modelo inválido")
@@ -81,6 +109,17 @@ def validar(definicao: Any, *, local: bool = False) -> dict[str, Any]:
     return {"id": ident, "name": nome, "kind": "http", "base_url": base,
             "model": modelo, "api_key_env": variavel,
             "timeout_s": min(600.0, max(5.0, prazo))}
+
+
+def _so_host(url: str) -> bool:
+    """`https://host[:porta]` e mais nada — para o servidor de fora que o DONO cadastra."""
+    try:
+        p = urllib.parse.urlsplit(url)
+        p.port
+    except ValueError:
+        return False
+    return bool(p.hostname) and not (p.username or p.password or p.query or p.fragment
+                                     or p.path not in ("", "/") or "#" in url or "?" in url)
 
 
 class HttpOpenAI(Adaptador):
@@ -104,9 +143,16 @@ class HttpOpenAI(Adaptador):
 
     def modelos(self, prazo_s: float = 3.0) -> list[str]:
         """Os modelos de conversa que o servidor anuncia. Levanta `httpx.HTTPError`."""
-        r = httpx.get(f"{self.base}/v1/models", headers=self._cabecalhos(), timeout=prazo_s)
-        r.raise_for_status()
-        dados = r.json()
+        fim = time.monotonic() + prazo_s + 2.0
+        corpo = bytearray()
+        with httpx.stream("GET", f"{self.base}/v1/models", headers=self._cabecalhos(),
+                          timeout=prazo_s) as r:
+            r.raise_for_status()
+            for pedaco in r.iter_bytes():
+                corpo += pedaco
+                if len(corpo) > LISTA_MAX or time.monotonic() > fim:
+                    raise httpx.DecodingError("lista de modelos grande ou lenta demais")
+        dados = json.loads(bytes(corpo) or b"null")
         itens = dados.get("data") if isinstance(dados, dict) else None
         nomes = [str(m.get("id")) for m in itens or [] if isinstance(m, dict) and m.get("id")]
         self._modelos = [n for n in nomes
@@ -122,7 +168,7 @@ class HttpOpenAI(Adaptador):
             return Saude(False, "error", "o servidor não anuncia modelo de conversa")
         if self.modelo and self.modelo not in nomes:
             return Saude(False, "error", f"o modelo {self.modelo} não está no servidor")
-        return Saude(True, "ok", f"{self.base} · {self.modelo or nomes[0]}")
+        return Saude(True, "ok", f"{self.base} · {self.modelo or nomes[0]}"[:120])
 
     def opcoes(self) -> list[dict[str, Any]]:
         return [{"key": "model", "type": "choice", "value": self.modelo,
@@ -148,20 +194,34 @@ class HttpOpenAI(Adaptador):
         mensagens.append({"role": "user", "content": texto})
         corpo = {"model": modelo, "messages": mensagens, "stream": True}
         partes: list[str] = []
+        # O prazo do TURNO, com relógio próprio: o do httpx recomeça a cada
+        # leitura, e um servidor que goteja nunca o estouraria.
+        prazo_s = self.prazo(conversa)
+        fim = time.monotonic() + prazo_s
+        recebido = 0
         try:
             with httpx.stream("POST", f"{self.base}/v1/chat/completions", json=corpo,
                               headers=self._cabecalhos(),
-                              timeout=httpx.Timeout(self.prazo_s, connect=5.0)) as r:
+                              timeout=httpx.Timeout(min(prazo_s, 30.0), connect=5.0)) as r:
                 if r.status_code in (401, 403):
                     raise ErroDoAgente("auth", f"HTTP {r.status_code}")
                 if r.status_code != 200:
-                    r.read()
-                    raise ErroDoAgente("bad_response", f"HTTP {r.status_code}: {r.text[:100]}")
+                    # Sem o corpo: o que um servidor qualquer responde não é
+                    # para ser lido por quem cadastrou o endereço pelo painel.
+                    raise ErroDoAgente("bad_response", f"HTTP {r.status_code}")
                 if "text/event-stream" not in r.headers.get("content-type", ""):
-                    r.read()                     # servidor que ignora `stream`
-                    partes.append(_conteudo(r.json()))
+                    inteiro = bytearray()        # servidor que ignora `stream`
+                    for pedaco in r.iter_bytes():
+                        inteiro += pedaco
+                        if len(inteiro) > LISTA_MAX or time.monotonic() > fim:
+                            raise ErroDoAgente("timeout", "resposta grande ou lenta demais")
+                    partes.append(_conteudo(json.loads(bytes(inteiro) or b"null")))
                 else:
                     for linha in r.iter_lines():
+                        if time.monotonic() > fim:
+                            raise ErroDoAgente("timeout", f"sem resposta em {self.prazo_s:.0f} s")
+                        if recebido > RESPOSTA_MAX:
+                            break
                         if not linha.startswith("data:"):
                             continue
                         dado = linha[5:].strip()
@@ -173,6 +233,7 @@ class HttpOpenAI(Adaptador):
                             continue
                         pedaco = delta.get("content")
                         if isinstance(pedaco, str) and pedaco:
+                            recebido += len(pedaco)
                             partes.append(pedaco)
                             if ao_trecho is not None:
                                 ao_trecho(pedaco)

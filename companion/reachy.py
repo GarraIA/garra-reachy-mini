@@ -217,8 +217,16 @@ def _esperar_alcancar(painel: str, esperados: tuple[str, ...],
     return False, servicos
 
 
-def configurar(painel: str, *, agente: str = "reachy_voice") -> dict:
-    """Grava as URLs de LAN no robô, confere pelos olhos dele e desfaz se falhar."""
+def configurar(painel: str, *, agente: str = "reachy_voice",
+               so_enderecos: bool = False) -> dict:
+    """Grava as URLs de LAN no robô, confere pelos olhos dele e desfaz se falhar.
+
+    `so_enderecos`: grava SÓ as duas URLs, sem token nem agente. É como o vigia
+    chama — ele age sozinho, sem ninguém olhando, sobre o que respondeu na rede
+    como robô. Um robô de verdade já tem o token (quem o deu foi o dono, por
+    esta mesma função, na tela); um aparelho que só se passa por robô não o
+    recebe.
+    """
     ip = voz.ip_lan()
     if ip.startswith("127."):
         raise ErroReachy(
@@ -248,6 +256,9 @@ def configurar(painel: str, *, agente: str = "reachy_voice") -> dict:
     anterior = {c: salva.get(c, "")
                 for c in ("gateway_url", "voz_url", "agent_id",
                           "voz_token", "gateway_key")}
+    if so_enderecos:
+        novo = {c: novo[c] for c in ("gateway_url", "voz_url")}
+        anterior = {c: anterior[c] for c in ("gateway_url", "voz_url")}
 
     relatorio = {
         "target": painel,

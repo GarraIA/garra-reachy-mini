@@ -1984,7 +1984,12 @@ async function testarEscuta() {
         + ' ' + frase, r.wake_phrase || !r.wake_enabled);
     }
   } catch (e) {
-    mostrarResultado('voz-resultado', t(e.status === 503 ? 'voz.sem_voz' : e.status === 409 ? 'voz.escuta_desligada' : 'voz.teste_falhou'), false);
+    const codigo = e.dados?.detail?.error?.code || e.dados?.error?.code;
+    const chave = e.status === 503 ? 'voz.sem_voz'
+      : codigo === 'listen_test_busy' ? 'voz.teste_em_andamento'
+      : e.status === 409 ? 'voz.escuta_desligada'
+      : e.status === 429 ? 'voz.testes_demais' : 'voz.teste_falhou';
+    mostrarResultado('voz-resultado', t(chave), false);
   }
   botao.disabled = false;
 }

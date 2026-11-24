@@ -31,12 +31,14 @@ máquina; aceitar uma pela rede seria aceitar um comando pela rede.
 from __future__ import annotations
 
 import json
+import uuid
 import re
 from typing import Any
 
 from .base import (LIVRE, RESTRITO, SEM_FERRAMENTAS, Adaptador, Conversa,
                    ErroDoAgente, Saude, Trecho, achar_executavel, com_historico,
-                   executar, pasta_de_trabalho, versao_de)
+                   executar, neutralizar, nome_do_executavel, pasta_de_trabalho,
+                   versao_de)
 
 _ID = re.compile(r"[a-z0-9][a-z0-9_-]{1,31}")
 _SAIDA = re.compile(r"text|json:[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){0,4}")
@@ -49,10 +51,15 @@ CLAUDE = {
     "command": ["claude", "-p", "--output-format", "json", "--tools", "",
                 "--strict-mcp-config", "--session-id", "{session}",
                 "--append-system-prompt", "{instructions}", "--", "{prompt}"],
+    # O papel vai de novo ao retomar: `--append-system-prompt` vale por
+    # execução, e sem ele o segundo turno seria o Claude Code de sempre.
     "continue": ["claude", "-p", "--output-format", "json", "--tools", "",
-                 "--strict-mcp-config", "--resume", "{session}", "--", "{prompt}"],
-    "output": "json:result", "safety": SEM_FERRAMENTAS, "timeout_s": 90,
+                 "--strict-mcp-config", "--resume", "{session}",
+                 "--append-system-prompt", "{instructions}", "--", "{prompt}"],
+    "output": "json:result", "safety": SEM_FERRAMENTAS, "timeout_s": 60,
 }
+
+_MARCA = re.compile(r"\{(prompt|session|instructions)\}")
 
 
 def validar(receita: Any) -> dict[str, Any]:
@@ -115,7 +122,7 @@ class Comando(Adaptador):
                          f"o comando `{self.receita['command'][0]}` não foi encontrado")
         if self._versao is None:
             self._versao = versao_de(self.executavel) or ""
-        return Saude(True, "ok", self.executavel, self._versao or None)
+        return Saude(True, "ok", nome_do_executavel(self.executavel), self._versao or None)
 
     def descrever(self) -> dict[str, Any]:
         d = super().descrever()
@@ -131,23 +138,29 @@ class Comando(Adaptador):
         r = self.receita
         continuando = self.sessoes and conversa.ref is not None
         molde = r["continue"] if continuando else r["command"]
-        pedido = texto if self.sessoes else com_historico(conversa, texto)
+        # O id da sessão do lado do agente. Um NOVO a cada primeira tentativa:
+        # se o primeiro turno estourar o prazo, o agente pode já ter criado a
+        # sessão, e repetir o mesmo id daria "sessão já existe" para sempre.
+        sessao = conversa.ref if continuando else str(uuid.uuid4())
+        # Com sessão própria o agente lembra sozinho — menos na primeira vez de
+        # uma conversa que já tinha história (ele entrou no meio, como reserva).
+        pedido = texto if (self.sessoes and (continuando or not conversa.mensagens)) \
+            else com_historico(conversa, texto)
         if not any("{instructions}" in a for a in molde) and not continuando and instrucoes:
             pedido = f"{instrucoes}\n\n{pedido}"
-        trocas = {"{prompt}": pedido, "{session}": conversa.id,
-                  "{instructions}": instrucoes}
-        argv = [self.executavel]
-        for arg in molde[1:]:
-            for marca, valor in trocas.items():
-                arg = arg.replace(marca, valor)
-            argv.append(arg)
+        # Sem arroba (ver `base.neutralizar`), e numa passada só: trocar uma
+        # marca de cada vez expandiria um `{session}` que a pessoa DISSE.
+        trocas = {"prompt": neutralizar(pedido), "session": sessao,
+                  "instructions": neutralizar(instrucoes)}
+        argv = [self.executavel] + [
+            _MARCA.sub(lambda m: trocas[m.group(1)], arg) for arg in molde[1:]]
         linhas = list(executar(argv, entrada=pedido if r["stdin"] else None,
-                               prazo_s=self.prazo_s, cwd=pasta_de_trabalho(self.id)))
+                               prazo_s=self.prazo(conversa), cwd=pasta_de_trabalho(self.id)))
         resposta = self._extrair("\n".join(linhas)).strip()
         if not resposta:
             raise ErroDoAgente("bad_response", f"{self.nome} não devolveu texto")
         if self.sessoes:
-            conversa.ref = conversa.id
+            conversa.ref = sessao
         if ao_trecho is not None:
             ao_trecho(resposta)
         return resposta

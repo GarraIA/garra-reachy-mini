@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from typing import Any, Callable
 
 from fastapi import FastAPI, Request
@@ -49,6 +50,9 @@ MUDANCAS_POR_MINUTO = 30
 # verdade não passa de meia dúzia por minuto; o teto existe para que um
 # aparelho da rede, pelo chat do painel, não transforme a ponte numa torneira.
 TURNOS_POR_MINUTO = 30
+# O robô desiste de um turno em 120 s. O escolhido e, se ele não responder, o
+# reserva têm de caber antes disso — senão o reserva responde para ninguém.
+ORCAMENTO_DO_TURNO_S = 105.0
 PEDIDO_MAX = 24_000            # o envelope do robô, com folga
 
 # Como cada falha do agente chega ao robô. O código vai no corpo; o status é
@@ -127,7 +131,9 @@ class Agentes:
 
         Chamado DEPOIS de a ponte conferir a allowlist e o token.
         """
-        agente = self.ativo()
+        # Fora do laço: sem escolha explícita, achar o agente confere a saúde
+        # de cada um (um `--version`, um GET), e isso não pode parar a ponte.
+        agente = await asyncio.to_thread(self.ativo)
         if agente is None:
             return None
         casou = _NA_SESSAO.fullmatch(alvo)
@@ -166,12 +172,15 @@ class Agentes:
 
     def _fechar(self, conversa: Conversa) -> None:
         self.sessoes.remover(conversa.id)
-        adaptador = self.registro.obter(conversa.agente)
-        if adaptador is not None:
-            try:
-                adaptador.encerrar(conversa)
-            except Exception:
-                pass
+        # A conversa e o lado dela em cada agente reserva que chegou a atender.
+        for parte in (conversa, *conversa.reservas.values()):
+            adaptador = self.registro.obter(parte.agente)
+            if adaptador is not None:
+                try:
+                    adaptador.encerrar(parte)
+                except Exception:
+                    pass
+        conversa.reservas.clear()
 
     async def _turno(self, request: Request, agente: Adaptador,
                      conversa: Conversa) -> Response:
@@ -191,10 +200,12 @@ class Agentes:
             return _erro("slash_command_refused", 400)
         if not self._turnos.liberado():
             return _erro("too_many_requests", 429)
-        idioma = dados.get("language") if dados.get("language") in IDIOMAS else "pt"
+        idioma = dados.get("language")
+        idioma = idioma if isinstance(idioma, str) and idioma in IDIOMAS else "pt"
 
         def responder() -> tuple[str, Adaptador]:
             with conversa.trava:
+                conversa.ate = time.monotonic() + ORCAMENTO_DO_TURNO_S
                 try:
                     return self._perguntar(agente, conversa, texto, idioma), agente
                 except ErroDoAgente as e:
@@ -204,17 +215,17 @@ class Agentes:
                         raise
                     log.warning("%s não respondeu (%s); usando o reserva %s",
                                 agente.id, e.codigo, reserva.id)
-                    # Conversa à parte, com o histórico desta: o reserva não
-                    # herda o `ref` de sessão de outro agente.
-                    paralela = Conversa(id=conversa.id, agente=reserva.id,
-                                        mensagens=list(conversa.mensagens))
-                    try:
-                        return self._perguntar(reserva, paralela, texto, idioma), reserva
-                    finally:
-                        try:
-                            reserva.encerrar(paralela)
-                        except Exception:
-                            pass
+                    # O lado desta conversa no reserva: id de sessão PRÓPRIO
+                    # (o reserva não herda o `ref` de outro agente, nem um id
+                    # que ele já tenha visto), guardado para os próximos turnos
+                    # continuarem a mesma sessão dele em vez de abrir outra.
+                    paralela = conversa.reservas.get(reserva.id)
+                    if paralela is None:
+                        paralela = Conversa(id=str(uuid.uuid4()), agente=reserva.id)
+                        conversa.reservas[reserva.id] = paralela
+                    paralela.mensagens = conversa.mensagens      # a mesma história
+                    paralela.ate = conversa.ate                  # o mesmo relógio
+                    return self._perguntar(reserva, paralela, texto, idioma), reserva
 
         t0 = time.monotonic()
         try:
@@ -282,8 +293,14 @@ def registrar_rotas(app: FastAPI, autorizado: Callable[[Request], bool],
         dados = await corpo_de(request)
         if dados is None:
             return _erro("invalid_body", 400)
+        def aplicar() -> None:
+            # Relê o arquivo antes: o dono pode ter acabado de mudar algo pelo
+            # terminal, e gravar por cima do estado velho desfaria a mudança.
+            ag.registro.sincronizar()
+            acao(ag, dados)
+
         try:
-            await asyncio.to_thread(acao, ag, dados)
+            await asyncio.to_thread(aplicar)
         except ErroDoAgente as e:
             return _erro(e.codigo, 400, detail=e.detalhe)
         except OSError:
@@ -298,7 +315,7 @@ def registrar_rotas(app: FastAPI, autorizado: Callable[[Request], bool],
             return ausente
         if not autorizado(request):
             return negado
-        ag.registro.sincronizar()
+        await asyncio.to_thread(ag.registro.sincronizar)
         return await asyncio.to_thread(lista, ag)
 
     @app.post("/api/agentes/descobrir")
@@ -337,11 +354,12 @@ def registrar_rotas(app: FastAPI, autorizado: Callable[[Request], bool],
         if not _ID.fullmatch(ident) or not ag._mudancas.liberado():
             return _erro("refused", 400)
         alvo = ag.registro.obter(ident)
-        # Pela rede só se desfaz o que pela rede se faz.
+        # Pela rede só se desfaz o que pela rede se fez (o registro confere a
+        # origem; aqui, o tipo).
         if alvo is None or alvo.interface != "http":
             return _erro("refused", 400, detail="só neste computador")
         try:
-            await asyncio.to_thread(ag.registro.remover, ident)
+            await asyncio.to_thread(lambda: ag.registro.remover(ident, local=False))
         except ErroDoAgente as e:
             return _erro(e.codigo, 400, detail=e.detalhe)
         return await asyncio.to_thread(lista, ag)

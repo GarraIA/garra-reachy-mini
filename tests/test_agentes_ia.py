@@ -27,6 +27,7 @@ from companion import ponte, ponte_agentes
 from companion.agentes import (LIVRE, RESTRITO, SEM_FERRAMENTAS, Adaptador, Conversa,
                                ErroDoAgente, Registro, Saude, Sessoes)
 from companion.agentes import base, comando, http_openai, persona
+from companion.agentes import registro as registro_mod
 from companion.agentes.hermes import Hermes
 from companion.agentes.pi import Pi
 from garra_reachy_mini import cerebro
@@ -117,14 +118,17 @@ def test_estouro_de_prazo_mata_o_processo_e_os_filhos(tmp_path) -> None:
         os.kill(filho, 0)
 
 
-def test_saida_com_erro_vira_unavailable_com_o_fim_do_stderr(tmp_path) -> None:
+def test_saida_com_erro_vira_unavailable_e_o_stderr_fica_neste_computador(tmp_path) -> None:
+    """O que o programa imprimiu serve ao adaptador e ao log (`interno`); o
+    `detalhe`, que atravessa a ponte até o painel sem senha, não o carrega."""
     quebra = programa(tmp_path, "quebra", """
         import sys
-        sys.stderr.write("No session found matching xyz\\n"); sys.exit(3)
+        sys.stderr.write("No session found matching xyz em /home/fulano/.segredo\\n"); sys.exit(3)
     """)
     with pytest.raises(ErroDoAgente) as e:
         list(base.executar([quebra], prazo_s=10))
-    assert e.value.codigo == "unavailable" and "No session found" in e.value.detalhe
+    assert e.value.codigo == "unavailable" and "No session found" in e.value.interno
+    assert "fulano" not in e.value.detalhe and "session" not in e.value.detalhe
 
 
 def test_o_agente_nao_herda_os_segredos_da_ponte(monkeypatch) -> None:
@@ -168,14 +172,23 @@ def test_hermes_primeiro_turno_restringe_as_ferramentas_e_guarda_a_sessao(tmp_pa
     assert a[-1] == "--query=PAPEL\n\noi"
 
 
-def test_hermes_ao_retomar_nao_passa_ferramentas_nem_repete_o_papel(tmp_path) -> None:
-    """Passar `-t` no `--resume` é recusado pelo Hermes e deixa sessão sem trava."""
+def test_hermes_ao_retomar_nao_passa_ferramentas_e_lembra_quem_ele_e(tmp_path) -> None:
+    """Passar `-t` no `--resume` é recusado pelo Hermes e deixa sessão sem trava.
+
+    E o papel não some: sem prompt de sistema na CLI, o do primeiro turno vira
+    mensagem antiga (medido: no terceiro turno ele já respondia "Hermes Agent").
+    O lembrete é o começo do papel — quem ele é e como fala —, não o papel todo.
+    """
     h = Hermes(programa(tmp_path, "hermes", HERMES_FALSO))
     c = Conversa(id=str(uuid.uuid4()), agente="hermes", ref="local-abc")
-    h.responder(c, "e amanhã?", instrucoes="PAPEL")
+    papel = persona.instrucoes("Faísca", "Ana", "fale como pirata", seguranca=RESTRITO)
+    h.responder(c, "e amanhã?", instrucoes=papel)
     [a] = chamadas(h.executavel)
     assert "-t" not in a and a[a.index("--resume") + 1] == "local-abc"
-    assert a[-1] == "--query=e amanhã?"
+    pedido = a[-1]
+    assert pedido.startswith("--query=Você é Faísca") and pedido.endswith("\n\ne amanhã?")
+    assert "sintetizado e falado." in pedido and len(pedido) < 600
+    assert "pirata" not in pedido and "NUNCA diga" not in pedido     # só o começo
 
 
 def test_hermes_pedido_que_comeca_com_hifen_nao_vira_flag(tmp_path) -> None:
@@ -297,8 +310,66 @@ def test_comando_com_sessao_troca_as_marcas_e_extrai_o_campo(tmp_path) -> None:
     assert a.responder(c, "oi", instrucoes="PAPEL") == "resposta"
     assert a.responder(c, "de novo", instrucoes="PAPEL") == "resposta"
     primeira, segunda = chamadas(exe)
-    assert primeira == ["--id", "conv-1", "--sys", "PAPEL", "oi"]
-    assert segunda == ["--retoma", "conv-1", "de novo"]
+    sessao = primeira[1]
+    assert uuid.UUID(sessao) and c.ref == sessao
+    assert primeira == ["--id", sessao, "--sys", "PAPEL", "oi"]
+    assert segunda == ["--retoma", sessao, "de novo"]
+
+
+def test_comando_primeiro_turno_que_falha_nao_repete_o_id_da_sessao(tmp_path) -> None:
+    """O agente pode ter criado a sessão antes de falhar: repetir o id daria
+    "sessão já existe" em toda tentativa seguinte."""
+    exe = programa(tmp_path, "agente", """
+        import json, os, sys
+        open(__file__ + ".log", "a").write(json.dumps(sys.argv[1:]) + "\\n")
+        marca = __file__ + ".ja"
+        if not os.path.exists(marca):
+            open(marca, "w").close(); sys.exit(2)
+        print("agora foi")
+    """)
+    a = comando.Comando({"id": "meu", "command": [exe, "--id", "{session}", "{prompt}"],
+                         "continue": [exe, "--retoma", "{session}", "{prompt}"]})
+    c = Conversa(id="conv-1", agente="meu")
+    with pytest.raises(ErroDoAgente):
+        a.responder(c, "oi", instrucoes="")
+    assert c.ref is None
+    assert a.responder(c, "oi", instrucoes="") == "agora foi"
+    primeira, segunda = chamadas(exe)
+    assert primeira[0] == segunda[0] == "--id" and primeira[1] != segunda[1]
+
+
+def test_marca_dita_pela_pessoa_nao_e_expandida(tmp_path) -> None:
+    """`{session}` e `{instructions}` no PEDIDO são texto, não marcas da receita."""
+    exe = programa(tmp_path, "agente", """
+        import json, sys
+        open(__file__ + ".log", "a").write(json.dumps(sys.argv[1:]) + "\\n")
+        print("ok")
+    """)
+    a = comando.Comando({"id": "meu", "command": [exe, "--sys", "{instructions}", "--", "{prompt}"]})
+    a.responder(Conversa(id="c", agente="meu"), "diga {session} e {instructions}", instrucoes="PAPEL")
+    [argv] = chamadas(exe)
+    assert argv == ["--sys", "PAPEL", "--", "diga {session} e {instructions}"]
+
+
+@pytest.mark.parametrize("pedido", ["@/etc/hostname", "@~/.ssh/id_ed25519", "leia @url:http://x/y"])
+def test_arroba_do_pedido_nao_chega_ao_agente_como_referencia_a_arquivo(tmp_path, pedido) -> None:
+    """Achado alto da revisão: depois do `--`, o Pi 0.87.1 trata `@caminho`
+    como arquivo a anexar, com ou sem `--no-tools`. Vale para todo executável."""
+    pi = Pi(programa(tmp_path, "pi", PI_FALSO))
+    pi.responder(Conversa(id=str(uuid.uuid4()), agente="pi"), pedido, instrucoes="papel @x")
+    hermes = Hermes(programa(tmp_path, "hermes", HERMES_FALSO))
+    hermes.responder(Conversa(id=str(uuid.uuid4()), agente="hermes"), pedido, instrucoes="papel @x")
+    eco = programa(tmp_path, "eco", """
+        import json, sys
+        open(__file__ + ".log", "a").write(json.dumps(sys.argv[1:]) + "\\n")
+        print("ok")
+    """)
+    generico = comando.Comando({"id": "meu", "command": [eco, "--sys", "{instructions}", "--", "{prompt}"]})
+    generico.responder(Conversa(id="c", agente="meu"), pedido, instrucoes="papel @x")
+    for exe in (pi.executavel, hermes.executavel, eco):
+        [argv] = chamadas(exe)
+        assert not any("@" in a for a in argv), argv
+        assert any("＠" in a for a in argv)
 
 
 def test_comando_sem_sessao_reenvia_o_historico(tmp_path) -> None:
@@ -313,10 +384,24 @@ def test_comando_sem_sessao_reenvia_o_historico(tmp_path) -> None:
 
 # ─── servidor HTTP ───────────────────────────────────────────────────────────
 @pytest.mark.parametrize("url, vale", [
-    ("http://127.0.0.1:11434", True), ("http://10.0.0.24:1234", True),
-    ("http://192.168.1.5:8080/v1", True), ("http://servidor.local:8000", True),
+    ("http://10.0.0.24:1234", True), ("http://192.168.1.5:8080/v1", True),
+    ("http://172.20.1.1:80", True), ("http://servidor.local:8000", True),
+    ("http://[fd00::1]:8000", True),
     ("https://api.openai.com", False), ("http://8.8.8.8:80", False),
     ("ftp://127.0.0.1", False), ("http://evil.local.exemplo.com", False),
+    # Achado alto da revisão (SSRF): este computador não se cadastra pela rede…
+    ("http://127.0.0.1:11434", False), ("http://localhost:11434", False),
+    ("http://[::1]:3888", False), ("http://0.0.0.0:3888", False),
+    ("http://127.1:80", False), ("http://2130706433:80", False),
+    ("http://[::ffff:127.0.0.1]:80", False),
+    # …a base é só host e porta (`#` e `?` engoliam o `/v1/chat/completions`)…
+    ("http://10.0.0.24:8125/api/voice/stop#", False), ("http://10.0.0.24:1234/x", False),
+    ("http://10.0.0.24:1234?a=1", False), ("http://u:p@10.0.0.24:1234", False),
+    ("http://10.0.0.24:99999", False),
+    # …e "privado" é rede local de verdade, não o que o Python chama de privado.
+    ("http://203.0.113.9:80", False), ("http://198.18.0.1:80", False),
+    ("http://100.64.0.1:80", False), ("http://[2002::1]:80", False),
+    ("http://169.254.1.1:80", False),
 ])
 def test_pela_rede_so_entra_servidor_da_casa(url, vale) -> None:
     definicao = {"id": "srv", "base_url": url}
@@ -325,6 +410,78 @@ def test_pela_rede_so_entra_servidor_da_casa(url, vale) -> None:
     else:
         with pytest.raises(ErroDoAgente):
             http_openai.validar(definicao)
+
+
+@pytest.mark.parametrize("url, vale", [
+    ("http://127.0.0.1:11434", True), ("http://localhost:1234", True), ("http://[::1]:8000", True),
+    ("https://api.exemplo.com", True),
+    ("http://127.0.0.1:8125/api/voice/stop#", False), ("https://api.exemplo.com/v2?x=1", False),
+    ("https://u:p@api.exemplo.com", False), ("http://8.8.8.8:80", False),
+])
+def test_neste_computador_o_dono_cadastra_o_proprio_computador(url, vale) -> None:
+    definicao = {"id": "srv", "base_url": url}
+    if vale:
+        assert http_openai.validar(definicao, local=True)["base_url"].startswith("http")
+    else:
+        with pytest.raises(ErroDoAgente):
+            http_openai.validar(definicao, local=True)
+
+
+def test_http_que_goteja_estoura_o_prazo_do_turno(monkeypatch) -> None:
+    """O prazo do httpx recomeça a cada leitura: um servidor da rede que manda
+    um pedacinho por vez prenderia a conversa (e uma thread da ponte) para sempre."""
+    relogio = [1000.0]
+    monkeypatch.setattr(http_openai.time, "monotonic", lambda: relogio[0])
+
+    class Goteira:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def iter_lines(self):
+            while True:
+                relogio[0] += 7.0
+                yield "data: " + json.dumps({"choices": [{"delta": {"content": "a"}}]})
+
+    monkeypatch.setattr(http_openai.httpx, "stream", lambda *a, **k: Goteira())
+    a = http_openai.HttpOpenAI({"id": "srv", "base_url": "http://10.0.0.9:1234", "model": "m1",
+                                "timeout_s": 30})
+    with pytest.raises(ErroDoAgente) as e:
+        a.responder(Conversa(id="c", agente="srv"), "oi", instrucoes="")
+    assert e.value.codigo == "timeout"
+
+
+def test_http_resposta_sem_fim_e_cortada_no_teto(monkeypatch) -> None:
+    class Enxurrada:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def iter_lines(self):
+            while True:
+                yield "data: " + json.dumps({"choices": [{"delta": {"content": "x" * 1000}}]})
+
+    monkeypatch.setattr(http_openai.httpx, "stream", lambda *a, **k: Enxurrada())
+    a = http_openai.HttpOpenAI({"id": "srv", "base_url": "http://10.0.0.9:1234", "model": "m1"})
+    resposta = a.responder(Conversa(id="c", agente="srv"), "oi", instrucoes="")
+    assert len(resposta) <= http_openai.RESPOSTA_MAX + 1000
+
+
+def test_http_erro_do_servidor_nao_devolve_o_corpo(monkeypatch) -> None:
+    """Sem isto, cadastrar um endereço e testar era um jeito de LER o que ele responde."""
+    class Recusa:
+        status_code = 500
+        headers = {"content-type": "text/plain"}
+        text = "segredo interno do servidor"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b""
+
+    monkeypatch.setattr(http_openai.httpx, "stream", lambda *a, **k: Recusa())
+    a = http_openai.HttpOpenAI({"id": "srv", "base_url": "http://10.0.0.9:1234", "model": "m1"})
+    with pytest.raises(ErroDoAgente) as e:
+        a.responder(Conversa(id="c", agente="srv"), "oi", instrucoes="")
+    assert e.value.codigo == "bad_response" and "segredo" not in e.value.detalhe
 
 
 def test_credencial_so_o_dono_liga_e_so_pelo_nome_da_variavel() -> None:
@@ -425,11 +582,55 @@ def test_a_escolha_sobrevive_ao_reinicio_e_o_arquivo_e_privado(tmp_path) -> None
     assert outro.efetivo().id == "pi" and outro.explicito
 
 
-def test_escolha_de_agente_que_sumiu_volta_ao_padrao_sem_apagar_o_arquivo(tmp_path) -> None:
-    registro_com(tmp_path, Falso("hermes"), Falso("pi")).escolher("pi")
+def test_escolha_de_agente_que_sumiu_continua_escolhida_e_aparece_caida(tmp_path) -> None:
+    """O agente LOCAL escolhido estava desligado quando o companion subiu: a
+    fala da casa não passa, em silêncio, a ir para outro agente (de nuvem)."""
+    registro_com(tmp_path, Falso("hermes"), Falso("pi")).escolher("pi", local=True)
     sem_pi = registro_com(tmp_path, Falso("hermes"))
-    assert sem_pi.efetivo().id == "hermes" and sem_pi.explicito is False
+    assert sem_pi.efetivo().id == "pi" and sem_pi.explicito is True
+    assert sem_pi.saude("pi").disponivel is False
+    with pytest.raises(ErroDoAgente) as e:
+        sem_pi.efetivo().responder(Conversa(id="c", agente="pi"), "oi", instrucoes="")
+    assert e.value.codigo == "unavailable"
+    lista = sem_pi.listar()
+    assert lista["active"] == "pi"
+    assert [a["available"] for a in lista["agents"] if a["id"] == "pi"] == [False]
     assert json.loads((tmp_path / "agentes.json").read_text())["active"] == "pi"
+
+
+def test_agente_escolhido_que_volta_e_reencontrado_sozinho(tmp_path, monkeypatch) -> None:
+    registro_com(tmp_path, Falso("hermes"), Falso("pi")).escolher("pi", local=True)
+    achados = [Falso("hermes")]
+    r = Registro(tmp_path / "agentes.json", descobrir=lambda: list(achados))
+    assert r.saude("pi").disponivel is False
+    achados.append(Falso("pi"))                   # o Pi foi ligado de novo
+    r.sincronizar()                               # cedo demais: ainda não procura
+    assert r.saude("pi").disponivel is False
+    monkeypatch.setattr(registro_mod, "PROCURAR_AUSENTE_S", 0.0)
+    r.sincronizar()
+    assert r.efetivo().id == "pi" and r.saude("pi").disponivel is True
+
+
+def test_com_o_escolhido_ausente_o_reserva_atende(cena, tmp_path) -> None:
+    registro_com(tmp_path, Falso("hermes"), Falso("pi")).escolher("pi", local=True)
+    hermes = Falso("hermes")
+    c, registro, _ = cena(hermes)
+    registro.definir_reserva("hermes", local=True)
+    _, r = conversar(c, "oi")
+    assert r.status_code == 200 and r.json()["agent"] == "hermes" and r.json()["fallback"] is True
+
+
+def test_agentes_json_ilegivel_nao_e_sobrescrito(tmp_path) -> None:
+    """Um erro de digitação do dono não pode custar as receitas dele."""
+    arquivo = tmp_path / "agentes.json"
+    arquivo.write_text('{"active": "pi", "custom": [ {"id": "meu"  FALTOU FECHAR', encoding="utf-8")
+    r = registro_com(tmp_path, Falso("hermes"), Falso("pi"))
+    assert r.efetivo().id == "hermes"             # padrões, enquanto não dá para ler
+    assert "FALTOU FECHAR" in arquivo.read_text(encoding="utf-8")     # leitura não toca
+    r.escolher("pi", local=True)                  # a primeira gravação guarda o original
+    copias = list(tmp_path.glob("agentes.json.ilegivel-*"))
+    assert len(copias) == 1 and "FALTOU FECHAR" in copias[0].read_text(encoding="utf-8")
+    assert json.loads(arquivo.read_text(encoding="utf-8"))["active"] == "pi"
 
 
 def test_opcao_que_afrouxa_so_entra_localmente_e_sobrevive(tmp_path) -> None:
@@ -687,7 +888,14 @@ def test_o_reserva_assume_so_quando_o_escolhido_nao_responde(cena) -> None:
     registro.definir_reserva("pi")
     sid, r = conversar(c, "oi")
     assert r.status_code == 200 and r.json()["agent"] == "pi" and r.json()["fallback"] is True
-    assert pi.recebidos[0][0] == sid and pi.encerradas == [sid]
+    # Id de sessão PRÓPRIO do reserva (nunca o da conversa, que é de outro
+    # agente), o mesmo nos turnos seguintes, e fechado junto com a conversa.
+    do_reserva = pi.recebidos[0][0]
+    assert do_reserva != sid and uuid.UUID(do_reserva) and pi.encerradas == []
+    conversar(c, "e agora?", sid)
+    assert [r[0] for r in pi.recebidos] == [do_reserva, do_reserva]
+    assert c.delete(f"/api/sessions/{sid}", headers=AUT).status_code == 200
+    assert pi.encerradas == [do_reserva]
 
 
 def test_resposta_ruim_nao_e_motivo_para_o_reserva(cena) -> None:
@@ -843,3 +1051,164 @@ def test_o_robo_diz_quem_respondeu_e_manda_o_idioma(monkeypatch, tmp_path) -> No
     r = g.perguntar("hello")
     assert r.ok and r.agente == "hermes" and r.modo == "gateway"
     assert enviados[0]["language"] == "en"
+
+
+# ─── o que é do dono, a rede não troca ───────────────────────────────────────
+RECEITA = {"kind": "command", "id": "meu", "name": "Meu agente",
+           "command": ["/bin/echo", "{prompt}"], "safety": "no_tools"}
+DA_REDE = {"kind": "http", "id": "vizinho", "base_url": "http://10.0.0.9:1234", "model": "m"}
+
+
+def test_pela_rede_nao_se_troca_nem_se_apaga_agente_criado_neste_computador(tmp_path) -> None:
+    """Achado da revisão: um POST com o id da receita do dono a trocava por um
+    servidor do atacante, mantendo-a como agente ATIVO."""
+    r = registro_com(tmp_path, Falso("hermes"))
+    r.adicionar(RECEITA, local=True)
+    r.adicionar({"kind": "http", "id": "da-casa", "base_url": "http://127.0.0.1:1234"}, local=True)
+    r.escolher("meu", local=True)
+    with pytest.raises(ErroDoAgente):
+        r.adicionar({**DA_REDE, "id": "meu"}, local=False)
+    with pytest.raises(ErroDoAgente):
+        r.remover("da-casa", local=False)
+    assert r.obter("meu").interface == "cli" and r.obter("da-casa") is not None
+    # A marca de origem sobrevive à gravação e à releitura.
+    outro = registro_com(tmp_path, Falso("hermes"))
+    assert outro.obter("meu").interface == "cli" and outro.efetivo().id == "meu"
+    with pytest.raises(ErroDoAgente):
+        outro.remover("da-casa", local=False)
+    outro.remover("da-casa", local=True)          # o dono, daqui, pode
+
+
+def test_o_que_a_rede_criou_a_rede_troca_e_apaga(tmp_path) -> None:
+    r = registro_com(tmp_path, Falso("hermes"))
+    r.adicionar(DA_REDE, local=False)
+    r.adicionar({**DA_REDE, "model": "outro"}, local=False)
+    assert registro_com(tmp_path, Falso("hermes")).obter("vizinho").modelo == "outro"
+    r.remover("vizinho", local=False)
+    assert r.obter("vizinho") is None
+
+
+@pytest.mark.parametrize("ident", ["claude", "ollama", "pi", "garra", "hermes"])
+def test_pela_rede_nao_se_ocupa_o_nome_de_um_agente_conhecido(tmp_path, ident) -> None:
+    r = registro_com(tmp_path, Falso("hermes"))
+    with pytest.raises(ErroDoAgente):
+        r.adicionar({**DA_REDE, "id": ident}, local=False)
+
+
+def test_agente_da_rede_segue_as_regras_da_rede_a_cada_carga(tmp_path) -> None:
+    """Um `agentes.json` de versão anterior, ou mexido, não reabre o loopback."""
+    (tmp_path / "agentes.json").write_text(json.dumps({"version": 1, "custom": [
+        {"kind": "http", "id": "velho", "base_url": "http://127.0.0.1:8125", "origin": "network"},
+        {"kind": "command", "id": "torto", "command": ["/bin/echo", "{prompt}"], "origin": "network"},
+        {"kind": "http", "id": "certo", "base_url": "http://10.0.0.9:1234", "origin": "network"},
+    ]}), encoding="utf-8")
+    r = registro_com(tmp_path, Falso("hermes"))
+    assert r.obter("velho") is None and r.obter("torto") is None and r.obter("certo") is not None
+
+
+def test_agente_sem_restricao_so_entra_em_uso_neste_computador(tmp_path) -> None:
+    """O dono cadastrou um agente com ferramentas para testar: da rede, ninguém
+    o põe para atender — nem como ativo, nem como reserva."""
+    r = registro_com(tmp_path, Falso("hermes"), Falso("solto", seguranca=LIVRE),
+                     Falso("contido", seguranca=RESTRITO))
+    for acao in (lambda: r.escolher("solto"), lambda: r.definir_reserva("solto")):
+        with pytest.raises(ErroDoAgente) as e:
+            acao()
+        assert e.value.codigo == "refused"
+    assert r.efetivo().id == "hermes" and r.reserva() is None
+    r.escolher("contido")                         # restrito, pela rede: pode
+    r.definir_reserva("solto", local=True)        # o dono, daqui: pode
+    r.escolher("solto", local=True)
+    assert r.efetivo().id == "solto"
+
+
+def test_receita_sem_seguranca_declarada_nao_e_ativada_pela_rede(cena) -> None:
+    c, registro, _ = cena(Falso("hermes"))
+    registro.adicionar({"kind": "command", "id": "meu", "command": ["/bin/echo", "{prompt}"]},
+                       local=True)
+    r = c.put("/api/agentes/ativo", json={"id": "meu"}, headers=AUT)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "refused"
+    assert c.put("/api/agentes/reserva", json={"id": "meu"}, headers=AUT).status_code == 400
+    assert registro.efetivo().id == "hermes"
+
+
+def test_o_reserva_nao_pode_ser_quem_ja_esta_atendendo(tmp_path) -> None:
+    """Sem escolha explícita quem atende é o primeiro de pé — e ele não é reserva de si."""
+    r = registro_com(tmp_path, Falso("hermes", vivo=False), Falso("garra"))
+    assert r.efetivo().id == "garra"
+    with pytest.raises(ErroDoAgente):
+        r.definir_reserva("garra")
+
+
+# ─── a ponte: o que mais a revisão achou ─────────────────────────────────────
+@pytest.mark.parametrize("idioma", [["pt"], {"a": 1}, 7, None, "xx"])
+def test_idioma_torto_no_pedido_nao_derruba_o_turno(cena, idioma) -> None:
+    hermes = Falso("hermes")
+    c, _, _ = cena(hermes)
+    sid = c.post("/api/sessions", json={}, headers=AUT).json()["session_id"]
+    r = c.post(f"/api/sessions/{sid}/messages", json={"content": "oi", "language": idioma},
+               headers=AUT)
+    assert r.status_code == 200 and "português" in hermes.recebidos[0][2]
+
+
+def test_o_reserva_herda_o_relogio_do_turno(cena, monkeypatch) -> None:
+    """O robô desiste em 120 s: o reserva responde dentro do que sobrou."""
+    vistos: dict = {}
+
+    class Medidor(Falso):
+        def responder(self, conversa, texto, *, instrucoes, ao_trecho=None) -> str:
+            vistos[self.id] = (conversa.ate, self.prazo(conversa))
+            return super().responder(conversa, texto, instrucoes=instrucoes)
+
+    lento, pi = Medidor("hermes", falha="timeout"), Medidor("pi")
+    lento.prazo_s, pi.prazo_s = 75.0, 60.0
+    c, registro, _ = cena(lento, pi)
+    registro.definir_reserva("pi")
+    agora = [5000.0]
+    monkeypatch.setattr(ponte_agentes.time, "monotonic", lambda: agora[0])
+    monkeypatch.setattr(base.time, "monotonic", lambda: agora[0])
+    original = Medidor.responder
+
+    def responder(self, conversa, texto, **kw):
+        try:
+            return original(self, conversa, texto, **kw)
+        finally:
+            if self.id == "hermes":
+                agora[0] += 75.0                  # o escolhido gastou o prazo inteiro
+    monkeypatch.setattr(Medidor, "responder", responder)
+    _, r = conversar(c, "oi")
+    assert r.status_code == 200 and r.json()["agent"] == "pi"
+    assert vistos["hermes"][1] == 75.0
+    assert vistos["pi"][0] == vistos["hermes"][0]
+    assert vistos["pi"][1] == pytest.approx(ponte_agentes.ORCAMENTO_DO_TURNO_S - 75.0)
+
+
+def test_hermes_erro_passageiro_ao_retomar_nao_joga_a_conversa_fora(tmp_path) -> None:
+    """Só é "sessão perdida" quando o Hermes DIZ que não a achou."""
+    exe = programa(tmp_path, "hermes", """
+        import sys
+        sys.stderr.write("provider error: 529 overloaded\\n"); sys.exit(1)
+    """)
+    h = Hermes(exe)
+    c = Conversa(id=str(uuid.uuid4()), agente="hermes", ref="local-abc")
+    with pytest.raises(ErroDoAgente) as e:
+        h.responder(c, "oi", instrucoes="")
+    assert e.value.codigo == "unavailable" and c.ref == "local-abc"
+    assert "overloaded" not in e.value.detalhe
+
+
+def test_hermes_sessao_nova_no_meio_do_assunto_leva_o_que_a_ponte_lembra(tmp_path) -> None:
+    h = Hermes(programa(tmp_path, "hermes", HERMES_FALSO))
+    c = Conversa(id=str(uuid.uuid4()), agente="hermes",
+                 mensagens=[{"role": "user", "content": "meu número é 7"},
+                            {"role": "assistant", "content": "anotado"}])
+    h.responder(c, "qual é?", instrucoes="PAPEL")
+    [argv] = chamadas(h.executavel)
+    assert "meu número é 7" in argv[-1] and argv[-1].endswith("qual é?") is False or "qual é?" in argv[-1]
+
+
+def test_a_saude_mostra_o_nome_do_programa_e_nao_o_caminho(tmp_path) -> None:
+    """O caminho inteiro traz o nome do usuário, e vai ao painel sem senha."""
+    h = Hermes(programa(tmp_path, "hermes", HERMES_FALSO))
+    detalhe = h.saude().detalhe
+    assert detalhe == "hermes" and str(tmp_path) not in (detalhe or "")
