@@ -1,5 +1,105 @@
 # Changelog
 
+## 1.5.0 — 2026-11-24
+
+O robô não respondia a "Fala Garra". Eram quatro causas empilhadas, nenhuma
+visível na tela — e, consertadas, o robô deixou de ser de um agente só. Tudo
+aqui foi medido no robô (Reachy Mini Wireless, daemon 1.11.0 → 1.15.1) e no
+computador da casa. O desenho e as medidas estão em
+`docs/specs/2026-11-24-agentes-de-ia-e-ativacao.md`.
+
+### Added
+
+- **Agentes de IA.** Quem responde ao robô passa a ser escolhido: Hermes
+  (padrão), Garra, Pi, Claude, Ollama, e o que o dono acrescentar. Cada agente
+  entra por um adaptador (`companion/agentes/`) com o mesmo contrato — saúde
+  barata, conversa com dono, erro com nome. Trocar de agente não reinicia nada:
+  a sessão antiga responde 404 e o app do robô abre outra. Agente que cai é
+  dito pelo nome ("Não consegui falar com o Hermes agora"); um **agente
+  reserva**, opcional, assume só quando o escolhido não responde. Nome do robô,
+  frase de ativação e agente são três ajustes independentes.
+
+  A fala do microfone é texto não confiável: a sessão da voz nasce sem
+  ferramenta perigosa (Hermes com `-t web,todo`, Pi com `--no-tools`, Claude
+  com `--tools ""`), todo executável roda sem shell e com prazo que mata os
+  filhos, e pela rede só se faz o que não afrouxa nada — receita de linha de
+  comando e ferramentas sem restrição só entram no próprio computador
+  (`python -m companion.agentes`).
+
+- **Painel: Agente de IA e Robô** (Ajustes). O primeiro lista os agentes do
+  computador com estado, segurança e interface, e deixa usar, testar, ajustar,
+  escolher o reserva e cadastrar um servidor de IA local. O segundo mostra as
+  versões do app e do software do robô, confere se há atualização (só
+  consulta), e ajusta volume, ganho do microfone, movimento ambiente, olhar e
+  balanço.
+
+- **Microfone e fala** (no cartão Conversa): sensibilidade, pausa que encerra a
+  fala, idioma da conversa, voz, velocidade e volume — aplicados sem reiniciar.
+  *Testar escuta* ouve a próxima fala e mostra o que o robô entendeu, sem mandar
+  a agente nenhum; *Testar fala* e *Testar alto-falante* provam a saída.
+
+- **Fase da voz, no topo de todas as telas**: conectando, em espera (com o
+  motivo), aguardando a frase, ouvindo, transcrevendo, pensando, falando, em
+  movimento, erro, fora do ar. `voice.phase` no barramento e
+  `voice.phase/reason/last_error` no status.
+
+- **Mais de uma frase de ativação** (`wake_phrase_alternatives`, até quatro) e
+  **o "ouvi"**: um bipe curto e as antenas subindo quando a frase casa. "Fala
+  Garra" dito sozinho era respondido com silêncio.
+
+- **Mestre da escuta** (`listening_enabled`): desligado, o microfone é liberado
+  de verdade; religado, volta sem reiniciar o app.
+
+- **O vigia** (`companion/vigia.py`, no computador): reaponta o robô quando o IP
+  do computador muda, e inicia o app do Garra quando o robô reaparece depois de
+  um reinício. Nunca mexe num robô rodando outro app. `GARRA_VIGIA=0` desliga.
+
+- **Servidor de voz**: idioma no reconhecimento e na síntese, voz por amostra
+  (`~/.config/garra-reachy/vozes/<nome>.wav`), velocidade sem mudar o tom
+  (`atempo` do ffmpeg) e `GET /vozes`.
+
+- **`tools/bancada_voz.py`** e **`tools/medir_recursos.sh`**: o teste de ponta a
+  ponta que dispensa uma pessoa na sala, e a série de recursos do app.
+
+### Fixed
+
+- **O robô ouvia a si mesmo.** As antenas se moviam a cada som ouvido — pedido
+  ou não —, e o servo, ao lado dos microfones, era ouvido como som novo: um
+  trecho falso a cada 2 s, em laço. Medido: 15 trechos em 30 s de silêncio
+  antes, 1 depois. Agora o corpo só se mexe por pedido aceito, e gesto repetido
+  sem mudança de estado não é enviado.
+
+- **"Fala Garra" que o reconhecimento só entendia pela metade.** "Fala H" ficava
+  longe demais da frase para ser conferido. Com a primeira palavra certa e o
+  nome incerto, o trecho vai à segunda escuta — desde que o reconhecimento
+  estivesse bem em dúvida, e a segunda escuta continua exigindo a frase exata.
+
+- **O pedido saía distorcido depois da segunda escuta.** A dica que ajuda a
+  frase atrapalhava o resto ("qual é a capital da França?" virou "porém é o
+  telefone?"). O pedido agora fica com a escuta que o ouviu melhor.
+
+- **Agente parado aparecia como "computador inacessível"**, com a orientação
+  errada. O painel distingue os dois, e a dica do computador inacessível passou
+  a mencionar o firewall — que foi a causa de verdade.
+
+### Changed
+
+- **A frase de ativação nasce ligada** em instalação nova. Quem já tinha a
+  chave gravada, ligada ou desligada, fica como estava.
+- O aviso de falta de cérebro deixou de falar em "gateway do Garra": o agente
+  pode ser outro.
+- `reachy-mini` 1.15.1 (era 1.11.0), no computador e no robô.
+
+### Medido
+
+- Conversa por voz de ponta a ponta com Hermes, Pi, Claude e Ollama pelo
+  microfone do robô, e com o Garra pela ponte; troca de agente pelo painel.
+- Ativação pelas caixas do computador, com voz sintética: 6 de 8 e 5 de 8
+  chamadas respondidas; 0 de 14 frases parecidas ativaram. **Com voz humana não
+  foi medido.**
+- O robô dizendo a própria frase pelo alto-falante dele: não se ativou.
+- Suíte: 2.276 testes, contra o SDK 1.15.1.
+
 ## 1.4.1 — 2026-09-29
 
 O robô tinha parado de responder. Eram quatro motivos ao mesmo tempo, e nenhum

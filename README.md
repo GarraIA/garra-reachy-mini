@@ -31,6 +31,22 @@ two optional pieces that are not, with what to do about each.
 
 ## Features
 
+**New in 1.5.0**
+
+- **Choose who answers** — Hermes (default), Garra, Pi, Claude, a local Ollama
+  model, or any agent you add. The robot's name, the wake phrase and the agent
+  are three independent settings: you can say "Fala Garra" and have Hermes
+  think (see [AI agents](#ai-agents-150))
+- **A robot that explains itself** — one status pill on every screen: waiting
+  for the wake phrase, listening, transcribing, thinking, speaking, standby
+  (with the reason), error
+- **Voice settings in the panel** — several wake phrases, a beep and an antenna
+  gesture when it hears you, microphone sensitivity, language, voice, speed and
+  volume, and a listening test that shows what the robot understood (see
+  [Voice activation](#voice-activation-150))
+- **Self-healing** — the companion re-points the robot when your computer's
+  address changes and starts the app again after the robot reboots
+
 **Available immediately, no setup**
 
 - **Manual control** — joystick for the head, antennas, speed and intensity
@@ -342,6 +358,84 @@ capability with its name, origin, state, reason and next step, separating
 *not configured* (a choice) from *unavailable* (a fault), plus this panel's own
 integrations and the other gateway checks.
 
+### AI agents (1.5.0)
+
+*Settings › AI agent.* The robot does not know who it is talking to. It sends
+what it heard to the companion on your computer, and the companion hands it to
+the **active agent**. Agents are discovered on the computer:
+
+| Agent | How it is reached | What it may do by voice |
+|---|---|---|
+| **Hermes** (default) | its command line (`hermes chat`) | conversation and web search |
+| **Garra** | the local Garra gateway, through the locked bridge | the gateway's restricted voice mode |
+| **Pi** | its command line (`pi -p`) | conversation only |
+| **Claude** | its command line (`claude -p`) | conversation only |
+| **Ollama** | `http://127.0.0.1:11434` | conversation only |
+
+From the panel you can pick the agent, test it (a real round trip, with the
+time it took), set its options, choose a **backup agent** that answers only
+when the chosen one does not, look for agents again, and add any server on
+your network that speaks the OpenAI chat API (LM Studio, llama.cpp…).
+
+- **Hermes is the default** on a fresh install. Your own choice is remembered
+  across restarts and updates.
+- **Switching does not restart anything.** The next thing you say goes to the
+  new agent; conversations are not mixed between agents.
+- **An agent that is down is named**: the robot says "I could not reach Hermes
+  right now", and the panel shows *the chosen AI agent is not answering* —
+  which is not the same thing as *the robot cannot reach your computer*.
+- **Nothing on your network can loosen an agent.** The robot's panel has no
+  password, so from it you can only do what is safe. Adding a command-line
+  agent, or letting an agent use all its tools by voice, is done on the
+  computer itself:
+
+```bash
+python -m companion.agentes                        # list, with health
+python -m companion.agentes usar pi                # choose the active agent
+python -m companion.agentes testar hermes          # a real conversation
+python -m companion.agentes opcao hermes tools completo
+python -m companion.agentes adicionar recipe.json  # a command-line agent
+```
+
+The choice lives in `~/.config/garra-reachy/agentes.json` on the computer
+(mode 0600); the companion re-reads it when it changes. How to describe a
+command-line agent, how to write an adapter, and what each agent was measured
+to do are in
+[`docs/specs/2026-11-24-agentes-de-ia-e-ativacao.md`](docs/specs/2026-11-24-agentes-de-ia-e-ativacao.md).
+
+Codex and Gemini are **not** offered: on the machine where this was built,
+Codex's default model was refused by the account and Gemini's login had
+expired. opencode is not offered either — it runs shell commands and has no
+flag to stop it.
+
+### Voice activation (1.5.0)
+
+*Settings › Conversation.* The wake phrase is on by default on a fresh install
+(`Fala Garra`), and everything here applies without restarting the app.
+
+- **Listen** — the master switch. Off, the microphone is released: the robot
+  hears nothing at all.
+- **Wake phrase** and **other phrases** — up to four more, one per line. Any of
+  them works; keep them distinct, since every extra phrase is one more chance
+  of room talk sounding like a call.
+- **Beep** and **antenna gesture** when the phrase is heard — the robot's "I
+  heard you". Say the phrase alone, wait for the beep, then ask; or say it all
+  in one breath.
+- **Microphone sensitivity** (1–10) and **the pause that ends your sentence**.
+- **Language**, **voice**, **speed** and **volume** of the conversation. Voices
+  are samples of about ten seconds that you place on the computer in
+  `~/.config/garra-reachy/vozes/` (one `.wav` per voice).
+- **Test listening** hears your next sentence and shows what the robot
+  understood, how long it took, and whether it counted as the wake phrase —
+  without sending it to any agent. **Test speech** and **Test speaker** prove
+  the way out.
+
+Detection is by transcription, not by a dedicated keyword model: the robot's
+speech detector opens a segment, the voice server on *your* computer transcribes
+it, and only a segment that starts with the phrase goes any further. That is
+what lets you change the phrase by typing it. Nothing said without the phrase
+reaches the chat, the history or an agent.
+
 ### Assistant identity (requires a Garra gateway)
 
 The assistant's display name and personality live in the **gateway's**
@@ -436,8 +530,17 @@ advice applies to the robot as a whole, not just to this app.
 - **Nothing leaves your network unless you configure it to.** With no API key
   and no voice server, the app makes no outbound connections beyond your robot's
   own daemon.
-- **With conversation enabled**, what you type or say is sent to the provider you
-  chose (OpenRouter, or your own Garra gateway) so it can reply.
+- **With conversation enabled**, what you type or say is sent to the agent you
+  chose, and from there to whatever that agent uses: Hermes, Pi, Claude and the
+  Garra gateway talk to their own cloud providers with the accounts *you* set
+  up for them; a local model (Ollama) keeps the conversation on your computer.
+  Each agent also keeps its own history of the conversation, where it normally
+  keeps histories. The companion itself holds the conversation only in memory.
+- **The wake phrase is checked at home.** Speech segments go to the voice
+  server you run; nothing is streamed continuously, and what is said without
+  the phrase is not sent to any agent.
+- **"Test listening" returns what it heard only to whoever pressed the
+  button.** It is not written to the chat, the history or the log.
 - **With voice enabled**, microphone audio is sent to the speech server *you* run
   and pointed the app at.
 - **Camera frames stay on the robot.** They are served on your local network for
@@ -500,6 +603,15 @@ Reachy Mini (this app is the single owner of the robot)
 └── voice loop (optional) . VAD → speech-to-text → model → speech → speaker
 ```
 
+```
+Your computer (the companion, `python -m companion`)
+├── bridge :8126 .......... the only thing the robot talks to; token required
+│    ├── agent registry ... discovery, choice, backup, options (agentes.json)
+│    └── adapters ......... Hermes · Pi · Claude · HTTP · (Garra → locked proxy)
+├── voice server :8123 .... Whisper + Chatterbox on the GPU
+└── watcher ............... re-points the robot, restarts the app after a reboot
+```
+
 One process owns the robot. The panel, the voice shortcuts and the AI tools all
 go through the same single-threaded executor, which is what stops two commands
 from fighting over the head. Movement goes through the daemon's REST API rather
@@ -518,7 +630,7 @@ cd garra-reachy-mini
 pip install -e ".[dev]"
 
 python -m garra_reachy_mini.main --simulado   # panel with no robot at all
-pytest tests -q                               # 191 tests, no hardware needed
+pytest tests -q                               # 2,270+ tests, no hardware needed
 ```
 
 `--simulado` accepts every action and reports `executed: false` for all of them,
@@ -538,6 +650,9 @@ so nothing can quietly pretend a movement happened.
 | Robot no longer says "let me think" | That is the 1.1.0 default: silent while processing. Re-enable the phrases in the panel's conversation card. |
 | Identity card says it needs Garra | Assistant name and personality live in the gateway's config; without a reachable gateway they cannot be read or written — nothing is cached or queued. |
 | Robot hears but never answers aloud | "Speak responses" is unticked in the Conversation card — since 1.4.1 the card opens with a warning when it is. |
+| Robot never reacts to anything you say | Look at the status pill. *Standby — the voice server is not answering* or *the robot cannot reach your computer* is almost always the network: same Wi-Fi? firewall? On Ubuntu with `ufw`: `sudo ufw allow from <your LAN>/24 to any port 8123,8126 proto tcp`. Both services still require the token. |
+| Robot stopped answering after a reboot or a network change | The companion's watcher fixes both within a minute: it starts the app when the robot reappears and re-points it when your computer's address changes. `curl http://127.0.0.1:8125/api/reachy/watch` shows what it last saw. |
+| "The chosen AI agent is not answering" | Your computer is reachable; the agent is not. `python -m companion.agentes testar <agent>` on the computer says why, or pick another agent in the panel. |
 | Robot ignores the activation phrase | Turn on "Show what was heard instead of the phrase" and say it again: the panel shows what the transcription made of it, and how sure it was. Keep "Double-check" on, and restart the voice server after updating the app — an old one does not report confidence, and without it there is no double-check. If what you said shows up with high confidence, "Double-check even when the transcription was sure" catches it. |
 | Robot says it has no clock | Turn on "Know what time it is" and set the time zone. |
 | Robot deaf for minutes at a time | Fixed in 1.4.1: the speech detector used a noise threshold measured once at start-up. The status list now shows the noise floor it is following. |
