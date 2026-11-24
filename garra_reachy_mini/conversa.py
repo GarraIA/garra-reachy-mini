@@ -51,6 +51,11 @@ PADRAO: dict[str, Any] = {
     # aqui é `True`: config antiga não tem a chave, e a ausência tem de
     # normalizar para o comportamento de hoje.
     "speech_output_enabled": True,
+    # ── mestre da ESCUTA ─────────────────────────────────────────────────────
+    # Desligado, o microfone é LIBERADO: o robô não ouve nada, nem a frase de
+    # ativação, nem o "pare" falado. Painel, chat, movimento e a fala pedida
+    # pelo painel seguem. É o "não me escute agora" de quem recebe visita.
+    "listening_enabled": True,
     # ── controle mestre da fala AUTOMÁTICA ───────────────────────────────────
     # Desligado, o robô só fala a resposta final e o que o usuário pediu
     # explicitamente. Nenhum atraso o contorna: 4 s, 30 s ou 5 min de espera
@@ -79,8 +84,38 @@ PADRAO: dict[str, Any] = {
     # acima: "escute e obedeça, mas responda só no chat" é uma combinação
     # legítima. Nasce desligada — ligar isto muda como se fala com o robô, e
     # ninguém deve descobrir a mudança por um upgrade.
-    "wake_phrase_enabled": False,
+    #
+    # Do 1.5.0 em diante nasce LIGADA: um robô de voz que ouve tudo o que se diz
+    # na sala e responde a tudo é o pior primeiro contato, e a frase é o que o
+    # separa disso. Quem já tinha a chave gravada (ligada ou desligada) fica
+    # como estava — `normalizar()` só aplica o padrão à chave ausente.
+    "wake_phrase_enabled": True,
     "wake_phrase_text": "Fala Garra",
+    # Outras frases que também chamam o robô ("Ei Garra", "Olá robô"). Vazia de
+    # fábrica. Cada uma passa pela mesma validação da principal.
+    "wake_phrase_alternatives": [],
+    # ── confirmação de que ouviu a frase ─────────────────────────────────────
+    # Um bipe curto e um gesto de antenas quando a frase de ativação casa. Sem
+    # isto, "Fala Garra" dito sozinho não tinha resposta nenhuma — e a pessoa
+    # ficava sem saber se podia continuar. Os dois são independentes: o som
+    # obedece também ao mestre da saída de voz; o gesto, não.
+    "wake_ack_sound_enabled": True,
+    "wake_ack_motion_enabled": True,
+    # ── microfone e fala ─────────────────────────────────────────────────────
+    # Sensibilidade do microfone, de 1 (só voz forte e perto) a 10 (qualquer
+    # som). 5 é o detector como sempre foi. Ver `segmentador.Segmentador.ajustar`.
+    "mic_sensitivity": 5,
+    # Quanto silêncio encerra a fala de quem está falando.
+    "vad_silence_ms": 800,
+    # Idioma da conversa: o que o reconhecimento espera ouvir e o que a síntese
+    # fala. `pt` é português do Brasil.
+    "speech_language": "pt",
+    # Voz da síntese: o nome de uma voz que o servidor de voz conhece. Vazio é
+    # a voz padrão dele.
+    "speech_voice": "",
+    # Velocidade (70 a 140 %) e volume (10 a 100 %) da fala do robô.
+    "speech_rate_pct": 100,
+    "speech_volume_pct": 100,
     # Inatividade: quanto tempo de silêncio fecha a sessão. Renovado ao FIM de
     # cada turno, nunca na aceitação.
     "wake_phrase_window_s": 15,
@@ -161,11 +196,12 @@ PADRAO: dict[str, Any] = {
 # Também silenciosa por padrão, pelo mesmo veredicto do hardware.
 PADRAO_ARRANQUE: dict[str, Any] = {"spoken_greeting_enabled": False}
 
-BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
+BOOLEANOS = ("speech_output_enabled", "listening_enabled", "automatic_speech_enabled",
              "spoken_acknowledgements_enabled", "spoken_progress_updates",
              "announce_tool_usage", "wake_phrase_enabled",
              "wake_second_listen_enabled", "wake_second_listen_always",
              "wake_diagnostics_enabled",
+             "wake_ack_sound_enabled", "wake_ack_motion_enabled",
              "ambient_context_enabled", "notebook_enabled", "clock_enabled",
              "vision_enabled", "vision_cloud_enabled", "family_recognition_enabled",
              "music_voice_enabled")
@@ -173,11 +209,18 @@ BOOLEANOS = ("speech_output_enabled", "automatic_speech_enabled",
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
 # folgado para isso e curto o bastante para não virar um parágrafo.
 FRASE_MAX = 64
+# Quantas frases além da principal. Cada frase a mais é mais uma chance de a
+# conversa da sala parecer um chamado; quatro cobrem apelido, idioma e variação.
+FRASES_ALTERNATIVAS_MAX = 4
 
 # Visão: o provedor é um de três; o endpoint local é uma URL http(s) curta (a
 # ponte confere de novo se é da casa); nome de modelo é o que o Ollama e a
 # OpenRouter aceitam. O que não casa não é gravado, e o anterior fica.
 VISAO_PROVEDORES = ("auto", "local", "openrouter")
+# Idiomas da conversa: os que o reconhecimento (Whisper) e a síntese
+# (Chatterbox multilíngue) atendem os dois. O código é o do ISO 639-1.
+IDIOMAS = ("pt", "en", "es", "fr", "it", "de", "ja", "zh", "ko", "ru", "nl", "pl", "tr", "ar", "hi")
+_VOZ = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,47}")
 _URL_LOCAL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:_]{1,120}(?:/[A-Za-z0-9._\-/]{0,60})?")
 _MODELO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}")
 
@@ -188,9 +231,14 @@ _MODELO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}")
 INTEIROS = ("progress_update_delay_ms", "max_progress_messages",
             "acknowledgement_cut_threshold_ms",
             "wake_phrase_window_s", "wake_phrase_session_max_s",
-            "ambient_context_window_s")
+            "ambient_context_window_s",
+            "mic_sensitivity", "vad_silence_ms", "speech_rate_pct", "speech_volume_pct")
 
 LIMITES = {
+    "mic_sensitivity": (1, 10),
+    "vad_silence_ms": (300, 2500),
+    "speech_rate_pct": (70, 140),
+    "speech_volume_pct": (10, 100),
     "wake_phrase_window_s": (3, 120),
     "wake_phrase_session_max_s": (15, 600),
     # Piso de 30 s: menos que isso não cobre nem uma troca de frases. Teto de
@@ -236,6 +284,27 @@ def _aplicar(c: dict, bruto: dict) -> None:
         candidata = str(bruto["wake_phrase_text"] or "").strip()[:FRASE_MAX]
         if candidata and _tokens(candidata):
             c["wake_phrase_text"] = candidata
+    if "wake_phrase_alternatives" in bruto:
+        # Lista inteira ou nada: o painel manda a lista como ficou. O que não
+        # é frase (vazio, só pontuação, repetido) sai; o que sobra, até o teto,
+        # fica. Não-lista é recusada, e a anterior permanece.
+        from .ativacao import tokens as _tokens
+        lista = bruto["wake_phrase_alternatives"]
+        if isinstance(lista, (list, tuple)):
+            vistas, limpas = set(), []
+            for item in lista:
+                frase = str(item or "").strip()[:FRASE_MAX]
+                chave = tuple(_tokens(frase))
+                if chave and chave not in vistas:
+                    vistas.add(chave)
+                    limpas.append(frase)
+            c["wake_phrase_alternatives"] = limpas[:FRASES_ALTERNATIVAS_MAX]
+    if "speech_language" in bruto and bruto["speech_language"] in IDIOMAS:
+        c["speech_language"] = bruto["speech_language"]
+    if "speech_voice" in bruto:
+        voz = str(bruto["speech_voice"] or "").strip()
+        if voz == "" or _VOZ.fullmatch(voz):
+            c["speech_voice"] = voz
     if "vision_provider" in bruto and bruto["vision_provider"] in VISAO_PROVEDORES:
         c["vision_provider"] = bruto["vision_provider"]
     if "vision_local_endpoint" in bruto:
@@ -264,7 +333,8 @@ def normalizar(bruto: dict | None) -> dict:
     Tolerante de propósito: um `config.json` de uma versão anterior, ou editado
     à mão com um número absurdo, não pode impedir o robô de conversar.
     """
-    c = {**PADRAO, "profiles": {k: dict(v) for k, v in PADRAO["profiles"].items()}}
+    c = {**PADRAO, "profiles": {k: dict(v) for k, v in PADRAO["profiles"].items()},
+         "wake_phrase_alternatives": list(PADRAO["wake_phrase_alternatives"])}
     if not isinstance(bruto, dict):
         return c
 
@@ -283,6 +353,16 @@ def normalizar(bruto: dict | None) -> dict:
                     *LIMITES["acknowledgement_delay_ms"])
     c["revision"] = _inteiro(bruto.get("revision"), 0, 0, 2**31)
     return c
+
+
+def ganho_do_microfone(sensibilidade: Any) -> float:
+    """A nota de 1 a 10 do painel, no ganho que o detector entende.
+
+    5 é 1,0 (o detector de sempre). Cada ponto vale um quarto de oitava: 1 dá
+    0,5 (pede o dobro do som) e 10 dá ~2,4 (abre com menos da metade).
+    """
+    nota = _inteiro(sensibilidade, 5, *LIMITES["mic_sensitivity"])
+    return float(2.0 ** ((nota - 5) / 4.0))
 
 
 def normalizar_arranque(bruto: dict | None) -> dict:
@@ -549,6 +629,19 @@ class CoordenadorAudio:
                 self._empurrar(onda)
         return True
 
+    def tocar_sinal(self, onda, saida_habilitada: bool) -> bool:
+        """Um som curto que não é fala nem pertence a turno: o bipe de "ouvi".
+
+        Passa por aqui pelo mesmo motivo de tudo o mais: o coordenador é o dono
+        do alto-falante, e o mestre da saída vale para todo som do robô. Não
+        mexe no turno em curso — o bipe entra na fila do player e pronto.
+        """
+        if not saida_habilitada:
+            return False
+        with self._lock:
+            self._empurrar(onda)
+        return True
+
     def cancelar(self, turno: Turno, motivo: str = "cancelled") -> None:
         """Barge-in, e-stop ou pergunta nova: corta agora, sem limite de tempo.
 
@@ -614,5 +707,5 @@ __all__ = [
     "AGENDADO", "CANCELADO", "CONCLUIDO", "CORTADO", "TOCANDO",
     "CoordenadorAudio", "MODOS", "PADRAO", "Politica", "Turno",
     "TETO_DESCONHECIDO_MS", "decidir_corte", "normalizar",
-    "perfil_atualizado",
+    "perfil_atualizado", "ganho_do_microfone", "IDIOMAS",
 ]

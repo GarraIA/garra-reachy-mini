@@ -49,6 +49,7 @@ from .eventos import FilaEventos
 from .robo import intencoes
 from .robo.acoes import ControladorRobo
 from .robo.backends import BackendSdk, BackendSimulado
+from .robo import comportamento as fases
 from .robo.comportamento import Comportamento
 from .robo.daemon_api import DaemonAPI
 from . import servicos as servicos_mod
@@ -183,6 +184,7 @@ class GarraReachyMini(ReachyMiniApp):
         # usuário o que falta, em vez de parecer quebrado.
         self.servicos = Servicos()
         self._midia_ligada = False
+        self._gravando = False
         # Configuração nova não pode esperar o backoff de falha (até 60 s): quem
         # aperta "Configure or reconnect Reachy" no console quer ver o resultado
         # agora. `POST /api/config` levanta isto e o supervisor reavalia na hora.
@@ -421,6 +423,7 @@ class GarraReachyMini(ReachyMiniApp):
                 nova_sessao=self._nova_sessao_async,
                 atender_musica=self._atender_musica_do_chat,
                 detector=self.medida_do_detector,
+                fase=self.comportamento.estado_da_voz if self.comportamento else None,
                 dir_estatico=Path(__file__).resolve().parent / "static",
             ),
         )
@@ -653,6 +656,30 @@ class GarraReachyMini(ReachyMiniApp):
                 pass
             self.logger.info("Garra Reachy Mini encerrado.")
 
+    def _aplicar_escuta(self, reachy_mini: ReachyMini, ligada: bool, log,
+                        eventos=None) -> None:
+        """Abre ou LIBERA o microfone, conforme o interruptor da escuta.
+
+        Desligada, a gravação é parada de verdade — não é o app ignorando o que
+        o microfone entrega, é o microfone devolvido. O alto-falante segue: o
+        painel ainda pode pedir uma fala, e o robô ainda responde no chat.
+        """
+        if ligada == getattr(self, "_gravando", False):
+            return
+        try:
+            if ligada:
+                reachy_mini.media.start_recording()
+            else:
+                reachy_mini.media.stop_recording()
+        except Exception:
+            log.exception("Falha ao %s o microfone", "abrir" if ligada else "liberar")
+            return
+        self._gravando = ligada
+        log.info("Microfone %s.", "aberto" if ligada else
+                 "liberado (escuta desligada no painel)")
+        if eventos is not None:
+            eventos.publicar("voice.listening", enabled=ligada)
+
     def _esperar(self, stop_event: threading.Event, segundos: float) -> None:
         """Espera, mas acorda na hora se o app parar ou a configuração mudar.
 
@@ -768,6 +795,8 @@ class GarraReachyMini(ReachyMiniApp):
                 dica="Run the optional voice server (tools/servidor_voz.py) and "
                      "point GARRA_VOZ_URL at it.",
             )
+            if self.comportamento is not None:
+                self.comportamento.fase(fases.FASE_ESPERA, "voice_server_unreachable")
             if not avisou:
                 avisou = True
                 log.warning(
@@ -787,6 +816,8 @@ class GarraReachyMini(ReachyMiniApp):
             log.warning("Nenhum cérebro configurado: o robô ouve e obedece aos "
                         "atalhos locais, mas não conversa.")
 
+        if hasattr(voz, "preferir"):
+            voz.preferir(conversa.normalizar(cfg.conversa))
         fila = FilaEventos()
         sr_in = reachy_mini.media.get_input_audio_samplerate()
         sr_out = reachy_mini.media.get_output_audio_samplerate()
@@ -800,12 +831,16 @@ class GarraReachyMini(ReachyMiniApp):
                      "and speaker in the Reachy Mini dashboard.")
             log.error("Robô sem dispositivo de áudio (mic %sHz, som %sHz); "
                       "seguindo sem voz.", sr_in, sr_out)
+            if self.comportamento is not None:
+                self.comportamento.fase(fases.FASE_ESPERA, "no_audio_device")
             stop_event.wait(30.0)
             return
         if not self._midia_ligada:
-            reachy_mini.media.start_recording()
             reachy_mini.media.start_playing()
             self._midia_ligada = True
+        self._aplicar_escuta(
+            reachy_mini, conversa.normalizar(cfg.conversa)["listening_enabled"], log,
+            controlador.eventos)
         log.info("Conectado ao robô (mic %sHz, som %sHz).", sr_in, sr_out)
 
         # A sessão de ativação: uma por instância do laço de voz, viva entre
@@ -830,6 +865,22 @@ class GarraReachyMini(ReachyMiniApp):
         gestos = self.comportamento
         assert gestos is not None
         assert self.acompanhamento is not None
+
+        # O que a tela mostra enquanto o robô ouve. A configuração é relida de
+        # tempos em tempos no laço (`escuta`), não a cada pergunta da tela.
+        escuta = {"ativacao": ativacao.Ativacao.de(cfg.conversa),
+                  "ligada": conversa.normalizar(cfg.conversa)["listening_enabled"],
+                  "conferida": 0.0}
+
+        def fase_ao_ouvir() -> tuple[str, str | None]:
+            if not escuta["ligada"]:
+                return fases.FASE_ESPERA, "listening_disabled"
+            ativ = escuta["ativacao"]
+            if not ativ.habilitada or sessao_ativacao.aberta(time.monotonic(), ativ):
+                return fases.FASE_OUVINDO, None
+            return fases.FASE_AGUARDANDO_FRASE, None
+
+        gestos.fase_ao_ouvir = fase_ao_ouvir
         gestos.ouvindo()
 
         # Único dono do alto-falante. Ver conversa.py: o lock dele cobre a
@@ -864,6 +915,9 @@ class GarraReachyMini(ReachyMiniApp):
         self._trocar_sessao = troca_de_sessao(cerebro_atual)
 
         def ler_mono() -> np.ndarray:
+            if not getattr(self, "_gravando", False):
+                # Escuta desligada: o microfone foi devolvido, não há o que ler.
+                return np.empty(0, dtype=np.float32)
             pedaco = reachy_mini.media.get_audio_sample()
             if pedaco is None:
                 return np.empty(0, dtype=np.float32)
@@ -908,6 +962,7 @@ class GarraReachyMini(ReachyMiniApp):
                         onda = voz.falar(frase, sr_out)
                     except Exception:
                         log.exception("Falha no TTS da frase: %r", frase[:80])
+                        gestos.erro("tts_failed", "speech synthesis did not answer")
                         continue
                     if onda.size == 0:
                         continue
@@ -943,6 +998,37 @@ class GarraReachyMini(ReachyMiniApp):
         # A partir daqui o painel também consegue falar pelo robô.
         self._falar_texto = falar
 
+        bipe = ativacao.bipe(sr_out)
+
+        def confirmar_ativacao(conf: dict) -> None:
+            """A frase casou: diz isso com um gesto e um bipe, se estiverem ligados.
+
+            O gesto é enfeite em prioridade ambiente. O bipe é som do robô e
+            obedece ao mestre da saída; não entra no coordenador de turnos
+            porque não há turno ainda, e não sobrepõe uma fala em andamento.
+            """
+            prefs = conversa.normalizar(conf)
+            if prefs["wake_ack_motion_enabled"]:
+                gestos.ativado()
+            tocou = False
+            if prefs["wake_ack_sound_enabled"] and self._lock_fala.acquire(blocking=False):
+                try:
+                    # Pelo coordenador, como todo som: é ele que aplica o
+                    # mestre da saída de voz.
+                    tocou = coordenador.tocar_sinal(bipe, prefs["speech_output_enabled"])
+                    if tocou:
+                        # Dormir a duração do bipe mantém a ordem dos sons: o
+                        # que vier depois (a resposta) entra na fila atrás dele.
+                        stop_event.wait(bipe.size / sr_out)
+                        sessao_ativacao.falou_ate = time.monotonic()
+                except Exception:
+                    log.debug("bipe de ativação descartado", exc_info=True)
+                finally:
+                    self._lock_fala.release()
+            controlador.eventos.publicar(
+                "voice.wake.acknowledged", sound=tocou,
+                motion=bool(prefs["wake_ack_motion_enabled"]))
+
         def ouvir(audio: np.ndarray, dica: str | None = None):
             """O texto e a confiança por palavra (`None` quando não se sabe).
 
@@ -972,6 +1058,7 @@ class GarraReachyMini(ReachyMiniApp):
             except Exception:
                 self._falhas_voz += 1
                 log.exception("Falha no STT (%d seguidas)", self._falhas_voz)
+                gestos.erro("stt_failed", "speech recognition did not answer")
                 gestos.ouvindo()
                 return
             self._falhas_voz = 0
@@ -1002,8 +1089,10 @@ class GarraReachyMini(ReachyMiniApp):
             if not veredicto.aceito and veredicto.motivo == "wake_phrase_required":
                 preferencias = conversa.normalizar(conf_wake.conversa)
                 ouvido = ativacao.tokens(texto)
-                perto, exame = ativacao.exame(
-                    ouvido, ativ.frase, ativacao.confianca_por_token(texto, confianca))
+                # Contra cada frase configurada; fica a que mais se parece, e é
+                # com ELA (e com a dica dela) que a segunda escuta confere.
+                perto, exame, frase_perto, dica_perto = ativacao.exame_entre(
+                    ouvido, ativ, ativacao.confianca_por_token(texto, confianca))
                 if (exame in ("confident", "unknown")
                         and preferencias["wake_second_listen_always"]):
                     # Quem ligou "conferir sempre" prefere o robô que às vezes
@@ -1012,11 +1101,11 @@ class GarraReachyMini(ReachyMiniApp):
                 conferencia = {"confident": "skipped_confident",
                                "unknown": "unknown_confidence"}.get(exame, "not_tried")
                 if exame == "unsure" and not (
-                        preferencias["wake_second_listen_enabled"] and ativ.dica):
+                        preferencias["wake_second_listen_enabled"] and dica_perto):
                     conferencia = "disabled"
                 elif exame == "unsure":
                     try:
-                        de_novo, _ = ouvir(audio, dica=ativ.dica)
+                        de_novo, _ = ouvir(audio, dica=dica_perto)
                     except Exception:
                         # Não conta em `_falhas_voz`: a primeira escuta deste
                         # mesmo áudio acabou de dar certo.
@@ -1025,7 +1114,7 @@ class GarraReachyMini(ReachyMiniApp):
                                     exc_info=True)
                     else:
                         conferencia = "rejected"
-                        if ativacao.confirma(de_novo, ativ.frase):
+                        if ativacao.confirma(de_novo, frase_perto):
                             segundo = ativacao.avaliar(
                                 de_novo, capturado_em, sessao_ativacao, ativ,
                                 time.monotonic())
@@ -1071,8 +1160,13 @@ class GarraReachyMini(ReachyMiniApp):
                     "voice.wake.activated", window_s=ativ.janela_s,
                     session_max_s=ativ.sessao_max_s,
                     match=veredicto.extras.get("wake_match", "exact"))
+                confirmar_ativacao(conf_wake.conversa)
             if veredicto.so_ativacao:
-                # "Fala Garra" sozinho: a sessão abriu e não há o que responder.
+                # "Fala Garra" sozinho: a sessão abriu e não há o que responder
+                # além do bipe e do gesto acima. Sem esvaziar o microfone, de
+                # propósito: quem ouviu o bipe já começa a falar, e esvaziar
+                # jogaria fora o começo do pedido. O bipe sozinho não vira
+                # trecho — tem menos som que `segmentador.ATIVO_MINIMO_S`.
                 gestos.ouvindo()
                 return
             texto = veredicto.texto
@@ -1187,6 +1281,7 @@ class GarraReachyMini(ReachyMiniApp):
                                                   pessoas=pessoas, situacao_casa=situacao_casa,
                                                   situacao_musica=situacao_musica)
             futuro = executor.submit(cerebro.perguntar, mensagem + complemento)
+            gestos.fase(fases.FASE_PROCESSANDO)
             # Música tocando no PC: abaixa enquanto o modelo pensa e o robô fala,
             # e devolve no fim do turno. Cortesia — falhar não muda nada.
             musica_baixa = (self._musica_tocando and conf_agora.conversa.get("music_voice_enabled") is True)
@@ -1263,6 +1358,8 @@ class GarraReachyMini(ReachyMiniApp):
                 resposta = esperar_cerebro(None)
 
             cerebro_ms = int((time.time() - t0) * 1000)
+            if not resposta.ok:
+                gestos.erro("agent_failed", str(resposta.erro or resposta.modo))
             decisao = coordenador.resolver_ack(turno)
             if decisao != "none":
                 log.debug("Turno %s: aviso %s.", turno.id, decisao)
@@ -1374,7 +1471,11 @@ class GarraReachyMini(ReachyMiniApp):
                         amostras.append(float(np.sqrt(np.mean(m ** 2))))
                     time.sleep(0.03)
                 ambiente = float(np.median(amostras)) if amostras else 0.003
-            detector = Segmentador(sr_in, piso_inicial=ambiente, limiar_fixo=cfg.limiar)
+            prefs_voz = conversa.normalizar(Config.carregar().conversa)
+            detector = Segmentador(
+                sr_in, piso_inicial=ambiente, limiar_fixo=cfg.limiar,
+                sensibilidade=conversa.ganho_do_microfone(prefs_voz["mic_sensitivity"]),
+                fim_de_fala_s=prefs_voz["vad_silence_ms"] / 1000.0)
             self._detector = detector
             log.info("Limiar de voz: %.4f (%s). Pode falar com o robô!",
                      detector.limiar_abre,
@@ -1395,9 +1496,39 @@ class GarraReachyMini(ReachyMiniApp):
 
             ultima_conferida = time.time()
 
+            def conferir_escuta(agora: float) -> None:
+                """Uma vez por segundo: o painel mudou algo que vale AGORA?
+
+                É o que faz o interruptor da escuta, a sensibilidade e as
+                preferências de fala valerem sem reiniciar o app, e o que leva a
+                tela de "ouvindo" a "aguardando a frase" quando a sessão expira
+                em silêncio.
+                """
+                if agora - escuta["conferida"] < 1.0:
+                    return
+                escuta["conferida"] = agora
+                conf_escuta = Config.carregar().conversa
+                escuta["ativacao"] = ativacao.Ativacao.de(conf_escuta)
+                prefs_voz = conversa.normalizar(conf_escuta)
+                detector.ajustar(
+                    sensibilidade=conversa.ganho_do_microfone(prefs_voz["mic_sensitivity"]),
+                    fim_de_fala_s=prefs_voz["vad_silence_ms"] / 1000.0)
+                if hasattr(voz, "preferir"):
+                    voz.preferir(prefs_voz)
+                ligada = prefs_voz["listening_enabled"]
+                if ligada != escuta["ligada"]:
+                    escuta["ligada"] = ligada
+                    self._aplicar_escuta(reachy_mini, ligada, log, controlador.eventos)
+                    detector.descartar()
+                    if ligada:
+                        drenar_mic(0.2)
+                if not detector.em_fala:
+                    gestos.atualizar_fase_de_escuta()
+
             while not stop_event.is_set():
                 mono = ler_mono()
                 agora = time.time()
+                conferir_escuta(agora)
 
                 if mono.size == 0:
                     trecho = detector.sem_audio(agora)
@@ -1468,6 +1599,8 @@ class GarraReachyMini(ReachyMiniApp):
                                 "voltando ao modo sem voz.", self._falhas_voz)
                     return
         finally:
+            gestos.fase_ao_ouvir = None
+            gestos.fase(fases.FASE_ESPERA, "voice_loop_stopped")
             # Primeiro a thread, depois o socket: fechar a sessão por baixo de
             # uma consulta em andamento faria o poll levantar antes de ver o
             # evento — ele trata, mas o log ficaria sujo à toa.

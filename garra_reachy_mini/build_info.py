@@ -86,6 +86,19 @@ CAPACIDADES: dict[str, bool] = {
     # Diagnóstico do gateway (GET /api/robot/diagnostico) e as cinco telas.
     "diagnostics": True,
     "panel_screens": True,
+    # 1.5.0 — a escuta que se explica.
+    # Mais de uma frase de ativação (`wake_phrase_alternatives`).
+    "wake_phrase_alternatives": True,
+    # Bipe e gesto quando a frase casa (`wake_ack_*`, `voice.wake.acknowledged`).
+    "wake_acknowledgement": True,
+    # `voice.phase` no barramento e `voice.phase/reason/last_error` no status:
+    # aguardando a frase, ouvindo, transcrevendo, processando, falando, em espera.
+    "voice_phase": True,
+    # Mestre da ESCUTA (`listening_enabled`): desligado, o microfone é liberado.
+    "listening_control": True,
+    # Sensibilidade do microfone, pausa de fim de fala, idioma, voz, velocidade
+    # e volume da fala (`mic_sensitivity`, `vad_silence_ms`, `speech_*`).
+    "speech_preferences": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

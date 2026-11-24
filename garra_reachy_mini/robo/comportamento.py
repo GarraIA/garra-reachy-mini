@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .acoes import PRIO_AMBIENTE
 
@@ -39,6 +39,23 @@ OUVINDO = "listening"
 PENSANDO = "thinking"
 FALANDO = "speaking"
 OCIOSO = "idle"
+
+# ── fase da voz ─────────────────────────────────────────────────────────────
+# Os quatro estados acima dirigem os GESTOS, e bastam para isso. A fase é o que
+# a tela mostra a quem pergunta "por que ele não responde?": mais fina, e com o
+# motivo quando o robô está parado. `offline` não aparece aqui de propósito — um
+# app fora do ar não tem como dizer que está fora do ar; quem conclui isso é o
+# painel, quando o status deixa de chegar.
+FASE_CONECTANDO = "connecting"          # o app subiu e ainda confere os serviços
+FASE_ESPERA = "standby"                 # sem escuta: voz desligada ou sem servidor
+FASE_AGUARDANDO_FRASE = "wake_listening"  # ouvindo só a frase de ativação
+FASE_OUVINDO = "listening"              # ouvindo a pessoa (sessão aberta)
+FASE_TRANSCREVENDO = "transcribing"
+FASE_PROCESSANDO = "processing"         # o agente está pensando
+FASE_FALANDO = "speaking"
+FASE_ERRO = "error"
+FASES = (FASE_CONECTANDO, FASE_ESPERA, FASE_AGUARDANDO_FRASE, FASE_OUVINDO,
+         FASE_TRANSCREVENDO, FASE_PROCESSANDO, FASE_FALANDO, FASE_ERRO)
 
 # Intervalo entre micro-movimentos enquanto ouve. Longo de propósito: o robô tem
 # de parecer atento, não inquieto.
@@ -68,6 +85,14 @@ class Comportamento:
         self.wobbling = wobbling
 
         self._estado = OCIOSO
+        self._fase = FASE_CONECTANDO
+        self._fase_motivo: str | None = None
+        self._fase_desde = time.time()
+        self._ultimo_erro: dict | None = None
+        # Quem sabe se o robô está esperando a frase ou já ouvindo a pessoa é o
+        # laço de voz (é ele o dono da sessão de ativação). Ele deixa aqui como
+        # perguntar; sem laço, "ouvindo" é só ouvindo.
+        self.fase_ao_ouvir: Callable[[], tuple[str, str | None]] | None = None
         self._lock = threading.Lock()
         self._parar = threading.Event()
         self._acordar = threading.Event()
@@ -100,22 +125,77 @@ class Comportamento:
 
     def ouvindo(self) -> None:
         self._mudar(OUVINDO)
+        self.atualizar_fase_de_escuta()
         if self.wobbling:
             self.ctrl.wobbling_pedir(False)
         self._gesto({"action": "move_antennas", "preset": "neutral", "duration": 0.4})
 
+    def ativado(self) -> None:
+        """A frase de ativação casou: as antenas sobem um instante.
+
+        Não muda o estado — quem ouviu a frase continua ouvindo. É só o sinal
+        físico de "ouvi você"; o `ouvindo()` ou o `pensando()` que vem a seguir
+        devolve as antenas ao lugar.
+        """
+        self._gesto({"action": "move_antennas", "preset": "up", "duration": 0.25})
+
+    def atualizar_fase_de_escuta(self) -> None:
+        """Esperando a frase, ou ouvindo a pessoa? Pergunta a quem sabe."""
+        provedor = self.fase_ao_ouvir
+        if provedor is None:
+            self.fase(FASE_OUVINDO)
+            return
+        try:
+            self.fase(*provedor())
+        except Exception:  # pragma: no cover - a tela não pode derrubar a voz
+            log.debug("fase de escuta indisponível", exc_info=True)
+
     def pensando(self) -> None:
         self._mudar(PENSANDO)
+        # O laço chama isto ao mandar o áudio ao STT; quando o pedido segue
+        # para o agente, ele mesmo avança a fase para `processing`.
+        self.fase(FASE_TRANSCREVENDO)
         if self.wobbling:
             self.ctrl.wobbling_pedir(False)
         self._gesto({"action": "move_antennas", "left": -0.6, "right": -0.6, "duration": 0.4})
 
     def falando(self) -> None:
         self._mudar(FALANDO)
+        self.fase(FASE_FALANDO)
         if self.wobbling:
             # Quem sincroniza com a fala é o daemon, que ouve o próprio
             # alto-falante. Nós só ligamos e saímos da frente.
             self.ctrl.wobbling_pedir(True)
+
+    # ── fase, para a tela ───────────────────────────────────────────────────
+    def fase(self, nova: str, motivo: str | None = None) -> None:
+        """Registra o que a voz está fazendo agora. Publica só quando muda."""
+        if nova not in FASES:
+            return
+        with self._lock:
+            if self._fase == nova and self._fase_motivo == motivo:
+                return
+            anterior = self._fase
+            self._fase, self._fase_motivo, self._fase_desde = nova, motivo, time.time()
+        self.ctrl.eventos.publicar("voice.phase", phase=nova, previous=anterior,
+                                   reason=motivo)
+
+    def erro(self, codigo: str, detalhe: str = "") -> None:
+        """Um tropeço da voz (STT, TTS, agente). Fica visível por um tempo.
+
+        Não prende a fase em `error`: o laço segue ouvindo, e a tela mostra o
+        último erro com a hora — que é o que responde "por que ele não falou?".
+        """
+        registro = {"code": codigo, "detail": detalhe[:160], "at": time.time()}
+        with self._lock:
+            self._ultimo_erro = registro
+        self.ctrl.eventos.publicar("voice.error", code=codigo, detail=detalhe[:160])
+
+    def estado_da_voz(self) -> dict:
+        with self._lock:
+            return {"phase": self._fase, "reason": self._fase_motivo,
+                    "since": self._fase_desde,
+                    "last_error": dict(self._ultimo_erro) if self._ultimo_erro else None}
 
     def _mudar(self, novo: str) -> None:
         with self._lock:

@@ -107,6 +107,8 @@ class ContextoWeb:
     # O que o detector de fala está medindo: piso de ruído, limiares e
     # contagens. Só números. `None` quando não há laço de voz de pé.
     detector: Callable[[], dict[str, Any] | None] | None = None
+    # A fase da voz (`robo.comportamento.Comportamento.estado_da_voz`).
+    fase: Callable[[], dict[str, Any]] | None = None
     dir_estatico: Path | None = None
     iniciado_em: float = field(default_factory=time.monotonic)
 
@@ -461,6 +463,13 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         dados.update(ctx.servicos.json())
         dados["voice"] = {"tts_disponivel": ctx.falar is not None,
                           "detector": _medida_do_detector(ctx)}
+        # A fase da voz e o último tropeço: o que a tela mostra para responder
+        # "o que ele está fazendo?" e "por que não respondeu?".
+        if ctx.fase is not None:
+            try:
+                dados["voice"].update(ctx.fase())
+            except Exception:  # pragma: no cover
+                pass
         # Descritores abertos AGORA. O monitor de fora consulta esta rota a
         # cada poucos segundos, então a série fica gravada junto com cada
         # captura de falha — o que faltou quando o app morreu com -5 e só

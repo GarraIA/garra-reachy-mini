@@ -47,6 +47,29 @@ TOLERANCIA_MIN_LETRAS = 8
 _FAIXAS = ((1.0, "0-1s"), (3.0, "1-3s"), (10.0, "3-10s"))
 
 
+def bipe(sr: int, volume: float = 0.22):
+    """O "ouvi" do robô: duas notas curtas subindo, ~0,2 s, sem TTS.
+
+    Gerado aqui, e não sintetizado: tem de sair na hora em que a frase casa,
+    com o servidor de voz ocupado ou não. Sobe (lá → mi) porque subir é o que
+    soa como "pode falar"; as bordas são suavizadas para não estalar.
+    """
+    import numpy as np
+
+    partes = []
+    for frequencia in (880.0, 1318.5):
+        n = int(sr * 0.085)
+        t = np.arange(n, dtype=np.float32) / float(sr)
+        nota = np.sin(2.0 * np.pi * frequencia * t)
+        rampa = min(n // 4, int(sr * 0.012)) or 1
+        envelope = np.ones(n, dtype=np.float32)
+        envelope[:rampa] = np.linspace(0.0, 1.0, rampa, dtype=np.float32)
+        envelope[-rampa:] = np.linspace(1.0, 0.0, rampa, dtype=np.float32)
+        partes.append((nota * envelope).astype(np.float32))
+        partes.append(np.zeros(int(sr * 0.02), dtype=np.float32))
+    return (np.concatenate(partes) * float(volume)).astype(np.float32)
+
+
 def faixa_de_duracao(segundos: float | None) -> str:
     """A faixa, nunca o valor exato."""
     if segundos is None or segundos < 0:
@@ -67,6 +90,12 @@ def tokens(texto: str) -> list[str]:
     return n.split() if n else []
 
 
+def _dica_de(texto: Any) -> str:
+    """A frase como foi escrita, só com as palavras — o que a segunda escuta
+    entrega ao STT, com caixa e acento, porque é assim que ele a escreveria."""
+    return " ".join(re.findall(r"[^\W_]+", str(texto or "")))
+
+
 @dataclass(frozen=True)
 class Ativacao:
     """A configuração já resolvida. Congelada: é decisão, não estado."""
@@ -79,18 +108,35 @@ class Ativacao:
     # segunda escuta entrega ao STT — com caixa e acento, porque é assim que
     # ele a escreveria. Não entra em `assinatura`: `frase` já entra.
     dica: str = ""
+    # As OUTRAS frases que também chamam o robô — cada uma com a sua dica. A
+    # principal continua em `frase`/`dica`: é ela que o painel mostra primeiro e
+    # que todo o código anterior a isto conhece.
+    alternativas: tuple[tuple[tuple[str, ...], str], ...] = ()
 
     @classmethod
     def de(cls, conf: dict[str, Any]) -> "Ativacao":
         from . import conversa
         c = conversa.normalizar(conf)
+        principal = tuple(tokens(c["wake_phrase_text"]))
+        outras = []
+        for texto in c.get("wake_phrase_alternatives") or ():
+            frase = tuple(tokens(texto))
+            if frase and frase != principal and all(frase != f for f, _ in outras):
+                outras.append((frase, _dica_de(texto)))
         return cls(
             habilitada=bool(c["wake_phrase_enabled"]),
-            frase=tuple(tokens(c["wake_phrase_text"])),
+            frase=principal,
             janela_s=float(c["wake_phrase_window_s"]),
             sessao_max_s=float(c["wake_phrase_session_max_s"]),
-            dica=" ".join(re.findall(r"[^\W_]+", str(c["wake_phrase_text"]))),
+            dica=_dica_de(c["wake_phrase_text"]),
+            alternativas=tuple(outras),
         )
+
+    @property
+    def frases(self) -> tuple[tuple[tuple[str, ...], str], ...]:
+        """Todas as frases que chamam o robô, a principal primeiro: `(tokens, dica)`."""
+        principal = ((self.frase, self.dica),) if self.frase else ()
+        return principal + self.alternativas
 
     @property
     def assinatura(self) -> tuple:
@@ -100,7 +146,8 @@ class Ativacao:
         dentro de uma janela que ele já não consegue prever. Comparar isto na
         avaliação seguinte fecha a sessão sem observador, callback ou task.
         """
-        return (self.habilitada, self.frase, self.janela_s, self.sessao_max_s)
+        return (self.habilitada, self.frase, self.janela_s, self.sessao_max_s,
+                tuple(f for f, _ in self.alternativas))
 
 
 @dataclass
@@ -402,6 +449,44 @@ def exame(ouvido: list[str], frase: tuple[str, ...],
     return perto, "unsure" if menor < SEGUNDA_ESCUTA_CONFIANCA_MAX else "confident"
 
 
+def casar_alguma(ouvido: list[str], ativacao: Ativacao) -> tuple[int, str]:
+    """`_casar` contra cada frase configurada; vale a que consome MAIS tokens.
+
+    A mais longa, e não a primeira: com "Garra" e "Fala Garra" configuradas,
+    "Fala Garra, que horas são?" tem de perder as duas palavras, não uma.
+    """
+    melhor: tuple[int, str] = (0, "")
+    for frase, _ in ativacao.frases:
+        achado = _casar(ouvido, frase)
+        if achado[0] > melhor[0]:
+            melhor = achado
+    return melhor
+
+
+# Qual resultado de `exame` vale mais quando há várias frases. "unsure" é o
+# único que leva à segunda escuta, então ganha de todos.
+_ORDEM_EXAME = {"unsure": 0, "confident": 1, "unknown": 2, "elsewhere": 3, "none": 4}
+
+
+def exame_entre(ouvido: list[str], ativacao: Ativacao, confianca: Any
+                ) -> tuple[dict[str, Any] | None, str, tuple[str, ...], str]:
+    """`exame` contra cada frase configurada: `(trecho, motivo, frase, dica)`.
+
+    Fica o resultado que mais merece atenção e, no empate, o trecho mais
+    parecido. `frase` e `dica` são as da frase escolhida — é com elas que a
+    segunda escuta pergunta de novo e confere a resposta.
+    """
+    melhor = None
+    for frase, dica in ativacao.frases:
+        perto, motivo = exame(ouvido, frase, confianca)
+        chave = (_ORDEM_EXAME.get(motivo, 9), perto["distance"] if perto else 99)
+        if melhor is None or chave < melhor[0]:
+            melhor = (chave, perto, motivo, frase, dica)
+    if melhor is None:
+        return None, "none", (), ""
+    return melhor[1], melhor[2], melhor[3], melhor[4]
+
+
 def avaliar(texto: str, capturado_em: float, sessao: Sessao, ativacao: Ativacao,
             agora: float, e_stop: bool = False) -> Decisao:
     """O enunciado passa? E, se passa, com que texto?
@@ -423,7 +508,7 @@ def avaliar(texto: str, capturado_em: float, sessao: Sessao, ativacao: Ativacao,
                        estado_sessao="open" if sessao.aberta(agora, ativacao)
                        else "closed")
 
-    quantos, casamento = _casar(tokens(texto), ativacao.frase)
+    quantos, casamento = casar_alguma(tokens(texto), ativacao)
 
     if quantos:
         # Eco: o robô acabou de falar e o microfone pegou a própria voz. Não

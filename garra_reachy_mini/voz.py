@@ -95,6 +95,26 @@ class VozClient:
         # 0.0.0.0 sem isso entregaria a GPU a qualquer aparelho da LAN. No
         # loopback ele não pede, então token vazio continua funcionando.
         self._cab = {"Authorization": f"Bearer {token}"} if token else {}
+        # Preferências de fala do dono. Só vão na requisição quando diferem do
+        # padrão: um servidor de voz antigo não conhece os campos, e mandá-los
+        # sempre mudaria o que ele recebe sem ninguém ter pedido nada.
+        self.idioma = "pt"
+        self.voz = ""
+        self.velocidade = 1.0
+        self.volume = 1.0
+
+    def preferir(self, conversa: dict) -> None:
+        """Aplica o bloco `conversation` já normalizado. Barato: só atributos."""
+        self.idioma = str(conversa.get("speech_language") or "pt")
+        self.voz = str(conversa.get("speech_voice") or "")
+        self.velocidade = float(conversa.get("speech_rate_pct") or 100) / 100.0
+        self.volume = float(conversa.get("speech_volume_pct") or 100) / 100.0
+
+    def vozes(self, timeout: float = 5.0) -> dict:
+        """O que o servidor de voz oferece: motores, vozes, idiomas, velocidade."""
+        r = requests.get(f"{self.base}/vozes", timeout=timeout, headers=self._cab)
+        r.raise_for_status()
+        return r.json()
 
     def saude(self, timeout: float = 5.0) -> dict:
         r = requests.get(f"{self.base}/saude", timeout=timeout)
@@ -127,6 +147,8 @@ class VozClient:
         params: dict[str, int | str] = {"sr": sr}
         if dica:
             params["dica"] = dica
+        if self.idioma != "pt":
+            params["idioma"] = self.idioma
         r = requests.post(
             f"{self.base}/transcrever", params=params,
             data=audio.astype(np.float32).tobytes(), timeout=60,
@@ -145,7 +167,19 @@ class VozClient:
         return self.ouvir(audio, sr, dica=dica).texto
 
     def falar(self, texto: str, sr: int) -> np.ndarray:
-        r = requests.post(f"{self.base}/falar", json={"texto": texto, "sr": sr},
+        corpo: dict[str, int | float | str] = {"texto": texto, "sr": sr}
+        if self.idioma != "pt":
+            corpo["idioma"] = self.idioma
+        if self.voz:
+            corpo["voz"] = self.voz
+        if abs(self.velocidade - 1.0) > 0.01:
+            corpo["velocidade"] = round(self.velocidade, 2)
+        r = requests.post(f"{self.base}/falar", json=corpo,
                           timeout=120, headers=self._cab)
         r.raise_for_status()
-        return np.frombuffer(r.content, dtype=np.float32)
+        onda = np.frombuffer(r.content, dtype=np.float32)
+        if self.volume < 0.995:
+            # O volume é do robô, não do servidor: a mesma voz serve a mais de
+            # um aparelho, e cada um fala no volume que o dono dele escolheu.
+            onda = (onda * self.volume).astype(np.float32)
+        return onda

@@ -359,16 +359,21 @@ def test_a_sessao_nao_guarda_recurso_nenhum() -> None:
 # ─── configuração ────────────────────────────────────────────────────────────
 def test_padroes_da_wake_phrase() -> None:
     c = conversa.normalizar({})
-    assert c["wake_phrase_enabled"] is False, "ligar muda como se fala com o robô"
+    # Do 1.5.0 em diante a instalação nova nasce chamando pelo nome: robô de voz
+    # que responde a tudo o que se diz na sala é o pior primeiro contato.
+    assert c["wake_phrase_enabled"] is True
     assert c["wake_phrase_text"] == "Fala Garra"
+    assert c["wake_phrase_alternatives"] == []
     assert c["wake_phrase_window_s"] == 15
     assert c["wake_phrase_session_max_s"] == 90
 
 
 def test_config_antigo_recebe_os_padroes_sem_quebrar() -> None:
     c = conversa.normalizar({"mode": "informative", "revision": 7})
-    assert c["wake_phrase_enabled"] is False
+    assert c["wake_phrase_enabled"] is True      # chave ausente → padrão novo
     assert c["revision"] == 7 and c["mode"] == "informative"
+    # Quem já tinha escolhido fica como estava, ligado ou desligado.
+    assert conversa.normalizar({"wake_phrase_enabled": False})["wake_phrase_enabled"] is False
 
 
 @pytest.mark.parametrize("ruim", ["", "   ", "!!!", "...", "  ,  "])
@@ -514,8 +519,18 @@ def test_toda_chave_do_padrao_sobrevive_a_escrita_pelo_painel() -> None:
         "spoken_acknowledgements_enabled": True,
         "spoken_progress_updates": True,
         "announce_tool_usage": True,
-        "wake_phrase_enabled": True,
+        "wake_phrase_enabled": False,
         "wake_phrase_text": "Ei Robô",
+        "wake_phrase_alternatives": ["Olá robô", "Garra, escuta"],
+        "wake_ack_sound_enabled": False,
+        "wake_ack_motion_enabled": False,
+        "listening_enabled": False,
+        "mic_sensitivity": 8,
+        "vad_silence_ms": 1200,
+        "speech_language": "en",
+        "speech_voice": "clara",
+        "speech_rate_pct": 115,
+        "speech_volume_pct": 60,
         "wake_phrase_window_s": 42,
         "wake_phrase_session_max_s": 300,
         "wake_second_listen_enabled": False,

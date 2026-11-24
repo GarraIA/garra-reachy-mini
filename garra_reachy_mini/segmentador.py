@@ -64,6 +64,11 @@ TAU_SOBE_S = 2.0
 # o laço esteve ocupado transcrevendo ou falando.
 VAO_S = 1.0
 PISO_PADRAO = 0.0015
+# Faixas do que o dono pode ajustar. Fora delas o detector deixa de ser um
+# detector: com ganho 4 o ruído do próprio motor abre trecho, e com 0,25 só
+# grito abre.
+SENSIBILIDADE_MIN, SENSIBILIDADE_MAX = 0.4, 2.5
+FIM_DE_FALA_MIN_S, FIM_DE_FALA_MAX_S = 0.3, 2.5
 
 
 @dataclass
@@ -85,9 +90,13 @@ class Segmentador:
     """Recebe o microfone em blocos e devolve os trechos de fala."""
 
     def __init__(self, sr: int, *, piso_inicial: float | None = None,
-                 limiar_fixo: float | None = None) -> None:
+                 limiar_fixo: float | None = None, sensibilidade: float = 1.0,
+                 fim_de_fala_s: float = FIM_DE_FALA_S) -> None:
         self.sr = int(sr)
         self._fixo = float(limiar_fixo) if limiar_fixo is not None else None
+        self._ganho = 1.0
+        self._fim_de_fala_s = FIM_DE_FALA_S
+        self.ajustar(sensibilidade=sensibilidade, fim_de_fala_s=fim_de_fala_s)
         self._piso = float(piso_inicial) if piso_inicial else PISO_PADRAO
         # (duração, rms) dos últimos JANELA_PISO_S de áudio.
         self._janela: deque[tuple[float, float]] = deque()
@@ -105,12 +114,28 @@ class Segmentador:
         self._curtos = 0
         self._cortados = 0
 
+    # ── ajuste do dono ───────────────────────────────────────────────────────
+    def ajustar(self, *, sensibilidade: float | None = None,
+                fim_de_fala_s: float | None = None) -> None:
+        """Sensibilidade do microfone e a pausa que encerra a fala, a quente.
+
+        `sensibilidade` divide os limiares: 2.0 abre com metade do som (ouve
+        quem fala baixo ou longe, e mais ruído também); 0.5 pede o dobro. Não
+        mexe no piso — o ruído da sala é medido, não escolhido. `fim_de_fala_s`
+        é quanto silêncio encerra o trecho: curto corta quem pausa para pensar,
+        longo atrasa toda resposta.
+        """
+        if sensibilidade is not None:
+            self._ganho = min(SENSIBILIDADE_MAX, max(SENSIBILIDADE_MIN, float(sensibilidade)))
+        if fim_de_fala_s is not None:
+            self._fim_de_fala_s = min(FIM_DE_FALA_MAX_S, max(FIM_DE_FALA_MIN_S, float(fim_de_fala_s)))
+
     # ── limiares ─────────────────────────────────────────────────────────────
     @property
     def limiar_abre(self) -> float:
         if self._fixo is not None:
             return self._fixo
-        return max(LIMIAR_MINIMO, K_ABRE * self._piso)
+        return max(LIMIAR_MINIMO, K_ABRE * self._piso) / self._ganho
 
     @property
     def limiar_fecha(self) -> float:
@@ -170,7 +195,7 @@ class Segmentador:
     def sem_audio(self, agora: float) -> Trecho | None:
         """O microfone não tinha nada para entregar."""
         if (self.em_fala and self._ultimo_bloco_em is not None
-                and agora - self._ultimo_bloco_em > FIM_DE_FALA_S):
+                and agora - self._ultimo_bloco_em > self._fim_de_fala_s):
             return self._fechar("no_audio")
         return None
 
@@ -187,7 +212,7 @@ class Segmentador:
         if self._duracao >= FALA_MAXIMA_S:
             self._cortados += 1
             return self._fechar("max_duration")
-        if self._calado > FIM_DE_FALA_S:
+        if self._calado > self._fim_de_fala_s:
             return self._fechar("silence")
         return None
 

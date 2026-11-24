@@ -106,9 +106,27 @@ class Cerebro:
 
 
 class Gestos:
-    def ouvindo(self) -> None: pass
-    def pensando(self) -> None: pass
-    def falando(self) -> None: pass
+    """O `Comportamento` sem robô: guarda o que o laço pediu, para o teste ler."""
+
+    def __init__(self) -> None:
+        self.fases: list[tuple[str, str | None]] = []
+        self.erros: list[str] = []
+        self.ativacoes = 0
+        self.fase_ao_ouvir = None
+
+    def ouvindo(self) -> None: self.atualizar_fase_de_escuta()
+    def pensando(self) -> None: self.fase("transcribing")
+    def falando(self) -> None: self.fase("speaking")
+    def ativado(self) -> None: self.ativacoes += 1
+    def erro(self, codigo: str, detalhe: str = "") -> None: self.erros.append(codigo)
+
+    def fase(self, nova: str, motivo: str | None = None) -> None:
+        if not self.fases or self.fases[-1] != (nova, motivo):
+            self.fases.append((nova, motivo))
+
+    def atualizar_fase_de_escuta(self) -> None:
+        if self.fase_ao_ouvir is not None:
+            self.fase(*self.fase_ao_ouvir())
 
 
 class Cena:
