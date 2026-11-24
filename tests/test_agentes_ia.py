@@ -385,8 +385,9 @@ def test_comando_sem_sessao_reenvia_o_historico(tmp_path) -> None:
 # ─── servidor HTTP ───────────────────────────────────────────────────────────
 @pytest.mark.parametrize("url, vale", [
     ("http://10.0.0.24:1234", True), ("http://192.168.1.5:8080/v1", True),
-    ("http://172.20.1.1:80", True), ("http://servidor.local:8000", True),
-    ("http://[fd00::1]:8000", True),
+    ("http://172.20.1.1:80", True), ("http://[fd00::1]:8000", True),
+    # Nome se resolve a cada chamada, e no mDNS responde quem quiser: só número.
+    ("http://servidor.local:8000", False),
     ("https://api.openai.com", False), ("http://8.8.8.8:80", False),
     ("ftp://127.0.0.1", False), ("http://evil.local.exemplo.com", False),
     # Achado alto da revisão (SSRF): este computador não se cadastra pela rede…
@@ -414,7 +415,7 @@ def test_pela_rede_so_entra_servidor_da_casa(url, vale) -> None:
 
 @pytest.mark.parametrize("url, vale", [
     ("http://127.0.0.1:11434", True), ("http://localhost:1234", True), ("http://[::1]:8000", True),
-    ("https://api.exemplo.com", True),
+    ("https://api.exemplo.com", True), ("http://servidor.local:8000", True),
     ("http://127.0.0.1:8125/api/voice/stop#", False), ("https://api.exemplo.com/v2?x=1", False),
     ("https://u:p@api.exemplo.com", False), ("http://8.8.8.8:80", False),
 ])

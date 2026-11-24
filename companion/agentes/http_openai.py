@@ -65,7 +65,10 @@ def endereco_da_casa(url: str, *, local: bool = True) -> bool:
     if nome == "localhost":
         return local
     if nome.endswith(".local"):
-        return True
+        # Um nome é resolvido a cada chamada, e quem responde ao mDNS é
+        # qualquer aparelho da rede: aceito hoje apontando para a casa, amanhã
+        # ele aponta para 127.0.0.1. Pela rede, só número; nome, só o dono.
+        return local
     try:
         ip = ipaddress.ip_address(nome)
     except ValueError:
@@ -91,8 +94,9 @@ def validar(definicao: Any, *, local: bool = False) -> dict[str, Any]:
     # Um servidor de fora da casa (https) só o dono cadastra, neste computador.
     de_fora = local and base.startswith("https://") and _so_host(base)
     if not (endereco_da_casa(base, local=local) or de_fora):
-        raise recusa("base_url: só `http(s)://host:porta`, de rede privada ou `.local`"
-                     + ("" if local else " (este computador só se cadastra nele mesmo)"))
+        raise recusa("base_url: só `http(s)://host:porta`, de rede privada"
+                     + (" ou `.local`" if local else
+                        " e pelo número IP (nome, e este computador, só nele mesmo)"))
     modelo = str(definicao.get("model") or "").strip()
     if modelo and not _MODELO.fullmatch(modelo):
         raise recusa("model: nome de modelo inválido")

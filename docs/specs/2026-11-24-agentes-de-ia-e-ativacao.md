@@ -105,10 +105,10 @@ qualquer pessoa na sala.
 - **Pela rede só se faz o que não afrouxa nada.** As rotas `/api/agentes*` ficam
   atrás do token que o robô guarda, e o painel do robô não pede senha. Por elas:
   escolher, testar, opção segura, servidor HTTP **de outro aparelho da casa**
-  (rede privada ou `.local`). Só **neste computador** (`python -m
+  (rede privada, pelo número IP). Só **neste computador** (`python -m
   companion.agentes`, ou o arquivo `agentes.json`): receita de linha de comando,
-  nível "completo" de ferramentas, servidor deste próprio computador (loopback)
-  ou de fora da casa, credencial, e pôr em uso — como ativo ou reserva — um
+  nível "completo" de ferramentas, servidor deste próprio computador (loopback),
+  por nome (`.local`) ou de fora da casa, credencial, e pôr em uso — como ativo ou reserva — um
   agente sem restrição de ferramentas.
 - **O que é do dono, a rede não troca.** Cada agente cadastrado guarda de onde
   veio (`origin`). Pela rede só se substitui ou remove o que a rede criou, e
