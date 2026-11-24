@@ -30,6 +30,8 @@
     <span class="pill" id="p-conexao"><span class="status-dot offline"></span> <span data-i18n="pill.conectando"></span></span>
     <span class="pill" id="p-modo" data-i18n="pill.modo"></span>
     <span class="pill" id="p-estado" data-i18n="pill.ocioso"></span>
+    <!-- O que o robô está fazendo AGORA com a voz — e, parado, por quê. -->
+    <span class="pill" id="p-voz" data-i18n="fase.connecting"></span>
     <span class="pill" id="p-camera"><span class="status-dot offline"></span> <span data-i18n="pill.camera"></span></span>
     <span class="pill" id="p-eventos"><span class="status-dot offline"></span> <span data-i18n="pill.eventos"></span></span>
   </div>
@@ -332,12 +334,77 @@
 <!-- ═══ AJUSTES ══════════════════════════════════════════════════════════════ -->
 <section class="tela" id="tela-ajustes" data-tela="ajustes" hidden>
   <div class="atalhos" role="navigation" data-i18n-aria-label="atalhos.rotulo" aria-label="">
+    <button data-ir="agente-ia-bloco" data-i18n="agenteia.titulo"></button>
+    <button data-ir="robo-bloco" data-i18n="robo.titulo"></button>
     <button data-ir="conversa-bloco" data-i18n="conversa.titulo"></button>
     <button data-ir="visao-bloco" data-i18n="visao.titulo"></button>
     <button data-ir="familia-bloco" data-i18n="familia.titulo"></button>
     <button data-ir="diagnostico-bloco" data-i18n="atalhos.diagnostico"></button>
     <button data-ir="logs" data-i18n="logs.titulo"></button>
   </div>
+
+  <!-- ── agente de IA ────────────────────────────────────────────────────────
+       Quem RESPONDE ao robô. Independente do nome do robô e da frase de
+       ativação: dá para chamar "Fala Garra" e quem pensa ser o Hermes. A
+       escolha mora no computador; aqui é o controle remoto dela. -->
+  <section class="card glass-panel largo" id="agente-ia-bloco" hidden>
+    <h2><span data-i18n="agenteia.titulo"></span> <span class="pill" id="p-agente-ia">—</span></h2>
+    <div class="dica" data-i18n="agenteia.dica"></div>
+    <div class="lista-itens" id="agente-ia-lista"></div>
+    <div class="campo">
+      <label for="agente-ia-reserva" data-i18n="agenteia.reserva"></label>
+      <select id="agente-ia-reserva"></select>
+    </div>
+    <div class="dica" data-i18n="agenteia.reserva_dica"></div>
+    <div class="linha">
+      <button id="btn-agente-ia-descobrir" data-i18n="agenteia.descobrir"></button>
+    </div>
+    <div class="resultado" id="agente-ia-resultado" hidden></div>
+    <hr class="divisor">
+    <details id="agente-ia-novo">
+      <summary data-i18n="agenteia.novo_titulo"></summary>
+      <div class="dica" data-i18n="agenteia.novo_dica"></div>
+      <div class="campo"><label for="agente-ia-novo-nome" data-i18n="agenteia.novo_nome"></label>
+        <input type="text" id="agente-ia-novo-nome" maxlength="40" autocomplete="off" spellcheck="false"></div>
+      <div class="campo"><label for="agente-ia-novo-url" data-i18n="agenteia.novo_url"></label>
+        <input type="url" id="agente-ia-novo-url" maxlength="200" autocomplete="off" spellcheck="false"
+               placeholder="http://127.0.0.1:1234"></div>
+      <div class="campo"><label for="agente-ia-novo-modelo" data-i18n="agenteia.novo_modelo"></label>
+        <input type="text" id="agente-ia-novo-modelo" maxlength="120" autocomplete="off" spellcheck="false"></div>
+      <div class="linha"><button id="btn-agente-ia-adicionar" data-i18n="agenteia.adicionar"></button></div>
+      <div class="dica" data-i18n="agenteia.comando_dica"></div>
+    </details>
+  </section>
+
+  <!-- ── o robô ──────────────────────────────────────────────────────────────── -->
+  <section class="card glass-panel" id="robo-bloco">
+    <h2><span data-i18n="robo.titulo"></span> <span class="pill" id="p-robo">—</span></h2>
+    <div class="status-lista" id="robo-estado"></div>
+    <div class="linha">
+      <button id="btn-robo-atualizacao" data-i18n="robo.conferir"></button>
+      <button id="btn-robo-nome" data-ir="identidade-bloco" data-i18n="robo.mudar_nome"></button>
+    </div>
+    <div class="resultado" id="robo-resultado" hidden></div>
+    <hr class="divisor">
+    <label class="caixa"><input type="checkbox" id="robo-movimento">
+      <span data-i18n="robo.movimento"></span></label>
+    <div class="dica" data-i18n="robo.movimento_dica"></div>
+    <label class="caixa"><input type="checkbox" id="robo-olhar">
+      <span data-i18n="robo.olhar"></span></label>
+    <label class="caixa"><input type="checkbox" id="robo-balanco">
+      <span data-i18n="robo.balanco"></span></label>
+    <hr class="divisor">
+    <div class="status-lista" id="robo-audio"></div>
+    <div class="controle-slider">
+      <label for="robo-volume"><span data-i18n="robo.volume"></span> <b id="v-robo-volume">—</b></label>
+      <input type="range" id="robo-volume" min="0" max="100" step="5">
+    </div>
+    <div class="controle-slider">
+      <label for="robo-ganho"><span data-i18n="robo.ganho"></span> <b id="v-robo-ganho">—</b></label>
+      <input type="range" id="robo-ganho" min="0" max="100" step="5">
+    </div>
+    <div class="dica" data-i18n="robo.audio_dica"></div>
+  </section>
 
   <!-- ── ritmo da conversa ───────────────────────────────────────────────── -->
   <section class="card glass-panel" id="conversa-bloco">
@@ -355,6 +422,12 @@
       <span data-i18n="conversa.saida"></span>
     </label>
     <div class="dica" data-i18n="conversa.saida_dica"></div>
+    <!-- O mestre da ESCUTA. Desligado, o microfone é liberado de verdade. -->
+    <label class="caixa" id="linha-conversa-escuta">
+      <input type="checkbox" id="conversa-escuta">
+      <span data-i18n="conversa.escuta"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.escuta_dica"></div>
     <label class="caixa" id="linha-conversa-mestre" data-conversa-saida-sub="1">
       <input type="checkbox" id="conversa-mestre">
       <span data-i18n="conversa.mestre"></span>
@@ -413,6 +486,21 @@
       <input type="text" id="conversa-wake-texto" maxlength="64"
              autocomplete="off" spellcheck="false">
     </div>
+    <div class="campo" data-conversa-wake-sub="1">
+      <label for="conversa-wake-outras" data-i18n="conversa.wake_outras"></label>
+      <textarea id="conversa-wake-outras" rows="3" maxlength="300"
+                autocomplete="off" spellcheck="false"></textarea>
+    </div>
+    <div class="dica" data-i18n="conversa.wake_outras_dica"></div>
+    <label class="caixa" id="linha-conversa-wake-bipe" data-conversa-wake-sub="1">
+      <input type="checkbox" id="conversa-wake-bipe">
+      <span data-i18n="conversa.wake_bipe"></span>
+    </label>
+    <label class="caixa" id="linha-conversa-wake-gesto" data-conversa-wake-sub="1">
+      <input type="checkbox" id="conversa-wake-gesto">
+      <span data-i18n="conversa.wake_gesto"></span>
+    </label>
+    <div class="dica" data-i18n="conversa.wake_ouvi_dica"></div>
     <div class="linha" data-conversa-wake-sub="1">
       <label for="conversa-wake-janela"><span data-i18n="conversa.wake_janela"></span>
         <b id="v-conversa-wake-janela">—</b></label>
@@ -481,6 +569,40 @@
     <!-- A linha do botão abre AQUI. Ela abria antes da frase de ativação e
          engolia tudo até o fim: o divisor e a caixa do caderno saíam na mesma
          linha do botão de esquecer. -->
+    <!-- Microfone e fala: o que se ajusta sem trocar de agente nem de frase. -->
+    <hr class="divisor">
+    <h3 data-i18n="voz.titulo"></h3>
+    <div class="controle-slider">
+      <label for="voz-sensibilidade"><span data-i18n="voz.sensibilidade"></span>
+        <b id="v-voz-sensibilidade">—</b></label>
+      <input type="range" id="voz-sensibilidade" min="1" max="10" step="1">
+    </div>
+    <div class="dica" data-i18n="voz.sensibilidade_dica"></div>
+    <div class="controle-slider">
+      <label for="voz-pausa"><span data-i18n="voz.pausa"></span> <b id="v-voz-pausa">—</b></label>
+      <input type="range" id="voz-pausa" min="300" max="2500" step="100">
+    </div>
+    <div class="dica" data-i18n="voz.pausa_dica"></div>
+    <div class="campo"><label for="voz-idioma" data-i18n="voz.idioma"></label>
+      <select id="voz-idioma"></select></div>
+    <div class="campo"><label for="voz-voz" data-i18n="voz.voz"></label>
+      <select id="voz-voz"></select></div>
+    <div class="dica" id="voz-voz-dica" data-i18n="voz.voz_dica"></div>
+    <div class="controle-slider">
+      <label for="voz-velocidade"><span data-i18n="voz.velocidade"></span>
+        <b id="v-voz-velocidade">—</b></label>
+      <input type="range" id="voz-velocidade" min="70" max="140" step="5">
+    </div>
+    <div class="controle-slider">
+      <label for="voz-volume"><span data-i18n="voz.volume"></span> <b id="v-voz-volume">—</b></label>
+      <input type="range" id="voz-volume" min="10" max="100" step="5">
+    </div>
+    <div class="grade-botoes">
+      <button id="btn-voz-testar-escuta" data-i18n="voz.testar_escuta"></button>
+      <button id="btn-voz-testar-fala" data-i18n="voz.testar_fala"></button>
+      <button id="btn-voz-testar-som" data-i18n="voz.testar_som"></button>
+    </div>
+    <div class="resultado" id="voz-resultado" hidden></div>
     <div class="linha" style="margin-top:10px">
     <button id="btn-conversa-salvar" class="primario" data-i18n="conversa.salvar"></button>
 

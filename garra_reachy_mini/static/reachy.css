@@ -632,3 +632,19 @@ hr.divisor { border: 0; border-top: 1px solid var(--garra-border); margin: 12px 
 .agora { display: grid; gap: 2px; font-size: 0.88rem; }
 .agora .faixa { font-weight: 700; font-size: 1rem; }
 .agora .onde { color: var(--garra-muted-2); font-size: 0.78rem; }
+
+/* ── 1.5.0: agente de IA, robô, microfone e fala ─────────────────────────── */
+/* O resultado de um teste diz se deu certo pela borda, não só pelo texto. */
+.resultado.ok   { border-color: rgba(32, 232, 135, 0.45); }
+.resultado.erro { border-color: rgba(255, 92, 122, 0.5); }
+/* Um agente por linha: nome e emblemas em cima, opções e botões embaixo. */
+.item.agente-ia { display: grid; gap: 8px; align-items: start; }
+.item.agente-ia .linha { margin: 0; gap: 6px; flex-wrap: wrap; align-items: center; }
+.item.agente-ia .dica { margin: 0; overflow-wrap: anywhere; }
+.item.agente-ia .campo { margin: 0; }
+.card h3 { font-size: 0.92rem; margin: 4px 0 10px; color: var(--garra-text); }
+.card details > summary {
+  cursor: pointer; font-weight: 600; font-size: 0.88rem;
+  padding: 6px 0; color: var(--garra-accent);
+}
+.card details[open] > summary { margin-bottom: 8px; }

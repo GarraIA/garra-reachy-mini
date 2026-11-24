@@ -56,6 +56,7 @@ from . import servicos as servicos_mod
 from . import casa, familia, musica, musica_pedido, relogio, visao
 from .segmentador import Segmentador
 from .servicos import Servicos
+from .sistema import Sistema
 from .voz import VozClient, frases, limpar_para_voz
 from .web import (ContextoWeb, FrameHub, PonteChat, montar, preparar,
                   resolver_politica)
@@ -185,6 +186,8 @@ class GarraReachyMini(ReachyMiniApp):
         self.servicos = Servicos()
         self._midia_ligada = False
         self._gravando = False
+        self._sonda_escuta: dict | None = None
+        self._trava_sonda = threading.Lock()
         # Configuração nova não pode esperar o backoff de falha (até 60 s): quem
         # aperta "Configure or reconnect Reachy" no console quer ver o resultado
         # agora. `POST /api/config` levanta isto e o supervisor reavalia na hora.
@@ -424,6 +427,12 @@ class GarraReachyMini(ReachyMiniApp):
                 atender_musica=self._atender_musica_do_chat,
                 detector=self.medida_do_detector,
                 fase=self.comportamento.estado_da_voz if self.comportamento else None,
+                acordar=self._reavaliar_cerebro,
+                sistema=Sistema(cfg.robo_api),
+                jeito=self._jeito,
+                ajustar_jeito=self._ajustar_jeito,
+                vozes=lambda: VozClient(*self._voz_atual()).vozes(),
+                sondar_escuta=self._sondar_escuta,
                 dir_estatico=Path(__file__).resolve().parent / "static",
             ),
         )
@@ -431,6 +440,65 @@ class GarraReachyMini(ReachyMiniApp):
             "Painel do Reachy em %s/reachy — API em %s/api/robot",
             self.politica.url_visivel, self.politica.url_visivel,
         )
+
+    def _reavaliar_cerebro(self) -> None:
+        """O agente mudou no computador: atualiza a faixa do painel já.
+
+        Numa thread, e sem tocar no laço de voz. A sessão antiga responde 404
+        e o cérebro abre outra sozinho no próximo pedido; derrubar o laço para
+        isso deixava o robô surdo por uns dez segundos a cada troca.
+        """
+        threading.Thread(target=lambda: self._sondar_cerebro(Config.carregar()),
+                         daemon=True, name="reavaliar-cerebro").start()
+
+    @staticmethod
+    def _voz_atual() -> tuple[str, str | None]:
+        cfg = Config.carregar()
+        return cfg.voz_url, cfg.voz_token
+
+    # ── o jeito do robô, ajustável pelo painel ───────────────────────────────
+    _JEITO = {"ambient_motion": ("ativo", "comportamento_ambiente"),
+              "face_tracking": ("tracking_ambiente", "tracking_ambiente"),
+              "speech_wobble": ("wobbling", "wobbling_na_fala")}
+
+    def _jeito(self) -> dict[str, bool]:
+        c = self.comportamento
+        if c is None:
+            return {}
+        return {"ambient_motion": bool(c.ativo), "face_tracking": bool(c.tracking_ambiente),
+                "speech_wobble": bool(c.wobbling)}
+
+    def _ajustar_jeito(self, mudancas: dict[str, bool]) -> dict[str, bool]:
+        """Aplica já no robô e grava, para valer também no próximo início."""
+        c = self.comportamento
+        if c is None:
+            return {}
+        c.configurar(**{self._JEITO[k][0]: bool(v) for k, v in mudancas.items()
+                        if k in self._JEITO})
+        salvo = armazenamento.carregar_config()
+        for k, v in mudancas.items():
+            if k in self._JEITO:
+                salvo[self._JEITO[k][1]] = bool(v)
+        armazenamento.salvar_config(salvo)
+        return self._jeito()
+
+    # ── teste de escuta ──────────────────────────────────────────────────────
+    def _sondar_escuta(self, prazo_s: float) -> dict | None:
+        """Arma a sonda e espera a próxima fala. `None`: ninguém falou a tempo.
+
+        A fala que a sonda pega NÃO vira turno: o laço a entrega aqui e volta a
+        escutar. Uma sonda por vez — a segunda espera a primeira.
+        """
+        if getattr(self, "_falar_texto", None) is None:
+            return None          # sem laço de voz, não há quem ouça
+        with self._trava_sonda:
+            sonda = {"evento": threading.Event(), "resultado": None}
+            self._sonda_escuta = sonda
+            try:
+                sonda["evento"].wait(prazo_s)
+                return sonda["resultado"]
+            finally:
+                self._sonda_escuta = None
 
     async def _falar_async(self, texto: str) -> str:
         """Fala pedida pelo painel. Nunca sobrepõe a fala do loop principal.
@@ -1051,7 +1119,10 @@ class GarraReachyMini(ReachyMiniApp):
             # disto e não do relógio da avaliação: o STT leva segundos, e medir
             # depois dele julgaria o áudio errado.
             capturado_em = time.monotonic() - dur
-            gestos.pensando()
+            # Só a fase: o corpo fica parado até se saber que isto é um pedido.
+            # Mexer as antenas a cada som ouvido realimentava o detector com o
+            # ruído do próprio servo (ver `Comportamento.ouvindo`).
+            gestos.fase(fases.FASE_TRANSCREVENDO)
             t0 = time.time()
             try:
                 texto, confianca = ouvir(audio)
@@ -1063,6 +1134,21 @@ class GarraReachyMini(ReachyMiniApp):
                 return
             self._falhas_voz = 0
             if not texto or len(texto) < 2:
+                gestos.ouvindo()
+                return
+            # ── teste de escuta pedido pelo painel ─────────────────────────
+            # A fala é do teste: volta para quem pediu e não vai a lugar
+            # nenhum — nem chat, nem contexto, nem agente, nem registro.
+            sonda = getattr(self, "_sonda_escuta", None)
+            if sonda is not None and not sonda["evento"].is_set():
+                ativ_teste = ativacao.Ativacao.de(Config.carregar().conversa)
+                quantos, como = ativacao.casar_alguma(ativacao.tokens(texto), ativ_teste)
+                sonda["resultado"] = {
+                    "text": texto, "duration_s": round(dur, 1),
+                    "stt_ms": int((time.time() - t0) * 1000),
+                    "wake_phrase": bool(quantos), "wake_match": como or None,
+                    "wake_enabled": ativ_teste.habilitada}
+                sonda["evento"].set()
                 gestos.ouvindo()
                 return
             # ── frase de ativação ─────────────────────────────────────────
@@ -1105,7 +1191,7 @@ class GarraReachyMini(ReachyMiniApp):
                     conferencia = "disabled"
                 elif exame == "unsure":
                     try:
-                        de_novo, _ = ouvir(audio, dica=dica_perto)
+                        de_novo, conf_de_novo = ouvir(audio, dica=dica_perto)
                     except Exception:
                         # Não conta em `_falhas_voz`: a primeira escuta deste
                         # mesmo áudio acabou de dar certo.
@@ -1120,9 +1206,16 @@ class GarraReachyMini(ReachyMiniApp):
                                 time.monotonic())
                             if segundo.aceito:
                                 conferencia = "confirmed"
+                                # A frase foi conferida pela segunda escuta; o
+                                # PEDIDO fica com a escuta que o ouviu melhor.
+                                melhor = ativacao.resto_mais_confiavel(
+                                    texto, confianca, len(perto["heard"].split()),
+                                    de_novo, conf_de_novo, len(frase_perto))
                                 texto = de_novo
                                 veredicto = dataclasses.replace(
                                     segundo, extras={"wake_match": "second_listen"})
+                                if melhor and not segundo.so_ativacao:
+                                    veredicto = dataclasses.replace(veredicto, texto=melhor)
                 if perto is not None and preferencias["wake_diagnostics_enabled"]:
                     # O único evento que carrega algo do que foi dito sem a
                     # frase — e carrega só o trecho que pareceu a frase.
@@ -1281,6 +1374,7 @@ class GarraReachyMini(ReachyMiniApp):
                                                   pessoas=pessoas, situacao_casa=situacao_casa,
                                                   situacao_musica=situacao_musica)
             futuro = executor.submit(cerebro.perguntar, mensagem + complemento)
+            gestos.pensando()
             gestos.fase(fases.FASE_PROCESSANDO)
             # Música tocando no PC: abaixa enquanto o modelo pensa e o robô fala,
             # e devolve no fim do turno. Cortesia — falhar não muda nada.
@@ -1389,6 +1483,7 @@ class GarraReachyMini(ReachyMiniApp):
             controlador.eventos.publicar(
                 "chat.message", correlation_id=correlacao, role="assistant",
                 content=fala, source="garra", brain=resposta.modo,
+                agent=getattr(resposta, "agente", None),
             )
             try:
                 if fala:
@@ -1405,7 +1500,7 @@ class GarraReachyMini(ReachyMiniApp):
                 "voice.turn.completed", correlation_id=correlacao,
                 turn_id=turno.id, mode=politica.modo, brain_ms=cerebro_ms,
                 total_ms=int((time.monotonic() - turno.inicio) * 1000),
-                brain=resposta.modo,
+                brain=resposta.modo, agent=getattr(resposta, "agente", None),
                 ack={"decision": turno.ack_decisao,
                      "duration_ms": round(turno.ack_duracao_ms or 0.0, 1),
                      "remaining_ms": turno.metricas.get("ack_restante_ms"),

@@ -109,6 +109,17 @@ class ContextoWeb:
     detector: Callable[[], dict[str, Any] | None] | None = None
     # A fase da voz (`robo.comportamento.Comportamento.estado_da_voz`).
     fase: Callable[[], dict[str, Any]] | None = None
+    # Reconfere quem é o cérebro (o agente mudou), sem interromper a voz.
+    acordar: Callable[[], None] | None = None
+    # Versões, áudio e atualização, pelo daemon (`sistema.Sistema`).
+    sistema: Any = None
+    # O jeito do robô (movimento ambiente, olhar, balanço): ler e ajustar.
+    jeito: Callable[[], dict[str, bool]] | None = None
+    ajustar_jeito: Callable[[dict[str, bool]], dict[str, bool]] | None = None
+    # O que o servidor de voz oferece (vozes, motores).
+    vozes: Callable[[], dict[str, Any]] | None = None
+    # Arma o teste de escuta e espera a próxima fala (`None` = ninguém falou).
+    sondar_escuta: Callable[[float], dict[str, Any] | None] | None = None
     dir_estatico: Path | None = None
     iniciado_em: float = field(default_factory=time.monotonic)
 
@@ -285,6 +296,73 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
         if not isinstance(corpo.get("enabled"), bool):
             raise _erro(400, "informe enabled", "bad_request")
         return await repassar("POST", "/api/casa/voz", {"enabled": corpo["enabled"]})
+
+    # ── agentes de IA ────────────────────────────────────────────────────────
+    # Quem responde ao robô é escolhido no computador; o painel é o controle
+    # remoto dessa escolha. O robô só repassa o que tem forma conhecida, e a
+    # ponte só aceita daqui o que não afrouxa a segurança de agente nenhum
+    # (ver companion/ponte_agentes.py).
+    _AGENTE_ID = re.compile(r"[a-z0-9][a-z0-9_-]{1,31}")
+
+    def _id_de_agente(bruto: Any) -> str:
+        if not isinstance(bruto, str) or not _AGENTE_ID.fullmatch(bruto):
+            raise _erro(400, "id de agente inválido", "bad_request")
+        return bruto
+
+    @r.get("/ai-agents")
+    async def agentes_ia() -> Any:
+        return await repassar("GET", "/api/agentes", timeout_s=15.0)
+
+    @r.post("/ai-agents/discover")
+    async def agentes_ia_descobrir() -> Any:
+        return await repassar("POST", "/api/agentes/descobrir", {}, timeout_s=20.0)
+
+    @r.put("/ai-agents/active")
+    async def agentes_ia_escolher(corpo: dict[str, Any] = Body(...)) -> Any:
+        resposta = await repassar("PUT", "/api/agentes/ativo",
+                                  {"id": _id_de_agente(corpo.get("id"))}, timeout_s=15.0)
+        # O cérebro do laço de voz reavalia já: a faixa do painel passa a
+        # mostrar o agente novo sem esperar a sondagem periódica.
+        if ctx.acordar is not None:
+            ctx.acordar()
+        return resposta
+
+    @r.put("/ai-agents/fallback")
+    async def agentes_ia_reserva(corpo: dict[str, Any] = Body(...)) -> Any:
+        alvo = corpo.get("id")
+        return await repassar("PUT", "/api/agentes/reserva",
+                              {"id": _id_de_agente(alvo) if alvo else None}, timeout_s=15.0)
+
+    @r.post("/ai-agents")
+    async def agentes_ia_adicionar(corpo: dict[str, Any] = Body(...)) -> Any:
+        # Só servidor HTTP, e só estes campos: o painel não descreve comando.
+        definicao = {"kind": "http", "id": _id_de_agente(corpo.get("id"))}
+        for campo, maximo in (("name", 40), ("base_url", 200), ("model", 120)):
+            valor = corpo.get(campo, "")
+            if not isinstance(valor, str) or len(valor) > maximo:
+                raise _erro(400, f"{campo} inválido", "bad_request")
+            definicao[campo] = valor.strip()
+        return await repassar("POST", "/api/agentes", definicao, timeout_s=15.0)
+
+    @r.put("/ai-agents/{agente_id}/options")
+    async def agentes_ia_opcoes(agente_id: str, corpo: dict[str, Any] = Body(...)) -> Any:
+        if not corpo or len(corpo) > 8 or not all(
+                isinstance(k, str) and len(k) <= 32 and isinstance(v, str) and len(v) <= 120
+                for k, v in corpo.items()):
+            raise _erro(400, "opções inválidas", "bad_request")
+        return await repassar("PUT", f"/api/agentes/{_id_de_agente(agente_id)}/opcoes",
+                              corpo, timeout_s=15.0)
+
+    @r.delete("/ai-agents/{agente_id}")
+    async def agentes_ia_remover(agente_id: str) -> Any:
+        return await repassar("DELETE", f"/api/agentes/{_id_de_agente(agente_id)}",
+                              timeout_s=15.0)
+
+    @r.post("/ai-agents/{agente_id}/test")
+    async def agentes_ia_testar(agente_id: str) -> Any:
+        # Uma conversa de verdade com o agente: pode levar o prazo dele.
+        return await repassar("POST", f"/api/agentes/{_id_de_agente(agente_id)}/testar",
+                              {}, timeout_s=150.0)
 
     # ── diagnóstico do gateway ───────────────────────────────────────────────
     # O Capability Registry e os outros checks do gateway, para o painel
@@ -633,6 +711,102 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
     @r.post("/apps/restart")
     async def app_reiniciar() -> dict[str, Any]:
         return (await asyncio.to_thread(ctrl.submeter, "restart_app", {}, source="painel")).json()
+
+    # ── o robô em si: versões, áudio, atualização, jeito ─────────────────────
+    @r.get("/system")
+    async def sistema_ler() -> dict[str, Any]:
+        if ctx.sistema is None:
+            raise _erro(503, "sem acesso ao daemon do robô", "system_unavailable")
+        dados = await asyncio.to_thread(ctx.sistema.resumo)
+        dados["app"] = build_info.identidade()
+        dados["behavior"] = ctx.jeito() if ctx.jeito is not None else None
+        return dados
+
+    @r.post("/system/check-update")
+    async def sistema_atualizacao() -> dict[str, Any]:
+        """Só confere se há versão nova. Não instala nada."""
+        if ctx.sistema is None:
+            raise _erro(503, "sem acesso ao daemon do robô", "system_unavailable")
+        try:
+            return await asyncio.to_thread(ctx.sistema.conferir_atualizacao)
+        except Exception:  # noqa: BLE001 - o robô pode estar sem internet
+            raise _erro(502, "o robô não conseguiu conferir a atualização",
+                        "update_check_failed")
+
+    @r.put("/audio")
+    async def audio_gravar(corpo: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        if ctx.sistema is None:
+            raise _erro(503, "sem acesso ao daemon do robô", "system_unavailable")
+        valores: dict[str, int] = {}
+        for chave, nome in (("speaker_volume", "alto_falante"),
+                            ("microphone_volume", "microfone")):
+            if chave not in corpo:
+                continue
+            v = corpo[chave]
+            if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 100:
+                raise _erro(400, f"{chave}: inteiro de 0 a 100", "bad_request")
+            valores[nome] = v
+        if not valores:
+            raise _erro(400, "informe speaker_volume ou microphone_volume", "bad_request")
+        try:
+            return await asyncio.to_thread(lambda: ctx.sistema.definir_volume(**valores))
+        except Exception:  # noqa: BLE001
+            raise _erro(502, "o robô recusou o volume", "audio_failed")
+
+    @r.post("/audio/test-sound")
+    async def audio_testar() -> dict[str, Any]:
+        """O som de teste do próprio daemon: prova o alto-falante sem TTS."""
+        if ctx.sistema is None:
+            raise _erro(503, "sem acesso ao daemon do robô", "system_unavailable")
+        try:
+            await asyncio.to_thread(ctx.sistema.som_de_teste)
+        except Exception:  # noqa: BLE001
+            raise _erro(502, "o robô recusou o som de teste", "audio_failed")
+        return {"ok": True}
+
+    @r.put("/behavior")
+    async def jeito_gravar(corpo: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Movimento de quem está vivo, olhar para quem fala, balanço na fala."""
+        if ctx.ajustar_jeito is None:
+            raise _erro(503, "o robô ainda não está pronto", "not_ready")
+        campos = ("ambient_motion", "face_tracking", "speech_wobble")
+        mudancas = {c: corpo[c] for c in campos if c in corpo}
+        if not mudancas or not all(isinstance(v, bool) for v in mudancas.values()):
+            raise _erro(400, "informe ambient_motion, face_tracking ou speech_wobble "
+                             "(verdadeiro/falso)", "bad_request")
+        return await asyncio.to_thread(ctx.ajustar_jeito, mudancas)
+
+    # ── voz: o que dá para escolher, e o teste de escuta ─────────────────────
+    @r.get("/voice/options")
+    async def voz_opcoes() -> dict[str, Any]:
+        opcoes: dict[str, Any] = {"languages": list(conversa.IDIOMAS), "voices": [],
+                                  "engines": [], "speed": True, "server": False}
+        if ctx.vozes is not None:
+            try:
+                servidor = await asyncio.to_thread(ctx.vozes)
+            except Exception:  # noqa: BLE001 - servidor de voz antigo ou fora do ar
+                servidor = None
+            if isinstance(servidor, dict):
+                opcoes["server"] = True
+                opcoes["engines"] = servidor.get("engines") or []
+                opcoes["voices"] = servidor.get("voices") or []
+                opcoes["speed"] = bool(servidor.get("speed", True))
+        return opcoes
+
+    @r.post("/voice/test/listen")
+    async def voz_testar_escuta() -> dict[str, Any]:
+        """Ouve a PRÓXIMA fala e diz o que entendeu — sem mandar a agente nenhum.
+
+        É o teste do microfone, do reconhecimento e da frase de ativação num
+        gesto só. O que foi ouvido volta só para quem pediu: não entra no chat,
+        no histórico, nem na escuta de contexto.
+        """
+        if ctx.sondar_escuta is None:
+            raise _erro(503, "a voz não está ativa", "voice_not_running")
+        resultado = await asyncio.to_thread(ctx.sondar_escuta, 12.0)
+        if resultado is None:
+            return {"heard": False}
+        return {"heard": True, **resultado}
 
     # ── observabilidade ─────────────────────────────────────────────────────
     @r.get("/events")

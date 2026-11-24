@@ -354,9 +354,37 @@ def quase(ouvido: list[str], frase: tuple[str, ...]) -> dict[str, Any] | None:
             if d <= QUASE_MAX_DISTANCIA and (melhor is None or candidato < melhor):
                 melhor = candidato
     if melhor is None:
-        return None
+        return _quase_pelo_comeco(ouvido, frase)
     d, i, _, k = melhor
     return {"position": i, "distance": d, "heard": " ".join(ouvido[i:i + k])}
+
+
+# Até quanto a ÚLTIMA palavra pode diferir quando as anteriores vieram certas.
+QUASE_PELO_COMECO_MAX = 6
+
+
+def _quase_pelo_comeco(ouvido: list[str], frase: tuple[str, ...]) -> dict[str, Any] | None:
+    """As primeiras palavras da frase vieram certas, e só a última saiu outra.
+
+    Medido no robô em 24/11/2026: "Fala Garra" voltava do STT como "Fala H",
+    longe demais de "falagarra" para a distância de edição (4, contra o teto de
+    3) — e, sem parecer com a frase, nem ia à segunda escuta. Mas "fala" tinha
+    vindo inteira e no começo: é alguém chamando, e a palavra que o STT não
+    entendeu é justamente o nome.
+
+    Só vale para frase de duas palavras ou mais, só no começo do enunciado, e o
+    resultado é apenas um CANDIDATO: quem decide é a confiança do STT naquela
+    palavra (`exame`, com o teto mais exigente) e, depois, a segunda escuta —
+    que só confirma com a frase exata. "Fala galera" dito com clareza continua
+    não chamando ninguém.
+    """
+    n = len(frase)
+    if n < 2 or len(ouvido) < n or tuple(ouvido[:n - 1]) != frase[:n - 1]:
+        return None
+    d = _distancia(ouvido[n - 1], frase[-1], QUASE_PELO_COMECO_MAX)
+    if d > QUASE_PELO_COMECO_MAX:
+        return None
+    return {"position": 0, "distance": d, "heard": " ".join(ouvido[:n]), "by_prefix": True}
 
 
 def confirma(texto: str, frase: tuple[str, ...]) -> bool:
@@ -375,6 +403,10 @@ def confirma(texto: str, frase: tuple[str, ...]) -> bool:
 # palavra errada fica entre 0,13 e 0,62 (12 medidas); quando alguém diz mesmo
 # "galera", "cara" ou "agora", entre 0,83 e 0,99 (9 de 11).
 SEGUNDA_ESCUTA_CONFIANCA_MAX = 0.75
+# Quando só o COMEÇO da frase veio certo (`_quase_pelo_comeco`) a dúvida tem de
+# ser maior: é o que separa o STT que não entendeu o nome do robô de alguém que
+# disse, com todas as letras, outra coisa começada do mesmo jeito.
+SEGUNDA_ESCUTA_DISTANTE_MAX = 0.5
 
 
 def confianca_por_token(texto: str, por_palavra: Any) -> tuple[float, ...] | None:
@@ -446,7 +478,33 @@ def exame(ouvido: list[str], frase: tuple[str, ...],
         return perto, "unknown"
     menor = min(float(p) for p in confianca[:quantos])
     perto = dict(perto, confidence=round(menor, 2))
-    return perto, "unsure" if menor < SEGUNDA_ESCUTA_CONFIANCA_MAX else "confident"
+    teto = (SEGUNDA_ESCUTA_DISTANTE_MAX if perto.get("by_prefix")
+            else SEGUNDA_ESCUTA_CONFIANCA_MAX)
+    return perto, "unsure" if menor < teto else "confident"
+
+
+def resto_mais_confiavel(primeira: str, conf_primeira: Any, pulados: int,
+                         segunda: str, conf_segunda: Any, frase_tokens: int) -> str | None:
+    """O PEDIDO, da escuta que o ouviu melhor.
+
+    A segunda escuta existe para conferir a frase de ativação; a dica que a
+    ajuda nisso às vezes atrapalha o resto ("qual é a capital da França?" virou
+    "porém é o telefone?", medido no robô). O pedido já tinha sido transcrito
+    uma vez, sem dica. Quando há confiança por palavra para as duas, vale o
+    resto em que o STT confiou mais; sem ela, o da segunda escuta, como sempre.
+
+    `pulados` é quantas palavras do começo da PRIMEIRA escuta eram a frase mal
+    entendida. Devolve `None` quando não dá para comparar.
+    """
+    a = confianca_por_token(primeira, conf_primeira)
+    b = confianca_por_token(segunda, conf_segunda)
+    if a is None or b is None or len(a) <= pulados or len(b) <= frase_tokens:
+        return None
+    media_a = sum(a[pulados:]) / len(a[pulados:])
+    media_b = sum(b[frase_tokens:]) / len(b[frase_tokens:])
+    if media_a <= media_b + 0.05:        # empate é da segunda: é ela a conferida
+        return None
+    return _remover_prefixo(primeira, pulados) or None
 
 
 def casar_alguma(ouvido: list[str], ativacao: Ativacao) -> tuple[int, str]:

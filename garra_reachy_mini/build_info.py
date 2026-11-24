@@ -99,6 +99,11 @@ CAPACIDADES: dict[str, bool] = {
     # Sensibilidade do microfone, pausa de fim de fala, idioma, voz, velocidade
     # e volume da fala (`mic_sensitivity`, `vad_silence_ms`, `speech_*`).
     "speech_preferences": True,
+    # Escolha do agente de IA (/api/robot/ai-agents): listar os descobertos no
+    # computador, trocar o ativo, testar, definir o reserva e cadastrar um
+    # servidor HTTP da casa. Distinta de `agent_registry_read_only`, que é o
+    # registro interno do gateway do Garra e segue somente leitura.
+    "ai_agent_selection": True,
 }
 
 # Sobe quando uma rota existente muda de forma incompatível. `capabilities` cobre

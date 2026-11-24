@@ -91,15 +91,45 @@ class Bancada:
         tok = _token()
         self.cab = {"Authorization": f"Bearer {tok}"} if tok else {}
         self._n = 0
+        self._falas: dict[str, Path] = {}
 
     # ── PC ───────────────────────────────────────────────────────────────────
-    def sintetizar(self, texto: str) -> Path:
-        r = requests.post(f"{self.voz}/falar", json={"texto": texto, "sr": SR_FALA},
-                          headers=self.cab, timeout=120)
-        r.raise_for_status()
+    def sintetizar(self, texto: str, tentativas: int = 5) -> Path:
+        """A fala de teste — conferida antes de ser tocada.
+
+        A síntese às vezes sai com um trecho a mais ou uma palavra engolida, e
+        um estímulo com defeito mede a síntese, não o robô. Cada tentativa é
+        transcrita aqui mesmo, sem passar por caixa nem microfone; vale a
+        primeira que voltar igual ao texto e sem sobra. O resultado fica
+        guardado: a mesma frase é sempre o mesmo áudio dentro de uma rodada.
+        """
+        if texto in self._falas:
+            return self._falas[texto]
+        melhor: tuple[float, np.ndarray] | None = None
+        for _ in range(tentativas):
+            r = requests.post(f"{self.voz}/falar", json={"texto": texto, "sr": SR_FALA},
+                              headers=self.cab, timeout=120)
+            r.raise_for_status()
+            onda = np.frombuffer(r.content, dtype=np.float32)
+            em_16k = onda[::3] if SR_FALA == 3 * SR_ESCUTA else onda
+            # 24 kHz → 16 kHz por interpolação: basta para o Whisper conferir.
+            if SR_FALA != 3 * SR_ESCUTA:
+                n = int(onda.size * SR_ESCUTA / SR_FALA)
+                em_16k = np.interp(np.linspace(0, onda.size - 1, n),
+                                   np.arange(onda.size), onda).astype(np.float32)
+            ouvido = self.transcrever(em_16k)
+            nota = semelhanca(texto, ouvido)
+            sobra = len(palavras(ouvido)) - len(palavras(texto))
+            if sobra > 1:
+                nota -= 0.5
+            if melhor is None or nota > melhor[0]:
+                melhor = (nota, onda)
+            if nota >= 0.99:
+                break
         self._n += 1
         arquivo = self.pasta / f"fala_{self._n}.wav"
-        _wav(arquivo, np.frombuffer(r.content, dtype=np.float32), SR_FALA)
+        _wav(arquivo, melhor[1], SR_FALA)
+        self._falas[texto] = arquivo
         return arquivo
 
     def tocar(self, arquivo: Path) -> None:
@@ -188,7 +218,7 @@ class Bancada:
                     resultado["ouvido"] = e.get("content")
                 elif tipo == "chat.message" and e.get("role") == "assistant":
                     resultado["resposta"] = e.get("content")
-                    resultado["agente"] = e.get("brain")
+                    resultado["agente"] = e.get("agent") or e.get("brain")
                 elif tipo == "voice.turn.completed":
                     resultado["cerebro_ms"] = e.get("brain_ms")
                     resultado["total_ms"] = e.get("total_ms")
@@ -235,6 +265,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--robo", default="http://reachy-mini.local:8042")
     p.add_argument("--voz", default="http://127.0.0.1:8123")
+    p.add_argument("--volume", type=float, default=None,
+                   help="volume das caixas do PC durante o teste (0 a 1); o "
+                        "anterior é devolvido ao sair")
     sub = p.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("dizer")
     d.add_argument("texto")
@@ -247,6 +280,22 @@ def main() -> int:
     rd.add_argument("texto")
     args = p.parse_args()
 
+    anterior = None
+    if args.volume is not None:
+        lido = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                              capture_output=True, text=True).stdout.split()
+        anterior = lido[1] if len(lido) > 1 else None
+        subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@",
+                        f"{min(1.0, max(0.0, args.volume)):.2f}"], check=False)
+    try:
+        return _rodar(args)
+    finally:
+        if anterior is not None:
+            subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", anterior],
+                           check=False)
+
+
+def _rodar(args) -> int:
     with tempfile.TemporaryDirectory(prefix="bancada-voz-") as pasta:
         b = Bancada(args.robo, args.voz, Path(pasta))
         if args.cmd == "dizer":

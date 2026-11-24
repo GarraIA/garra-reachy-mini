@@ -27,8 +27,11 @@ import ipaddress
 import logging
 import os
 import re
+import shutil
+import subprocess
 import time
 import wave
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -55,6 +58,56 @@ SR_FALA = 24000
 stt = None
 tts = None
 tts_multilingue = False
+
+# ── o que o dono pode escolher ───────────────────────────────────────────────
+# Idiomas que o reconhecimento e a síntese atendem os dois (ISO 639-1).
+IDIOMAS = ("pt", "en", "es", "fr", "it", "de", "ja", "zh", "ko", "ru", "nl", "pl",
+           "tr", "ar", "hi")
+# Vozes: cada arquivo `<nome>.wav` desta pasta é uma amostra de ~10 s que o
+# Chatterbox imita. Vazia, só existe a voz padrão do modelo. A pasta é do dono:
+# o servidor lê, nunca grava nela.
+PASTA_VOZES = Path(os.environ.get("GARRA_VOZES", "~/.config/garra-reachy/vozes")).expanduser()
+_NOME_DE_VOZ = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,47}")
+VELOCIDADE_MIN, VELOCIDADE_MAX = 0.7, 1.4
+FFMPEG = shutil.which("ffmpeg")
+
+
+def vozes_disponiveis() -> list[str]:
+    try:
+        return sorted(a.stem for a in PASTA_VOZES.glob("*.wav")
+                      if _NOME_DE_VOZ.fullmatch(a.stem))
+    except OSError:
+        return []
+
+
+def amostra_da_voz(nome: str) -> str | None:
+    """O caminho da amostra, ou `None` para a voz padrão. Nome nunca é caminho."""
+    if not nome or not _NOME_DE_VOZ.fullmatch(nome):
+        return None
+    arquivo = PASTA_VOZES / f"{nome}.wav"
+    return str(arquivo) if arquivo.is_file() else None
+
+
+def mudar_velocidade(onda: np.ndarray, sr: int, fator: float) -> np.ndarray:
+    """Fala mais rápida ou mais lenta SEM mudar o tom (filtro `atempo` do ffmpeg).
+
+    Reamostrar mudaria a voz junto: 1,2× viraria voz de esquilo. Sem ffmpeg, ou
+    se ele falhar, a fala sai na velocidade original — nunca muda de tom.
+    """
+    fator = min(VELOCIDADE_MAX, max(VELOCIDADE_MIN, float(fator)))
+    if abs(fator - 1.0) < 0.02 or FFMPEG is None or onda.size == 0:
+        return onda
+    try:
+        r = subprocess.run(
+            [FFMPEG, "-hide_banner", "-loglevel", "error", "-f", "f32le", "-ar", str(sr),
+             "-ac", "1", "-i", "pipe:0", "-filter:a", f"atempo={fator:.2f}",
+             "-f", "f32le", "-ar", str(sr), "-ac", "1", "pipe:1"],
+            input=onda.astype(np.float32).tobytes(), capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return onda
+    if r.returncode != 0 or len(r.stdout) < 4:
+        return onda
+    return np.frombuffer(r.stdout[:len(r.stdout) // 4 * 4], dtype=np.float32).copy()
 # Só metadado, nunca o texto: o log deste processo já guardou conversa de casa
 # uma vez. Quem quiser o conteúdo liga o nível DEBUG de propósito.
 ultima_transcricao_em: float | None = None
@@ -163,11 +216,26 @@ def confianca_das_palavras(segmentos, texto: str) -> list[float] | None:
     return [round(float(p.probability), 3) for p in palavras]
 
 
-@app.post("/transcrever")
-async def transcrever(request: Request, sr: int = Query(default=16000),
-                      dica: str = Query(default="")):
+@app.get("/vozes")
+def vozes(request: Request):
+    """O que dá para escolher: motor, vozes, idiomas e velocidade."""
     if not autorizado(request):
         return NEGADO
+    motor = "chatterbox-multilingual" if tts_multilingue else "chatterbox"
+    return {"engines": [{"id": motor, "local": True}],
+            "voices": vozes_disponiveis(),
+            "languages": list(IDIOMAS) if tts_multilingue else ["en"],
+            "speed": FFMPEG is not None,
+            "speed_range": [VELOCIDADE_MIN, VELOCIDADE_MAX]}
+
+
+@app.post("/transcrever")
+async def transcrever(request: Request, sr: int = Query(default=16000),
+                      dica: str = Query(default=""), idioma: str = Query(default="pt")):
+    if not autorizado(request):
+        return NEGADO
+    if idioma not in IDIOMAS:
+        return JSONResponse({"erro": "idioma inválido"}, status_code=400)
     if dica and (len(dica) > DICA_MAX or not _DICA.fullmatch(dica)):
         return JSONResponse({"erro": "dica inválida"}, status_code=400)
     corpo = await request.body()
@@ -187,7 +255,7 @@ async def transcrever(request: Request, sr: int = Query(default=16000),
     extra = {"hotwords": dica} if dica else {}
     # `word_timestamps` não é pelos tempos: é o que faz o Whisper dizer o
     # quanto confia em cada palavra. Medido na GPU: 0,11 s contra 0,12 s.
-    segmentos, _ = stt.transcribe(audio, language="pt", vad_filter=True, beam_size=2,
+    segmentos, _ = stt.transcribe(audio, language=idioma, vad_filter=True, beam_size=2,
                                   word_timestamps=True, **extra)
     segmentos = list(segmentos)
     texto = " ".join(" ".join(s.text for s in segmentos).split())
@@ -201,12 +269,17 @@ async def transcrever(request: Request, sr: int = Query(default=16000),
     return JSONResponse({"texto": texto, "confianca": confianca})
 
 
-def sintetizar(texto: str, sr_destino: int) -> np.ndarray:
+def sintetizar(texto: str, sr_destino: int, idioma: str = "pt", voz: str = "",
+               velocidade: float = 1.0) -> np.ndarray:
     """Texto para float32 mono em `sr_destino`, com pico no máximo 1.0."""
+    extra = {}
+    amostra = amostra_da_voz(voz)
+    if amostra:
+        extra["audio_prompt_path"] = amostra
     if tts_multilingue:
-        onda = tts.generate(texto, language_id="pt")
+        onda = tts.generate(texto, language_id=idioma if idioma in IDIOMAS else "pt", **extra)
     else:
-        onda = tts.generate(texto)
+        onda = tts.generate(texto, **extra)
     if isinstance(onda, torch.Tensor):
         onda_t = onda.detach().cpu().float()
     else:
@@ -219,6 +292,7 @@ def sintetizar(texto: str, sr_destino: int) -> np.ndarray:
         onda_t = torchaudio.functional.resample(onda_t, sr_modelo, sr_destino)
 
     onda_np = onda_t.numpy().astype(np.float32)
+    onda_np = mudar_velocidade(onda_np, sr_destino, velocidade)
     pico = float(np.max(np.abs(onda_np)) or 1.0)
     if pico > 1.0:
         onda_np = onda_np / pico
@@ -250,9 +324,17 @@ async def falar(request: Request):
     sr_destino = int(dados.get("sr") or 16000)
     if not texto:
         return Response(content=b"", media_type="application/octet-stream")
+    idioma = dados.get("idioma") or "pt"
+    voz = dados.get("voz") or ""
+    try:
+        velocidade = float(dados.get("velocidade") or 1.0)
+    except (TypeError, ValueError):
+        velocidade = 1.0
+    if idioma not in IDIOMAS or not isinstance(voz, str):
+        return JSONResponse({"erro": "idioma ou voz inválidos"}, status_code=400)
 
     t0 = time.time()
-    onda_np = sintetizar(texto, sr_destino)
+    onda_np = sintetizar(texto, sr_destino, idioma, voz, velocidade)
     log.info("TTS %.2fs para %d amostras (%d caracteres)",
              time.time() - t0, onda_np.size, len(texto))
     log.debug("TTS texto: %r", texto)

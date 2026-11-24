@@ -116,6 +116,10 @@ function microfone(d) {
 function pintarStatus(s) {
   estado.status = s;
   pintarServicos(s);
+  if (s.voice && s.voice.phase) {
+    if (s.voice.last_error) estado.erroDeVoz = s.voice.last_error;
+    pintarFase(s.voice);
+  }
   const conectado = s.connected;
   pill($('p-conexao'), conectado, conectado ? t('pill.robo_conectado') : t('pill.robo_desconectado'),
        conectado ? 'success' : 'danger');
@@ -173,7 +177,7 @@ function atualizarStatusLogo() {
 
 async function atualizarStatus() {
   try { pintarStatus(await api('/api/robot/status')); }
-  catch (e) { pill($('p-conexao'), false, t('ws.api_fora'), 'danger'); }
+  catch (e) { pill($('p-conexao'), false, t('ws.api_fora'), 'danger'); pintarFase({ phase: 'offline' }); }
 }
 
 // ─── eventos em tempo real ───────────────────────────────────────────────────
@@ -257,6 +261,13 @@ function tratarEvento(e) {
       break;
     case 'voice.wake.near_miss':
       anotarPerto(e);
+      break;
+    case 'voice.phase':
+      pintarFase({ phase: e.phase, reason: e.reason });
+      break;
+    case 'voice.error':
+      if (e.code) estado.erroDeVoz = { code: e.code, at: Date.now() / 1000 };
+      pintarFase(estado.fase || {});
       break;
     case 'voice.state':
       $('p-chat').textContent = { listening: 'ouvindo', thinking: 'pensando', speaking: 'falando', idle: '—' }[e.state] || e.state;
@@ -695,6 +706,12 @@ function pintarConversa(d) {
   $('conversa-wake-diagnostico').checked = c.wake_diagnostics_enabled === true;
   pintarPerto();
   $('conversa-wake-texto').value = c.wake_phrase_text ?? 'Fala Garra';
+  $('conversa-wake-outras').value = (c.wake_phrase_alternatives || []).join('\n');
+  // O "ouvi" e a escuta nascem ligados: `!== false`.
+  $('conversa-wake-bipe').checked = c.wake_ack_sound_enabled !== false;
+  $('conversa-wake-gesto').checked = c.wake_ack_motion_enabled !== false;
+  $('conversa-escuta').checked = c.listening_enabled !== false;
+  pintarVozCampos(c);
   const jan = c.wake_phrase_window_s ?? 15;
   const teto = c.wake_phrase_session_max_s ?? 90;
   $('conversa-wake-janela').value = jan;
@@ -804,7 +821,7 @@ function sincronizarWake() {
   const ligada = $('conversa-wake').checked;
   for (const linha of document.querySelectorAll('[data-conversa-wake-sub]')) {
     linha.style.opacity = ligada ? '' : '0.55';
-    for (const el of linha.querySelectorAll('input')) el.disabled = !ligada;
+    for (const el of linha.querySelectorAll('input, textarea')) el.disabled = !ligada;
   }
 }
 
@@ -1703,6 +1720,16 @@ function ligar() {
     // Frase vazia nem sai daqui: o servidor também recusa, mas deixar o campo
     // vazio chegar lá gravaria a anterior sem o usuário entender por quê.
     wake_phrase_text: $('conversa-wake-texto').value.trim() || undefined,
+    wake_phrase_alternatives: linhasDe($('conversa-wake-outras').value),
+    wake_ack_sound_enabled: $('conversa-wake-bipe').checked,
+    wake_ack_motion_enabled: $('conversa-wake-gesto').checked,
+    listening_enabled: $('conversa-escuta').checked,
+    mic_sensitivity: Number($('voz-sensibilidade').value),
+    vad_silence_ms: Number($('voz-pausa').value),
+    speech_language: $('voz-idioma').value || undefined,
+    speech_voice: $('voz-voz').value,
+    speech_rate_pct: Number($('voz-velocidade').value),
+    speech_volume_pct: Number($('voz-volume').value),
     wake_phrase_window_s: Number($('conversa-wake-janela').value),
     wake_phrase_session_max_s: Number($('conversa-wake-teto').value),
     wake_second_listen_enabled: $('conversa-wake-conferir').checked,
@@ -1847,6 +1874,421 @@ async function carregarResumo() {
   pintarResumo();
 }
 
+// ─── fase da voz: o que o robô está fazendo, e por quê ───────────────────────
+// Uma pílula só, no topo, em todas as telas. Ela responde as duas perguntas de
+// quem fala com o robô e não ouve resposta: "ele está me ouvindo?" e "por que
+// não?". Parado, o motivo aparece junto (`fase.motivo_*`).
+const CLASSE_DA_FASE = {
+  connecting: 'warning', standby: 'warning', wake_listening: 'success',
+  listening: 'accent', transcribing: 'accent', processing: 'accent',
+  speaking: 'accent', error: 'danger', offline: 'danger', acting: 'accent',
+};
+
+function pintarFase(v) {
+  estado.fase = { phase: v.phase, reason: v.reason };
+  const el = $('p-voz');
+  if (!el) return;
+  let fase = v.phase || 'connecting';
+  const s = estado.status || {};
+  // Uma ação em curso vale mais que "aguardando a frase": é o que se vê.
+  if (s.current_action && (fase === 'wake_listening' || fase === 'listening' || fase === 'standby')) {
+    fase = 'acting';
+  }
+  let texto = t(`fase.${fase}`);
+  if (fase === 'standby' && v.reason) texto = `${texto} — ${t(`fase.motivo_${v.reason}`)}`;
+  // Um tropeço recente fica à vista por alguns segundos, com a causa.
+  const erro = estado.erroDeVoz;
+  if (erro && Date.now() / 1000 - erro.at < 12 && fase !== 'speaking') {
+    fase = 'error';
+    texto = `${t('fase.error')} — ${t(`fase.erro_${erro.code}`)}`;
+  }
+  pill(el, fase !== 'offline' && fase !== 'standby', texto, CLASSE_DA_FASE[fase] || '');
+}
+
+function linhasDe(texto) {
+  return texto.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 4);
+}
+
+// ─── microfone e fala ────────────────────────────────────────────────────────
+const NOMES_DE_IDIOMA = {
+  pt: 'Português (Brasil)', en: 'English', es: 'Español', fr: 'Français', it: 'Italiano',
+  de: 'Deutsch', ja: '日本語', zh: '中文', ko: '한국어', ru: 'Русский', nl: 'Nederlands',
+  pl: 'Polski', tr: 'Türkçe', ar: 'العربية', hi: 'हिन्दी',
+};
+const vozOpcoes = { carregadas: false, vozes: [], idiomas: Object.keys(NOMES_DE_IDIOMA) };
+
+function opcao(valor, rotulo) {
+  const o = document.createElement('option');
+  o.value = valor;
+  o.textContent = rotulo;
+  return o;
+}
+
+function pintarVozCampos(c) {
+  const sens = c.mic_sensitivity ?? 5;
+  $('voz-sensibilidade').value = sens;
+  $('v-voz-sensibilidade').textContent = `${sens} / 10`;
+  const pausa = c.vad_silence_ms ?? 800;
+  $('voz-pausa').value = pausa;
+  $('v-voz-pausa').textContent = `${(pausa / 1000).toFixed(1).replace('.', ',')} s`;
+  const vel = c.speech_rate_pct ?? 100;
+  $('voz-velocidade').value = vel;
+  $('v-voz-velocidade').textContent = `${vel} %`;
+  const vol = c.speech_volume_pct ?? 100;
+  $('voz-volume').value = vol;
+  $('v-voz-volume').textContent = `${vol} %`;
+  const idioma = $('voz-idioma');
+  idioma.innerHTML = '';
+  for (const cod of vozOpcoes.idiomas) idioma.appendChild(opcao(cod, NOMES_DE_IDIOMA[cod] || cod));
+  idioma.value = c.speech_language || 'pt';
+  const voz = $('voz-voz');
+  voz.innerHTML = '';
+  voz.appendChild(opcao('', t('voz.voz_padrao')));
+  const nomes = new Set(vozOpcoes.vozes);
+  if (c.speech_voice) nomes.add(c.speech_voice);
+  for (const nome of nomes) voz.appendChild(opcao(nome, nome));
+  voz.value = c.speech_voice || '';
+}
+
+async function carregarVozOpcoes() {
+  try {
+    const d = await api('/api/robot/voice/options');
+    vozOpcoes.carregadas = true;
+    vozOpcoes.vozes = d.voices || [];
+    if ((d.languages || []).length) vozOpcoes.idiomas = d.languages;
+    $('voz-velocidade').disabled = d.speed === false;
+    if (conversaEstado.conf) pintarVozCampos(conversaEstado.conf);
+  } catch { /* app anterior a 1.5.0, ou servidor de voz fora: fica o padrão */ }
+}
+
+function mostrarResultado(id, texto, ok) {
+  const el = $(id);
+  el.hidden = false;
+  el.className = `resultado ${ok === true ? 'ok' : ok === false ? 'erro' : ''}`;
+  el.textContent = texto;
+}
+
+async function testarEscuta() {
+  const botao = $('btn-voz-testar-escuta');
+  botao.disabled = true;
+  mostrarResultado('voz-resultado', t('voz.fale_agora'), null);
+  try {
+    const r = await api('/api/robot/voice/test/listen', { method: 'POST' });
+    if (!r.heard) {
+      mostrarResultado('voz-resultado', t('voz.nada_ouvido'), false);
+    } else {
+      const frase = !r.wake_enabled ? t('voz.frase_desligada')
+        : r.wake_phrase ? t('voz.frase_sim') : t('voz.frase_nao');
+      mostrarResultado('voz-resultado',
+        t('voz.ouvido', { texto: r.text, s: String(r.duration_s).replace('.', ','), ms: r.stt_ms })
+        + ' ' + frase, r.wake_phrase || !r.wake_enabled);
+    }
+  } catch (e) {
+    mostrarResultado('voz-resultado', t(e.status === 503 ? 'voz.sem_voz' : 'voz.teste_falhou'), false);
+  }
+  botao.disabled = false;
+}
+
+async function testarFala() {
+  mostrarResultado('voz-resultado', t('voz.falando'), null);
+  try {
+    await api('/api/chat/falar', { method: 'POST', body: JSON.stringify({ texto: t('voz.frase_de_teste') }) });
+    mostrarResultado('voz-resultado', t('voz.fala_ok'), true);
+  } catch (e) {
+    const cod = (e.dados && e.dados.error && e.dados.error.code) || '';
+    mostrarResultado('voz-resultado', t(cod === 'speech_output_disabled' ? 'voz.fala_desligada' : 'voz.fala_falhou'), false);
+  }
+}
+
+async function testarSom() {
+  try {
+    await api('/api/robot/audio/test-sound', { method: 'POST' });
+    mostrarResultado('voz-resultado', t('voz.som_ok'), true);
+  } catch { mostrarResultado('voz-resultado', t('voz.som_falhou'), false); }
+}
+
+// ─── o robô: versões, áudio, atualização, jeito ──────────────────────────────
+function linhaDeEstado(rotulo, valor) {
+  const d = document.createElement('div');
+  d.className = 'status-item';
+  d.appendChild(document.createTextNode(`${rotulo} `));
+  const b = document.createElement('b');
+  b.textContent = valor ?? '—';
+  d.appendChild(b);
+  return d;
+}
+
+function pintarSistema(d) {
+  const lista = $('robo-estado');
+  lista.innerHTML = '';
+  const daemon = d.daemon || {};
+  const app = d.app || {};
+  pill($('p-robo'), !!d.daemon, d.daemon ? t('robo.conectado') : t('robo.sem_daemon'),
+       d.daemon ? 'success' : 'danger');
+  lista.appendChild(linhaDeEstado(t('robo.app'), app.version ? `${app.version} (${app.channel || '—'})` : null));
+  lista.appendChild(linhaDeEstado(t('robo.software'), daemon.version));
+  lista.appendChild(linhaDeEstado(t('robo.endereco'), daemon.ip));
+  lista.appendChild(linhaDeEstado(t('robo.laco'), daemon.control_loop_hz ? `${daemon.control_loop_hz} Hz` : null));
+  const rec = (estado.status || {}).resources || {};
+  if (rec.available) lista.appendChild(linhaDeEstado(t('robo.recursos'), `${rec.fd_usage_pct}% · ${rec.threads} threads`));
+  if (d.update) pintarAtualizacao(d.update);
+  const audio = d.audio;
+  const la = $('robo-audio');
+  la.innerHTML = '';
+  for (const id of ['robo-volume', 'robo-ganho']) $(id).disabled = !audio;
+  if (audio) {
+    la.appendChild(linhaDeEstado(t('robo.microfone'), audio.input_device));
+    la.appendChild(linhaDeEstado(t('robo.saida'), audio.output_device));
+    $('robo-volume').value = audio.speaker_volume ?? 100;
+    $('v-robo-volume').textContent = `${audio.speaker_volume ?? '—'} %`;
+    $('robo-ganho').value = audio.microphone_volume ?? 100;
+    $('v-robo-ganho').textContent = `${audio.microphone_volume ?? '—'} %`;
+  }
+  const j = d.behavior || {};
+  $('robo-movimento').checked = j.ambient_motion === true;
+  $('robo-olhar').checked = j.face_tracking === true;
+  $('robo-balanco').checked = j.speech_wobble === true;
+}
+
+function pintarAtualizacao(u) {
+  mostrarResultado('robo-resultado', u.available
+    ? t('robo.ha_atualizacao', { atual: u.current_version, nova: u.available_version })
+    : t('robo.em_dia', { atual: u.current_version || '—' }), !u.available);
+}
+
+async function carregarSistema() {
+  try {
+    pintarSistema(await api('/api/robot/system'));
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) { $('robo-bloco').hidden = true; return; }
+    pill($('p-robo'), false, t('robo.sem_daemon'), 'danger');
+  }
+}
+
+async function conferirAtualizacao() {
+  const botao = $('btn-robo-atualizacao');
+  botao.disabled = true;
+  mostrarResultado('robo-resultado', t('robo.conferindo'), null);
+  try {
+    pintarAtualizacao(await api('/api/robot/system/check-update', { method: 'POST' }));
+  } catch { mostrarResultado('robo-resultado', t('robo.conferir_falhou'), false); }
+  botao.disabled = false;
+}
+
+async function gravarAudio(campo, valor) {
+  try {
+    await api('/api/robot/audio', { method: 'PUT', body: JSON.stringify({ [campo]: Number(valor) }) });
+  } catch { carregarSistema(); }
+}
+
+async function gravarJeito(campo, ligado) {
+  try {
+    await api('/api/robot/behavior', { method: 'PUT', body: JSON.stringify({ [campo]: ligado }) });
+  } catch { carregarSistema(); }
+}
+
+// ─── agente de IA: quem responde ao robô ─────────────────────────────────────
+// A lista vem do computador (descoberta + agentes do dono). Escolher, testar e
+// ajustar opção segura é daqui; o que afrouxa a segurança de um agente só se
+// muda no computador, e a tela diz isso em vez de oferecer um botão que falha.
+const agentesIA = { dados: null };
+
+function emblema(texto, classe) {
+  const b = document.createElement('span');
+  b.className = `badge ${classe}`;
+  b.textContent = texto;
+  return b;
+}
+
+function itemDoAgente(a) {
+  const item = document.createElement('div');
+  item.className = 'item agente-ia';
+  item.dataset.agente = a.id;
+  const topo = document.createElement('div');
+  topo.className = 'linha';
+  const nome = document.createElement('b');
+  nome.textContent = a.name;
+  topo.appendChild(nome);
+  if (a.active) topo.appendChild(emblema(t('agenteia.em_uso'), 'ok'));
+  topo.appendChild(emblema(
+    a.available ? t('agenteia.disponivel') : t(`agenteia.saude_${a.health.code}`),
+    a.available ? 'ok' : 'danger'));
+  topo.appendChild(emblema(t(`agenteia.seguranca_${a.safety}`),
+    a.safety === 'unrestricted' ? 'warning' : 'muted'));
+  topo.appendChild(emblema(t(`agenteia.interface_${a.interface}`), 'muted'));
+  if (a.custom) topo.appendChild(emblema(t('agenteia.do_dono'), 'accent'));
+  item.appendChild(topo);
+  if (a.health.version || (!a.available && a.health.detail)) {
+    const det = document.createElement('div');
+    det.className = 'dica';
+    det.textContent = a.available ? a.health.version : a.health.detail;
+    item.appendChild(det);
+  }
+  for (const o of a.options || []) {
+    if (o.type !== 'choice' || !(o.choices || []).length) continue;
+    const campo = document.createElement('div');
+    campo.className = 'campo';
+    const rot = document.createElement('label');
+    rot.textContent = t(`agenteia.opcao_${o.key}`);
+    const sel = document.createElement('select');
+    for (const e of o.choices) {
+      const nomeDaEscolha = o.key === 'tools' ? t(`agenteia.ferramentas_${e.value}`)
+        : (e.value || t('agenteia.modelo_automatico'));
+      const op = opcao(e.value, e.local_only ? `${nomeDaEscolha} — ${t('agenteia.so_no_computador')}` : nomeDaEscolha);
+      // O que só o dono, no computador, pode ligar: visível e desabilitado.
+      op.disabled = !!e.local_only && e.value !== o.value;
+      sel.appendChild(op);
+    }
+    sel.value = o.value;
+    sel.addEventListener('change', () => mudarOpcaoDoAgente(a.id, o.key, sel.value));
+    campo.appendChild(rot);
+    campo.appendChild(sel);
+    item.appendChild(campo);
+  }
+  const botoes = document.createElement('div');
+  botoes.className = 'linha';
+  if (!a.active) {
+    const usar = document.createElement('button');
+    usar.className = 'primario mini';
+    usar.textContent = t('agenteia.usar');
+    usar.addEventListener('click', () => escolherAgente(a.id));
+    botoes.appendChild(usar);
+  }
+  const testar = document.createElement('button');
+  testar.className = 'mini';
+  testar.textContent = t('agenteia.testar');
+  testar.addEventListener('click', () => testarAgente(a.id, a.name, testar));
+  botoes.appendChild(testar);
+  if (a.custom && a.interface === 'http') {
+    const tirar = document.createElement('button');
+    tirar.className = 'mini perigo';
+    tirar.textContent = t('agenteia.remover');
+    tirar.addEventListener('click', () => removerAgente(a.id));
+    botoes.appendChild(tirar);
+  }
+  item.appendChild(botoes);
+  return item;
+}
+
+function pintarAgentesIA(d) {
+  agentesIA.dados = d;
+  $('agente-ia-bloco').hidden = false;
+  const lista = $('agente-ia-lista');
+  lista.innerHTML = '';
+  for (const a of d.agents || []) lista.appendChild(itemDoAgente(a));
+  const ativo = (d.agents || []).find((a) => a.active);
+  pill($('p-agente-ia'), !!(ativo && ativo.available),
+       ativo ? ativo.name : t('agenteia.nenhum'),
+       ativo && ativo.available ? 'success' : 'danger');
+  const reserva = $('agente-ia-reserva');
+  reserva.innerHTML = '';
+  reserva.appendChild(opcao('', t('agenteia.sem_reserva')));
+  for (const a of d.agents || []) if (!a.active) reserva.appendChild(opcao(a.id, a.name));
+  reserva.value = d.fallback || '';
+}
+
+async function carregarAgentesIA() {
+  const s = estado.status;
+  if (s && s.capabilities && s.capabilities.ai_agent_selection !== true) return;
+  try {
+    pintarAgentesIA(await api('/api/robot/ai-agents'));
+  } catch (e) {
+    if (e.status === 404 || e.status === 405) { $('agente-ia-bloco').hidden = true; return; }
+    $('agente-ia-bloco').hidden = false;
+    pill($('p-agente-ia'), false, t('agenteia.sem_computador'), 'danger');
+    mostrarResultado('agente-ia-resultado', t('agenteia.sem_computador_dica'), false);
+  }
+}
+
+async function pedirAgentes(caminho, metodo, corpo, falha) {
+  try {
+    const opcoes = { method: metodo };
+    if (corpo !== undefined) opcoes.body = JSON.stringify(corpo);
+    pintarAgentesIA(await api(caminho, opcoes));
+    return true;
+  } catch (e) {
+    const detalhe = e.dados && e.dados.error && e.dados.error.detail;
+    mostrarResultado('agente-ia-resultado', detalhe ? `${t(falha)} (${detalhe})` : t(falha), false);
+    return false;
+  }
+}
+
+async function escolherAgente(id) {
+  if (await pedirAgentes('/api/robot/ai-agents/active', 'PUT', { id }, 'agenteia.troca_falhou')) {
+    mostrarResultado('agente-ia-resultado', t('agenteia.trocado'), true);
+  }
+}
+
+async function mudarOpcaoDoAgente(id, chave, valor) {
+  if (!(await pedirAgentes(`/api/robot/ai-agents/${id}/options`, 'PUT', { [chave]: valor }, 'agenteia.opcao_falhou'))) {
+    carregarAgentesIA();
+  }
+}
+
+async function removerAgente(id) {
+  await pedirAgentes(`/api/robot/ai-agents/${id}`, 'DELETE', undefined, 'agenteia.remover_falhou');
+}
+
+async function testarAgente(id, nome, botao) {
+  botao.disabled = true;
+  mostrarResultado('agente-ia-resultado', t('agenteia.testando', { nome }), null);
+  try {
+    const r = await api(`/api/robot/ai-agents/${id}/test`, { method: 'POST' });
+    if (r.ok) {
+      mostrarResultado('agente-ia-resultado', t('agenteia.teste_ok', {
+        nome, s: (r.latency_ms / 1000).toFixed(1).replace('.', ','), resposta: r.reply }), true);
+    } else {
+      const cod = (r.error && r.error.code) || 'bad_response';
+      mostrarResultado('agente-ia-resultado',
+        `${t('agenteia.teste_falhou', { nome })} ${t(`agenteia.erro_${cod}`)}`, false);
+    }
+  } catch { mostrarResultado('agente-ia-resultado', t('agenteia.sem_computador_dica'), false); }
+  botao.disabled = false;
+}
+
+async function adicionarAgente() {
+  const nome = $('agente-ia-novo-nome').value.trim();
+  const url = $('agente-ia-novo-url').value.trim();
+  if (!nome || !url) {
+    mostrarResultado('agente-ia-resultado', t('agenteia.novo_incompleto'), false);
+    return;
+  }
+  const id = nome.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  const feito = await pedirAgentes('/api/robot/ai-agents', 'POST',
+    { id, name: nome, base_url: url, model: $('agente-ia-novo-modelo').value.trim() },
+    'agenteia.novo_falhou');
+  if (feito) {
+    for (const campo of ['agente-ia-novo-nome', 'agente-ia-novo-url', 'agente-ia-novo-modelo']) $(campo).value = '';
+    mostrarResultado('agente-ia-resultado', t('agenteia.novo_ok'), true);
+  }
+}
+
+function ligarAjustesNovos() {
+  $('btn-agente-ia-descobrir').addEventListener('click', () =>
+    pedirAgentes('/api/robot/ai-agents/discover', 'POST', {}, 'agenteia.sem_computador_dica'));
+  $('btn-agente-ia-adicionar').addEventListener('click', adicionarAgente);
+  $('agente-ia-reserva').addEventListener('change', (e) =>
+    pedirAgentes('/api/robot/ai-agents/fallback', 'PUT', { id: e.target.value || null }, 'agenteia.opcao_falhou'));
+  $('btn-robo-atualizacao').addEventListener('click', conferirAtualizacao);
+  $('btn-voz-testar-escuta').addEventListener('click', testarEscuta);
+  $('btn-voz-testar-fala').addEventListener('click', testarFala);
+  $('btn-voz-testar-som').addEventListener('click', testarSom);
+  const rotulos = {
+    'voz-sensibilidade': (v) => `${v} / 10`,
+    'voz-pausa': (v) => `${(v / 1000).toFixed(1).replace('.', ',')} s`,
+    'voz-velocidade': (v) => `${v} %`, 'voz-volume': (v) => `${v} %`,
+    'robo-volume': (v) => `${v} %`, 'robo-ganho': (v) => `${v} %`,
+  };
+  for (const [id, formato] of Object.entries(rotulos)) {
+    $(id).addEventListener('input', (e) => { $(`v-${id}`).textContent = formato(+e.target.value); });
+  }
+  $('robo-volume').addEventListener('change', (e) => gravarAudio('speaker_volume', e.target.value));
+  $('robo-ganho').addEventListener('change', (e) => gravarAudio('microphone_volume', e.target.value));
+  $('robo-movimento').addEventListener('change', (e) => gravarJeito('ambient_motion', e.target.checked));
+  $('robo-olhar').addEventListener('change', (e) => gravarJeito('face_tracking', e.target.checked));
+  $('robo-balanco').addEventListener('change', (e) => gravarJeito('speech_wobble', e.target.checked));
+}
+
 // ─── arranque ────────────────────────────────────────────────────────────────
 (async function iniciar() {
   aplicarTraducoes();
@@ -1864,6 +2306,10 @@ async function carregarResumo() {
   carregarContexto();
   carregarCaderno();
   carregarAgentes();
+  ligarAjustesNovos();
+  carregarAgentesIA();
+  carregarVozOpcoes();
+  carregarSistema();
   carregarResumo();
   const btnAgentes = $('btn-agentes-atualizar');
   if (btnAgentes) btnAgentes.addEventListener('click', carregarAgentes);

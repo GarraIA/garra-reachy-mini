@@ -112,10 +112,11 @@ class Gestos:
         self.fases: list[tuple[str, str | None]] = []
         self.erros: list[str] = []
         self.ativacoes = 0
+        self.pensou = 0           # quantas vezes o corpo foi a "pensando"
         self.fase_ao_ouvir = None
 
     def ouvindo(self) -> None: self.atualizar_fase_de_escuta()
-    def pensando(self) -> None: self.fase("transcribing")
+    def pensando(self) -> None: self.pensou += 1
     def falando(self) -> None: self.fase("speaking")
     def ativado(self) -> None: self.ativacoes += 1
     def erro(self, codigo: str, detalhe: str = "") -> None: self.erros.append(codigo)

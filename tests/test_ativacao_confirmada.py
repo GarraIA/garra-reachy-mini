@@ -89,6 +89,58 @@ def test_a_segunda_escuta_confere_contra_a_frase_que_pareceu() -> None:
     assert ativacao.exame_entre(ativacao.tokens("que calor hoje"), ativ, (0.9, 0.9, 0.9))[1] == "none"
 
 
+# ─── a frase que o STT só entendeu pela metade ───────────────────────────────
+FRASE = ("fala", "garra")
+
+
+@pytest.mark.parametrize("ouvido", ["fala h qual é a capital", "fala a qual é", "fala rá que horas são"])
+def test_primeira_palavra_certa_e_nome_incerto_vai_a_segunda_escuta(ouvido) -> None:
+    """Medido no robô: "Fala Garra" voltava como "Fala H" e nem era conferido."""
+    tokens = ativacao.tokens(ouvido)
+    perto, motivo = ativacao.exame(tokens, FRASE, (0.9, 0.2) + (0.9,) * (len(tokens) - 2))
+    assert motivo == "unsure" and perto["heard"] == " ".join(tokens[:2]) and perto["position"] == 0
+
+
+def test_nome_dito_com_clareza_nao_e_conferido_so_por_comecar_com_fala() -> None:
+    """ "Fala H" com o STT seguro do que ouviu é só alguém dizendo "fala H"."""
+    tokens = ativacao.tokens("fala h qual é a capital")
+    assert ativacao.exame(tokens, FRASE, (0.95, 0.92, 0.9, 0.9, 0.9, 0.9))[1] == "confident"
+
+
+@pytest.mark.parametrize("ouvido", ["falam muito aqui", "fala", "hoje fala h comigo",
+                                    "fala extraordinariamente bem"])
+def test_o_comeco_certo_nao_basta_fora_das_condicoes(ouvido) -> None:
+    tokens = ativacao.tokens(ouvido)
+    assert ativacao.exame(tokens, FRASE, (0.2,) * len(tokens))[1] in ("none", "elsewhere")
+
+
+def test_frase_de_uma_palavra_nao_ganha_a_regra_do_comeco() -> None:
+    assert ativacao.quase(["computar"], ("computador",)) is not None       # pela distância
+    assert ativacao.quase(["x"], ("computador",)) is None
+
+
+def test_so_o_comeco_certo_pede_mais_duvida_do_stt() -> None:
+    """Dúvida moderada basta para o parecido de perto, não para "fala" + qualquer coisa."""
+    tokens = ativacao.tokens("fala h qual é")
+    assert ativacao.exame(tokens, FRASE, (0.9, 0.6, 0.9, 0.9))[1] == "confident"
+    assert ativacao.exame(tokens, FRASE, (0.9, 0.4, 0.9, 0.9))[1] == "unsure"
+    perto = ativacao.tokens("fala gabi qual é")
+    assert ativacao.exame(perto, FRASE, (0.9, 0.6, 0.9, 0.9))[1] == "unsure"
+
+
+def test_o_pedido_fica_com_a_escuta_que_o_ouviu_melhor() -> None:
+    primeira, conf1 = "Palagado, qual é a capital da França?", (0.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9)
+    segunda, conf2 = "Fala Garra, porém é o telefone?", (0.9, 0.9, 0.3, 0.4, 0.3, 0.3)
+    assert ativacao.resto_mais_confiavel(primeira, conf1, 1, segunda, conf2, 2) == \
+        "qual é a capital da França?"
+    # Empate, ou a segunda melhor: fica a segunda (devolve None).
+    assert ativacao.resto_mais_confiavel(primeira, conf1, 1, segunda,
+                                         (0.9, 0.9, 0.9, 0.9, 0.9, 0.9), 2) is None
+    # Sem confiança, não há o que comparar.
+    assert ativacao.resto_mais_confiavel(primeira, None, 1, segunda, conf2, 2) is None
+    assert ativacao.resto_mais_confiavel("Palagado", (0.2,), 1, segunda, conf2, 2) is None
+
+
 # ─── o "ouvi" ────────────────────────────────────────────────────────────────
 def test_o_bipe_e_curto_baixo_e_nao_estala() -> None:
     onda = ativacao.bipe(SR)
@@ -198,6 +250,40 @@ def test_o_comportamento_publica_a_fase_so_quando_muda(backend, tmp_path) -> Non
     assert estado["phase"] == fases.FASE_ESPERA
     assert estado["last_error"]["code"] == "stt_failed"
     assert len(estado["last_error"]["detail"]) <= 160
+
+
+# ─── o corpo só se mexe por pedido aceito ────────────────────────────────────
+def test_barulho_da_sala_nao_mexe_o_robo(montar_cena) -> None:  # noqa: F811
+    """O servo da antena fica ao lado dos microfones. Mexê-la a cada som ouvido
+    fazia o robô ouvir a si mesmo: um trecho falso a cada 2 s, em laço (medido
+    no robô em 24/11/2026)."""
+    cena = montar_cena(COM_FRASE, ["Que calor hoje.", "Liga a televisão aí."], [])
+    cena.alguem_fala()
+    cena.alguem_fala()
+    assert cena.app.comportamento.pensou == 0
+    assert cena.app.comportamento.ativacoes == 0
+
+
+def test_pedido_aceito_leva_o_corpo_a_pensando_uma_vez(montar_cena) -> None:  # noqa: F811
+    cena = montar_cena(COM_FRASE, ["Fala Garra, que horas são?"], ["São dez horas."])
+    cena.alguem_fala()
+    assert cena.app.comportamento.pensou == 1
+
+
+def test_o_comportamento_nao_repete_gesto_sem_mudanca_de_estado(backend, tmp_path) -> None:
+    from garra_reachy_mini.robo.acoes import ControladorRobo
+    ctrl = ControladorRobo(backend, semente=1, dir_capturas=tmp_path)
+    pedidos: list[str] = []
+    ctrl.submeter = lambda nome, params, **kw: pedidos.append(nome)   # type: ignore[assignment]
+    c = fases.Comportamento(ctrl, ativo=True, wobbling=False)
+    c.ouvindo()
+    c.ouvindo()
+    c.ouvindo()
+    assert pedidos == ["move_antennas"], "três 'ouvindo' seguidos, um gesto só"
+    c.pensando()
+    c.pensando()
+    c.ouvindo()
+    assert pedidos == ["move_antennas"] * 3
 
 
 # ─── o interruptor da escuta ─────────────────────────────────────────────────

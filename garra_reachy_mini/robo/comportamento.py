@@ -124,8 +124,14 @@ class Comportamento:
             return self._estado
 
     def ouvindo(self) -> None:
-        self._mudar(OUVINDO)
+        mudou = self._mudar(OUVINDO)
         self.atualizar_fase_de_escuta()
+        if not mudou:
+            # Já estava ouvindo: nada a mexer. Sem isto, cada barulho da sala
+            # (que o laço ouve, transcreve e descarta) movia as antenas — e o
+            # servo, ao lado dos microfones, era ouvido como um barulho novo.
+            # Medido em 24/11/2026: um trecho falso a cada 2 s, em laço.
+            return
         if self.wobbling:
             self.ctrl.wobbling_pedir(False)
         self._gesto({"action": "move_antennas", "preset": "neutral", "duration": 0.4})
@@ -151,10 +157,14 @@ class Comportamento:
             log.debug("fase de escuta indisponível", exc_info=True)
 
     def pensando(self) -> None:
-        self._mudar(PENSANDO)
-        # O laço chama isto ao mandar o áudio ao STT; quando o pedido segue
-        # para o agente, ele mesmo avança a fase para `processing`.
-        self.fase(FASE_TRANSCREVENDO)
+        """O pedido foi ACEITO e segue para o agente: antenas para trás.
+
+        Só para pedido aceito. Enquanto o laço ainda está transcrevendo — sem
+        saber se aquilo foi a frase de ativação ou a televisão — o robô não se
+        mexe: a fase muda (`transcribing`), o corpo não.
+        """
+        if not self._mudar(PENSANDO):
+            return
         if self.wobbling:
             self.ctrl.wobbling_pedir(False)
         self._gesto({"action": "move_antennas", "left": -0.6, "right": -0.6, "duration": 0.4})
@@ -197,13 +207,15 @@ class Comportamento:
                     "since": self._fase_desde,
                     "last_error": dict(self._ultimo_erro) if self._ultimo_erro else None}
 
-    def _mudar(self, novo: str) -> None:
+    def _mudar(self, novo: str) -> bool:
+        """Troca o estado. Devolve se ele de fato mudou."""
         with self._lock:
             anterior, self._estado = self._estado, novo
         if anterior != novo:
             self.ctrl.eventos.publicar("voice.state", state=novo, previous=anterior)
         self._agendar_micro()
         self._acordar.set()
+        return anterior != novo
 
     # ── micro-movimentos ────────────────────────────────────────────────────
     def _agendar_micro(self) -> None:
