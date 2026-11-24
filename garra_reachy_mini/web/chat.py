@@ -140,10 +140,24 @@ class PonteChat:
             except httpx.HTTPError as e:
                 raise ErroChat(f"falha ao falar com o gateway: {e}") from e
         if r.status_code != 200:
+            # Quando é o AGENTE que não respondeu, a ponte diz qual — e o chat
+            # mostra a mesma frase que o robô falaria, em vez do JSON cru.
+            from ..cerebro import falha_do_agente
+            try:
+                falha = falha_do_agente(r.json())
+            except ValueError:
+                falha = None
+            if falha is not None:
+                raise ErroChat(falha[0])
             detalhe = r.text[:300]
             raise ErroChat(f"o gateway respondeu HTTP {r.status_code}: {detalhe}")
         dados = r.json()
-        return {"content": dados.get("content", ""), "session_id": sessao}
+        resposta = {"content": dados.get("content", ""), "session_id": sessao}
+        # Quem respondeu, quando a ponte diz (Hermes, Pi, …, ou o reserva).
+        if isinstance(dados.get("agent"), str):
+            resposta["agent"] = dados["agent"]
+            resposta["fallback"] = bool(dados.get("fallback"))
+        return resposta
 
     async def historico(self) -> list[dict[str, str]]:
         if not self._sessao:

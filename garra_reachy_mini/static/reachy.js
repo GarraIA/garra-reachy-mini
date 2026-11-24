@@ -1984,7 +1984,7 @@ async function testarEscuta() {
         + ' ' + frase, r.wake_phrase || !r.wake_enabled);
     }
   } catch (e) {
-    mostrarResultado('voz-resultado', t(e.status === 503 ? 'voz.sem_voz' : 'voz.teste_falhou'), false);
+    mostrarResultado('voz-resultado', t(e.status === 503 ? 'voz.sem_voz' : e.status === 409 ? 'voz.escuta_desligada' : 'voz.teste_falhou'), false);
   }
   botao.disabled = false;
 }

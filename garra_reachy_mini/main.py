@@ -357,7 +357,29 @@ class GarraReachyMini(ReachyMiniApp):
         """Health check barato — sem construir Cerebro nem criar sessão."""
         disponivel, codigo, descricao = cerebro_sondar(cfg)
         self._marcar_cerebro(cfg, codigo, descricao, disponivel)
+        if codigo != "gateway":
+            self._marcar_agente_caido(cfg)
         return disponivel
+
+    def _marcar_agente_caido(self, cfg: Config) -> None:
+        """O computador responde, e quem não responde é o AGENTE escolhido.
+
+        São duas situações com consertos opostos. "Não alcancei o computador"
+        manda olhar rede, firewall e companion; "o Hermes está fora do ar" manda
+        olhar o Hermes — ou escolher outro agente, ali mesmo no painel. Sem
+        esta distinção, um agente parado aparecia como computador inacessível.
+        """
+        from .cerebro import agente_ativo
+        ativo = agente_ativo(cfg)
+        if ativo is None or ativo["available"]:
+            return
+        self.servicos.marcar("gateway", True, codigo="ok", detalhe=cfg.gateway_url)
+        self.servicos.marcar(
+            "brain", False, codigo="agent_unavailable",
+            detalhe=f"{ativo['name']} ({cfg.gateway_url})",
+            dica=f"The computer answers, but the chosen AI agent ({ativo['name']}) "
+                 "does not. Start it on the computer, or pick another agent in "
+                 "Settings › AI agent.")
 
     def _avaliar_cerebro(self, cfg: Config) -> Cerebro:
         """Constrói o cérebro e publica o estado dele em `services`.

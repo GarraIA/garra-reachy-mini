@@ -803,6 +803,10 @@ def _rotas_robo(ctx: ContextoWeb) -> APIRouter:
         """
         if ctx.sondar_escuta is None:
             raise _erro(503, "a voz não está ativa", "voice_not_running")
+        if not _conversa_atual()["listening_enabled"]:
+            # Microfone liberado: esperar doze segundos por uma fala que não
+            # tem como chegar seria fingir um teste.
+            raise _erro(409, "a escuta está desligada", "listening_disabled")
         resultado = await asyncio.to_thread(ctx.sondar_escuta, 12.0)
         if resultado is None:
             return {"heard": False}
