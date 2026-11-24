@@ -68,9 +68,11 @@ two optional pieces that are not, with what to do about each.
 - **Home automation through Garra (1.4.1)** — connect Home Assistant to the
   gateway from the panel; the gateway's own device registry and risk gates do
   the work, and voice control of devices is opt-in
-- **Spotify (1.4.1)** — connect your account from the computer, see where it
-  plays, control playback from the panel; no voice control, by Spotify's
-  policy (see [Music](#music-spotify-141))
+- **Spotify (1.4.1)** — "toca Hotel California": with spotatui on the
+  computer, the robot plays, checks the player really started and confirms by
+  voice; pause, resume, next, previous, volume, queue and playlists too. Voice
+  control is an owner opt-in, off by default (Spotify's policy, stated in the
+  panel); the panel works with or without it (see [Music](#music-spotify-141))
 - **Family recognition (1.4.1)** — consent-based, local, encrypted, deletable;
   "who is there?" answers with enrolled names or "unknown", and never uses a
   face as authorization (see [Family](#family-recognition-141-off-by-default))
@@ -273,19 +275,47 @@ Assistant under Control › Home" rather than "I can't do that".
 
 ### Music (Spotify, 1.4.1)
 
-*Control › Music.* Create an app at developer.spotify.com with the redirect URI
+*Control › Music.* Two providers answer through the same panel.
+
+**spotatui on the computer (used by voice and chat).** If
+[spotatui](https://github.com/LargeModGames/spotatui) is installed on the
+computer that runs the companion, the companion drives it through its CLI —
+with the Spotify session spotatui already keeps, so there is no new login and
+no token handled by this app. Say, after the wake phrase:
+
+- "toca Hotel California", "toca uma música", "coloca minha playlist X",
+  "adiciona X na fila", "procura a música X" (then "toca essa");
+- "pausa a música", "continua a música", "próxima música", "volta a música";
+- "que música está tocando?", "abaixa o volume", "volume 30".
+
+Music plays on the **target device** chosen in the panel (by default the
+spotatui player on the computer, which must be open in a terminal); the robot
+speaks the confirmation. The companion only says "playing" after reading the
+player: the requested track on the target device with its progress moving.
+Pause and resume only toggle after reading the opposite state; a command that
+had no effect is reported as a failure and never repeated; the same request id
+never runs twice. Music playing on another device (phone, TV) is not paused or
+skipped from here; asking to *play* plays on the target, as any Spotify app
+would. While the robot speaks, the music is lowered and restored afterwards
+(only if nobody changed the volume meanwhile). If the search result does not
+match what was heard, the robot asks instead of playing. If Spotify rate-limits
+the app (HTTP 429), commands pause for the time Spotify asked and the robot says
+so. Nothing from Spotify (titles, artists) is sent to the AI model.
+
+**Voice control is an owner opt-in, off by default** (*Allow music commands by
+voice and chat*). Spotify's Developer Policy (III.3) does not allow a voice
+assistant to control Spotify in a distributed app; the switch exists for your
+own robot and account, and the panel says this next to it.
+
+**Spotify Web API (panel only).** Without spotatui, create an app at
+developer.spotify.com with the redirect URI
 `http://127.0.0.1:8125/spotify/callback`, save its Client ID in the panel, and
 connect the account by opening `http://127.0.0.1:8125/spotify/conectar` in a
-browser **on the computer that runs the companion** (Spotify only allows
-loopback redirects; the flow is Authorization Code with PKCE, no secret).
-Tokens stay on the computer (`~/.config/garra-reachy/spotify.json`, 0600). The
-panel shows what is playing and where, lists devices, and offers play, pause,
-next, previous, volume and transfer. Playback control needs Spotify Premium.
-
-**There is no voice control.** Spotify's developer policy forbids voice
-assistants, so "play some music" is refused before it reaches the model, and
-nothing from Spotify is sent to the model. Music plays on your Spotify
-devices, not on the robot.
+browser **on the computer that runs the companion** (loopback only; PKCE, no
+secret; tokens in `~/.config/garra-reachy/spotify.json`, 0600). The panel then
+shows what is playing and offers play, pause, next, previous, volume and
+transfer. Playback control needs Spotify Premium. This provider is not used by
+voice.
 
 ### Family recognition (1.4.1, off by default)
 
@@ -449,9 +479,13 @@ advice applies to the robot as a whole, not just to this app.
   used as authorization. Without enrolment the camera still only *detects* a
   face for tracking, on the robot.
 - **Home Assistant tokens and Spotify tokens live on the computer**, 0600,
-  and never come back through the API or the panel.
-- **Nothing from Spotify reaches the model**, and voice control of Spotify is
-  not offered, by policy.
+  and never come back through the API or the panel; with spotatui, the
+  session is spotatui's own and this app never reads it.
+- **Nothing from Spotify reaches the model.** Music commands are understood by
+  the robot without the model, and song names are data passed to the spotatui
+  CLI as separate arguments (no shell), with a minimal environment.
+- **Spotify voice control is off by default** and is the owner's decision
+  (Spotify Developer Policy III.3), stated in the panel where it is turned on.
 - **On a wireless robot the panel is reachable by anyone on your network, with
   no token** — the same posture the robot itself already has. See below.
 

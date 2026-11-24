@@ -171,7 +171,8 @@ citado no envelope do pedido, como o contexto do ambiente.
 | Visão — negativos | **validado real** | `model_missing`, `provider_offline`, `cloud_disabled`, `disabled`; o chat diz que não vê |
 | Visão × GPU (job diário do outro agente) | **resolvido por admissão** (§10) | 37 testes da visão no PC; mutantes mortos |
 | Casa | implementado; real até a fronteira | onboarding com entradas inválidas → códigos certos, nada gravado; situação no envelope (acima). **Real: sem Home Assistant nesta casa** |
-| Spotify | implementado; real até a autorização | `spotify.log`; voz recusada pela política (painel, chat e voz). **Real: Client ID do Michel** |
+| Spotify — Web API (painel) | implementado; real até a autorização | `spotify.log`. **Real: Client ID do Michel** |
+| Spotify — voz e chat pelo spotatui (§13) | **validado real (níveis 1, 2 e 3)** | §13: tocar, pausar, continuar, fila, próxima, playlist, "que música" e volume por voz no robô, confirmados pelo player; `nivel3-*.log` |
 | Família | implementado; fluxo de cadastro validado pela UI real sem cadastrar ninguém | criar com consentimento, recusa de menor sem responsável, captura guiada → "nenhum rosto no quadro", desativar, persistência após reiniciar o serviço, apagar em dois cliques; pasta 0700/0600, nada no git (`familia-ui.log`). **Cadastro real: consentimento presencial** |
 | Painel 5 telas no robô | **validado real** | 5 larguras × 7 telas: 0 rolagem, 0 alvo < 44 px no toque, 0 cartão cortado, STOP visível, status real, 0 erro de JS; stream + 10 trocas de aba + 5 recargas → 0 cliente de câmera sobrando (`final-34cddf9/`) |
 | Correções vindas do hardware | feitas, com teste | status por evento, timeout/carga/admissão da visão, alvos mini e ⏮/⏭, câmera primeiro no celular, resumo real no INÍCIO, atalhos em AJUSTES, situação da casa, capturas no fuso da casa |
@@ -359,8 +360,116 @@ carga legítima seria abortada; aqui leva 2,6 s); o `garra-stt.service`, que nã
   `systemctl --user restart garra-reachy-companion`. A visão local não altera
   nada no Ollama além de carregar o próprio modelo.
 - **Configuração do robô:** as chaves novas (`vision_*`,
-  `family_recognition_enabled`) são ignoradas por builds antigos; nada precisa
-  ser desfeito.
+  `family_recognition_enabled`, `music_voice_enabled`) são ignoradas por builds
+  antigos; nada precisa ser desfeito.
+- **Música por voz:** desligar é o interruptor do painel (Controle › Música), ou
+  `music_voice_enabled: false`. No PC, as preferências ficam em
+  `~/.config/garra-reachy/musica.json`; apagar volta ao destino padrão.
+
+## 13. Música por voz pelo spotatui (30/09, tarde)
+
+### 13.1 O que já funcionava, e como (descoberta somente leitura)
+
+- **spotatui 0.43.0** no PC (`~/.local/bin`), configuração do usuário em
+  `~/.config/spotatui/`, sessão da Spotify guardada e renovada pelo próprio
+  spotatui (cache em `~/.local/state/spotatui/`, não lido por nós).
+- A outra sessão do Claude Code usava o **plugin** `spotatui@spotatui`
+  (marketplace local), que sobe `spotatui mcp` por stdio; o MCP fala com a TUI
+  aberta por uma porta local com token. Esta sessão não o via porque o plugin
+  foi ligado depois que ela começou.
+- **Nível 1 (Claude):** tocar pelo MCP e conferir pela CLI — tocando no
+  aparelho `spotatui`, progresso andando; pausa só depois de ler "tocando".
+
+### 13.2 O caminho do Garra (sem Claude)
+
+voz → STT → `musica_pedido.interpretar` (sem modelo) → ponte
+`POST /api/musica/comando` (token do robô) → `companion/musica_comandos.py`
+→ `companion/spotatui.py` (CLI, argv sem shell) → Spotify → leitura do player
+→ resultado estruturado → frase (`musica.frase`) → TTS do robô.
+
+- **O MCP ficou de fora, medido:** não pausa, não retoma, não muda volume nem
+  lista aparelhos; o "agora" dele disse "pausado" com a música tocando e a
+  "fila" seguiu vazia com uma faixa enfileirada (a "próxima" foi para ela).
+  A CLI lê a Web API.
+- **Quem mantém o quê:** o adaptador vive no companion (serviço do systemd,
+  reinício supervisionado). O player é a TUI do spotatui aberta num terminal da
+  sessão do dono: não há modo daemon, a TUI pede terminal e se atualiza sozinha
+  ao abrir — por isso o companion **não** a lança. Fechada, o estado é
+  "player fechado" (painel e voz dizem isso). Outro aparelho pode ser o destino.
+- **Onde toca e onde fala:** a música toca no aparelho alvo (padrão: o player
+  spotatui do PC, pelas caixas do PC); a confirmação é falada pelo robô.
+  "Tocando" é o estado técnico do player — mais o stream ativo no PipeWire,
+  visto no teste; não é prova de que alguém ouviu.
+
+### 13.3 Regras que a confirmação respeita
+
+Tocando só com a faixa pedida no aparelho alvo e o tempo andando entre duas
+leituras; pausa/retomada só alternam lendo o estado oposto (a CLI só tem
+`--toggle`) e nunca com estado desconhecido; comando sem efeito vira falha e
+não é repetido; mesmo `request_id` roda uma vez (e com outro pedido é recusado);
+"próxima" sem próxima devolve a música ao ponto em que estava (`--seek`); busca
+que não bate com o que foi ouvido pergunta em vez de tocar; música abaixada
+para a fala e devolvida só se ninguém mexeu (±1), com o estado guardado antes
+do comando e recuperado na partida; 429 da Spotify pausa os comandos pelo tempo
+pedido. Controles (pausa, próxima…) não mexem em música de outro aparelho;
+**tocar** toca no alvo, como qualquer app da Spotify.
+
+### 13.4 Política
+
+Developer Policy da Spotify (lida em 30/09): III.3 não permite assistente de
+voz controlando o Spotify; III.14 proíbe mandar conteúdo da Spotify a modelo.
+O comando por voz é **opt-in do dono** (`music_voice_enabled`, desligado de
+fábrica), com o aviso no painel onde se liga. Nada da Spotify vai ao modelo: o
+pedido é entendido sem modelo, a frase sai de modelo fixo, e o modelo só recebe
+uma frase de situação (sem título nem artista). **Decisão pendente do Michel,
+na fronteira de publicação:** distribuir publicamente a 1.4.1 com esse
+interruptor (desligado) ou tirá-lo do build público.
+
+### 13.5 Medidas reais
+
+- Latência pela ponte (companion do systemd): tocar por nome 5,8 s; genérico
+  8,1 s; pausar 4,3 s; continuar 5,5 s; fila 6,0 s; anterior 4,0 s; volume
+  1,6 s; "o que toca" 1,6 s. Cada chamada à CLI custa ~0,5–1 s; a busca, 1,6 s.
+- Por voz (clipe pelas caixas do PC → microfone do robô): da fala à confirmação,
+  6–9 s nos comandos que tocam; "você consegue tocar música?" 0,8 s, sem modelo.
+- **Escuta com música nas mesmas caixas a 40%:** 5 de 8 comandos passaram da
+  frase de ativação na primeira rodada; o STT ouviu "fala gata", "fala galera",
+  "fala cara", "fala h", "ela agarra". Com a música tocando, quem tenta chamar
+  (quase-frase ou palavra de comando) faz a música baixar 10 s para a repetição
+  ser ouvida — disparou nas duas frases perdidas da terceira rodada.
+- **Variantes reais do STT**, hoje entendidas: "toca o Hotel California",
+  "toco hotel Califórnia", "coloque evidências na fila", "aumento de volume",
+  "que o música está tocando", "que você está tocando".
+- **Limite de taxa:** depois de um dia inteiro de testes (e com a TUI aberta,
+  que também lê a API), a Spotify devolveu `429 … retry in 600s`. Agora: pausa
+  local pelo tempo pedido, conferência com no máximo 6 leituras, 1 s entre elas.
+- **Modelo negando o recurso** ("não consigo tocar músicas por aqui") quando o
+  STT errava o comando: a situação da música passou a ir sempre que a frase
+  fala de tocar, ouvir, volume ou cantar, e proíbe negar e inventar estado.
+
+### 13.6 Revisões
+
+- Revisão independente (outro agente, somente leitura, sobre `5d0294b`):
+  parser sequestrando conversa ("por que…", "coloca leite na lista", "quero
+  ouvir uma piada", "pesquisa o dólar") — corrigido; abafamento que podia
+  perder o volume — corrigido; toggle com estado desconhecido — corrigido;
+  laço de voz surdo até 65 s — teto de 30 s; id reaproveitado — recusado; fila
+  "já está" por 10 min — 90 s; erro lido do log — só a linha de erro; ambiente
+  do companion (com a chave da OpenRouter) passado à CLI — ambiente mínimo;
+  chaves de tradução faltando — incluídas. Aceito e documentado: tocar puxa a
+  conta para o alvo; conferência de playlist sem o nome da playlist (a CLI não
+  o informa) aceita troca de faixa.
+- RCs no robô: `5d0294b`, `7ae745a`, `cc01630`, `4205e4b` (cada um instalado
+  por estado; a configuração do robô sobreviveu a todos).
+
+### 13.7 O que não se garante
+
+- Voz e música saindo da mesma caixa é o pior caso; uma pessoa perto do robô
+  tem relação sinal/ruído melhor. Não há cancelamento de eco (o robô não sabe
+  o que o PC toca).
+- A fila não se lê (a CLI não tem, o MCP não reflete): "adicionei à fila" é o
+  aceite da Spotify.
+- Com a TUI fechada, a voz diz que o player está fechado — e só.
 
 ## PRÓXIMA AÇÃO EXATA
 

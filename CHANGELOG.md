@@ -139,15 +139,29 @@ nunca foi olhado, só duração, energia e o trecho parecido com a frase.
   execute` no modo restrito da voz; o resto continua recusado por política.
   Estados: não configurada / pendente / conectada / quebrada, cada um dito.
 
-- **Música (Spotify), até onde a política deixa.** Controle › Música: Client
-  ID, conexão da conta pelo navegador **do computador** (loopback, como a
-  Spotify exige; `http://127.0.0.1:8125/spotify/conectar`), tokens no
-  computador (0600), onde está tocando, aparelhos, tocar/pausar/próxima/
-  anterior/volume/transferir. **Comando por voz não existe** — a política de
-  desenvolvedores da Spotify o proíbe para assistentes; "toca uma música" é
-  recusado antes de chegar ao modelo, e nada da Spotify vai ao modelo. A
-  música toca nos seus aparelhos Spotify, não no robô (a reprodução no próprio
-  hardware exige o eSDK, só para parceiros).
+- **Música por voz: "toca Hotel California", tocado, conferido e confirmado.**
+  O caminho que o Claude Code já usava neste PC (o spotatui, com a sessão que
+  ele mesmo guarda) virou ferramenta do Garra: o robô entende o pedido sem
+  modelo (`musica_pedido.py`), a ponte leva o pedido tipado
+  (`POST /api/musica/comando`), o companion executa pela CLI do spotatui
+  (argumentos separados, sem shell, ambiente mínimo, TMPDIR próprio) e só
+  responde "tocando" depois de ler o player: a faixa pedida, no aparelho alvo,
+  com o tempo andando. O robô fala a confirmação pelo TTS de sempre, com a
+  música abaixada durante a fala. Tocar por nome, genérico (retoma o pausado;
+  sem nada, uma curtida e mais três na fila), playlist, fila, pesquisa ("toca
+  essa"), pausar, continuar, próxima, anterior, volume e "que música está
+  tocando". Pausa e retomada só alternam depois de ler o estado oposto;
+  comando sem efeito vira falha e não é repetido; o mesmo `request_id` roda
+  uma vez; busca que não bate com o que foi ouvido pergunta em vez de tocar; o
+  limite de taxa da Spotify (429) pausa os comandos pelo tempo pedido.
+  **Opt-in do dono** (`music_voice_enabled`, desligado de fábrica): a
+  Developer Policy III.3 da Spotify não permite assistente de voz em app
+  distribuído, e o painel diz isso onde se liga. Nada da Spotify vai ao modelo
+  (III.14); o modelo só recebe a situação da música para nunca negar o
+  recurso nem inventar o que está tocando. Painel: estado real (pronto, player
+  fechado, conta desconectada, Spotify pediu espera), aparelho alvo, playlist
+  padrão, reconectar. Sem o spotatui, segue o provedor da Web API (conta
+  conectada no navegador DO COMPUTADOR, só pelo painel).
 
 - **Família: reconhecer quem consentiu** (`family_recognition_enabled`,
   desligado por padrão). Ajustes › Família cadastra perfis com consentimento
