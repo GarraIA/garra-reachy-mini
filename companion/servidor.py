@@ -54,6 +54,16 @@ async def health():
     return {"ok": True, "service": "garra-reachy-companion", "port": PORTA}
 
 
+_vigia = None
+
+
+@app.get("/api/reachy/watch")
+async def vigia_estado():
+    """O que o vigia viu na última volta (robô, app, endereços)."""
+    return {"enabled": _vigia is not None,
+            **(_vigia.estado if _vigia is not None else {"status": "disabled"})}
+
+
 # ── Spotify: conectar a conta, só por aqui ──────────────────────────────────
 # A Spotify só aceita redirect por HTTPS ou por IP de loopback literal. Este
 # servidor escuta em 127.0.0.1: é o único lugar da casa onde o callback é
@@ -441,5 +451,14 @@ def main() -> int:
 
     log.info("companion em http://%s:%d · ponte do robô em http://%s:%d · voz em %s",
              HOST, PORTA, voz.ip_lan(), ponte.PORTA, voz.url_lan())
+    # O vigia: reaponta o robô quando o IP daqui muda e sobe o app depois que
+    # o robô reinicia. Desligável por GARRA_VIGIA=0.
+    from . import vigia as vigia_mod
+    global _vigia
+    if vigia_mod.ligado():
+        _vigia = vigia_mod.Vigia()
+        threading.Thread(target=_vigia.rodar, args=(threading.Event(),), daemon=True,
+                         name="vigia-robo").start()
+        log.info("vigia do robô ligado (a cada %d s)", int(vigia_mod.INTERVALO_S))
     uvicorn.run(app, host=HOST, port=PORTA, log_level="warning")
     return 0
