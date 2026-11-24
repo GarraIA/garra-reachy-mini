@@ -17,7 +17,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from . import agente, agente_teste, modo, musica, ponte, reachy, seguranca, unidade, voz
+from . import agente, agente_teste, identidade, modo, musica, ponte, reachy, seguranca, unidade, voz
 
 HOST = "127.0.0.1"
 PORTA = 8125
@@ -306,7 +306,7 @@ async def conversa_estado(panel: str | None = None):
 @app.get("/api/reachy/agent-identity")
 async def agente_ler():
     try:
-        return {"ok": True, **await asyncio.to_thread(agente.ler)}
+        return {"ok": True, **await asyncio.to_thread(identidade.ler)}
     except agente.ErroAgente as e:
         return JSONResponse({"ok": False, "error": {"code": "gateway_config_error",
                                                     "detail": str(e)}},
@@ -317,7 +317,7 @@ async def agente_ler():
 async def agente_gravar(corpo: dict):
     try:
         return {"ok": True, **await asyncio.to_thread(
-            agente.gravar, corpo, str(corpo.get("updated_by") or "garra-dashboard"))}
+            identidade.gravar, corpo, str(corpo.get("updated_by") or "garra-dashboard"))}
     except agente.ConflitoAgente as e:
         # 409 com o estado atual: quem editou pelo outro painel não é
         # sobrescrito em silêncio.
@@ -333,7 +333,7 @@ async def agente_restaurar(corpo: dict | None = None):
     corpo = corpo or {}
     try:
         return {"ok": True, **await asyncio.to_thread(
-            agente.restaurar, corpo.get("revision"),
+            identidade.restaurar, corpo.get("revision"),
             str(corpo.get("updated_by") or "garra-dashboard"))}
     except agente.ConflitoAgente as e:
         return JSONResponse({"ok": False, "conflict": True, **e.atual}, status_code=409)
@@ -438,7 +438,7 @@ def main() -> int:
     from . import agentes as agentes_mod
     registro = agentes_mod.Registro(
         chave_gateway=chave, modelo_do_garra=ponte.modelo_configurado,
-        identidade=agente.ler)
+        identidade=identidade.ler)
     resumo = registro.listar()
     log.info("agentes: %s · ativo: %s%s",
              ", ".join(f"{a['id']}{'' if a['available'] else ' (indisponível)'}"

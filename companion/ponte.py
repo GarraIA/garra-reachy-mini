@@ -44,7 +44,7 @@ import urllib.parse
 
 import httpx
 
-from . import agente, casa as casa_mod, familia as familia_mod, modo, musica as musica_mod, visao
+from . import agente, casa as casa_mod, familia as familia_mod, identidade, modo, musica as musica_mod, visao
 from . import musica_comandos, ponte_agentes, spotatui
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -387,7 +387,7 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
         if not _autorizado(request, token):
             return JSONResponse({"erro": "token inválido"}, status_code=401)
         try:
-            return {"ok": True, **await asyncio.to_thread(agente.ler)}
+            return {"ok": True, **await asyncio.to_thread(identidade.ler)}
         except agente.ErroAgente as e:
             return JSONResponse({"ok": False, "error": {"code": "gateway_config_error",
                                                         "detail": str(e)}},
@@ -405,7 +405,7 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
             return JSONResponse({"erro": "corpo inválido"}, status_code=400)
         try:
             return {"ok": True, **await asyncio.to_thread(
-                agente.gravar, corpo, str(corpo.get("updated_by") or "painel-robo"))}
+                identidade.gravar, corpo, str(corpo.get("updated_by") or "painel-robo"))}
         except agente.ConflitoAgente as e:
             return JSONResponse({"ok": False, "conflict": True, **e.atual},
                                 status_code=409)
@@ -425,7 +425,7 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
         corpo = corpo if isinstance(corpo, dict) else {}
         try:
             return {"ok": True, **await asyncio.to_thread(
-                agente.restaurar, corpo.get("revision"), "painel-robo")}
+                identidade.restaurar, corpo.get("revision"), "painel-robo")}
         except agente.ConflitoAgente as e:
             return JSONResponse({"ok": False, "conflict": True, **e.atual},
                                 status_code=409)

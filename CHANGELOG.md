@@ -78,6 +78,13 @@ computador da casa. O desenho e as medidas estão em
   frase atrapalhava o resto ("qual é a capital da França?" virou "porém é o
   telefone?"). O pedido agora fica com a escuta que o ouviu melhor.
 
+- **O nome do robô dependia do Garra — e tinha deixado de funcionar.** O painel
+  lia e gravava o nome no bloco do agente `reachy_voice` do `config.yml` do
+  gateway; sem esse bloco (como nesta máquina) não dava para ler nem mudar. O
+  nome, o operador e a personalidade agora são do robô (`companion/identidade.py`):
+  ficam no Garra quando ele tem o agente, e no companion quando não tem. Medido:
+  nome trocado para "Garrinha" com o Hermes ativo, e o Hermes respondeu com ele.
+
 - **Agente parado aparecia como "computador inacessível"**, com a orientação
   errada. O painel distingue os dois, e a dica do computador inacessível passou
   a mencionar o firewall — que foi a causa de verdade.

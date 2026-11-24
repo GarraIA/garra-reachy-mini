@@ -23,7 +23,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import agente as identidade
+from .. import identidade
 from .base import ErroDoAgente
 from .registro import Registro
 

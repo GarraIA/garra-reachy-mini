@@ -79,12 +79,14 @@ Três ajustes independentes, guardados em lugares diferentes:
 
 | Ajuste | Onde | Padrão |
 |---|---|---|
-| Nome do robô, de quem ele é, jeito de falar | identidade (`companion/agente.py`) | Garra |
+| Nome do robô, de quem ele é, jeito de falar | identidade (`companion/identidade.py`): no `config.yml` do Garra quando ele tem o agente `reachy_voice`; senão em `~/.config/garra-reachy/identidade.json` | Garra |
 | Frase de ativação | `conversation.wake_phrase_text` no robô | Fala Garra |
 | Agente de IA | `~/.config/garra-reachy/agentes.json` no computador | Hermes |
 
 O papel que cada agente recebe (`companion/agentes/persona.py`) leva o **nome do
 robô**, nunca o do agente: dá para dizer "Fala Garra" e quem pensa ser o Hermes.
+Medido: com o Hermes ativo, o nome foi trocado no painel para "Garrinha" e, à
+pergunta "qual é o seu nome?", a resposta foi "Garrinha".
 
 ## 3. Segurança
 
@@ -264,5 +266,5 @@ microfone do computador, transcrita (se o som saiu mesmo).
 - A resposta é falada inteira depois de pronta. Os adaptadores leem o fluxo do
   agente, mas o protocolo robô ↔ ponte ainda é pergunta e resposta.
 - Voz: um motor (Chatterbox). "Vozes" são amostras de ~10 s que ele imita.
-- Nome do robô e personalidade ainda são lidos do `config.yml` do Garra quando
-  ele existe; sem Garra na máquina, valem os padrões.
+- Mudar o nome ou a personalidade vale para conversas NOVAS: a que está aberta
+  com o agente segue com o papel de quando começou.
