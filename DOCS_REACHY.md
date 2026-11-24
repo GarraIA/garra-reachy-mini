@@ -196,6 +196,29 @@ Base: `http://localhost:<porta>` (8042–8046, ver §1).
 | POST | `/api/chat/limpar` | Esquece a sessão |
 | POST | `/api/chat/falar` | `{"text": "..."}` — fala pelo robô |
 
+### Agente de IA, robô e voz (1.5.0)
+
+| Método | Rota | O que faz |
+|---|---|---|
+| GET | `/api/robot/ai-agents` | Agentes do computador, com saúde, segurança, opções; quem está ativo |
+| PUT | `/api/robot/ai-agents/active` | `{"id": "hermes"}` — troca o agente (sem reiniciar nada) |
+| PUT | `/api/robot/ai-agents/fallback` | `{"id": "pi"}` ou `{"id": null}` — o agente reserva |
+| POST | `/api/robot/ai-agents/{id}/test` | Uma ida e volta de verdade; devolve tempo e resposta |
+| PUT | `/api/robot/ai-agents/{id}/options` | Opção segura do agente (`{"tools": "web"}`, `{"model": "…"}`) |
+| POST | `/api/robot/ai-agents` | Cadastra servidor HTTP da casa (`id`, `name`, `base_url`, `model`) |
+| DELETE | `/api/robot/ai-agents/{id}` | Remove um servidor HTTP cadastrado |
+| POST | `/api/robot/ai-agents/discover` | Procura os agentes de novo |
+| GET | `/api/robot/system` | Versões (app, daemon), áudio, jeito, última conferência de atualização |
+| POST | `/api/robot/system/check-update` | Só confere se há versão nova do software do robô |
+| PUT | `/api/robot/audio` | `{"speaker_volume": 0-100}` e/ou `{"microphone_volume": 0-100}` |
+| POST | `/api/robot/audio/test-sound` | Som de teste do daemon, sem TTS |
+| PUT | `/api/robot/behavior` | `ambient_motion`, `face_tracking`, `speech_wobble` (verdadeiro/falso) |
+| GET | `/api/robot/voice/options` | Idiomas, vozes e motores que o servidor de voz oferece |
+| POST | `/api/robot/voice/test/listen` | Ouve a PRÓXIMA fala e devolve o que entendeu, sem mandar a agente |
+
+Todas as de agente são repasse para a ponte do computador (`/api/agentes*`), que
+só aceita daqui o que não afrouxa a segurança de agente nenhum.
+
 Respostas de ação sempre no mesmo formato:
 
 ```json
@@ -229,7 +252,15 @@ linha do tempo completa: mensagem → ferramenta → ação → movimento → re
 | `robot.action.failed` | Falhou (traz `error`) |
 | `robot.estop` / `robot.estop_cleared` | Parada de emergência |
 | `robot.error` | Erro registrado |
-| `voice.state` | `listening` · `thinking` · `speaking` · `idle` |
+| `voice.state` | `listening` · `thinking` · `speaking` · `idle` (dirige os gestos) |
+| `voice.phase` | O que a tela mostra: `connecting` · `standby` (com `reason`) · `wake_listening` · `listening` · `transcribing` · `processing` · `speaking` |
+| `voice.error` | Um tropeço da voz: `stt_failed` · `tts_failed` · `agent_failed` |
+| `voice.listening` | O microfone foi liberado ou reaberto (`enabled`) |
+| `voice.wake.activated` | A frase de ativação casou (`match`: `exact`, `approximate`, `second_listen`) |
+| `voice.wake.acknowledged` | O "ouvi": `sound` (bipe tocado) e `motion` (antenas) |
+| `voice.wake.rejected` | Fala recusada por falta da frase — sem texto, só a faixa de duração |
+| `voice.wake.near_miss` | Diagnóstico: o trecho que pareceu a frase, e o que a conferência decidiu |
+| `voice.turn.started` / `.completed` / `.cancelled` | Um turno de conversa (`brain_ms`, `total_ms`, `agent`) |
 | `chat.message` | Mensagem de voz ou do painel (`role`, `content`, `source`) |
 
 ```json
@@ -561,6 +592,13 @@ e ajuste os candidatos em `EXPRESSOES` no `robo/catalogo.py`.
 | `web/api.py` | Rotas REST/WS, MJPEG, middleware de origem e limite |
 | `web/camera.py` | `FrameHub` — um produtor, vários consumidores |
 | `web/chat.py` | Ponte com o gateway (sessão própria, `agent_id`) |
+| `sistema.py` | Versões, áudio e conferência de atualização, pelo daemon |
+| `ativacao.py` | Frases de ativação, sessão, segunda escuta, o bipe do "ouvi" |
+| `segmentador.py` | Detector de fala: piso de ruído, sensibilidade, pausa de fim de fala |
+| `companion/agentes/` | **No computador**: o contrato dos agentes de IA e os adaptadores (Hermes, Pi, linha de comando, HTTP, Garra), o registro e as sessões |
+| `companion/ponte_agentes.py` | **No computador**: rotas `/api/agentes*` e a conversa com o agente ativo |
+| `companion/identidade.py` | **No computador**: nome, operador e personalidade do robô, com ou sem Garra |
+| `companion/vigia.py` | **No computador**: reaponta o robô e inicia o app depois de um reinício |
 | `web/seguranca.py` | Política de rede, token, origem, escolha de porta |
 | `static/reachy.{html,css,js}` | Painel, com os tokens `--garra-*` do console |
 | `garra_reachy_mini.mcp/servidor.py` | Servidor MCP stdio; cliente HTTP da API |
