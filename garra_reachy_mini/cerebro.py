@@ -35,9 +35,35 @@ AVISO_MODO_BASICO = (
 )
 AVISO_MODO_COMPLETO = "Meu modo completo voltou. "
 AVISO_SEM_CEREBRO = (
-    "Não consegui falar com nenhum cérebro agora: nem o gateway do Garra, nem "
-    "um modo reserva. Verifique se o garra start está rodando."
+    "Não consegui falar com nenhum agente de inteligência agora. Veja no painel "
+    "se o computador está ligado e se o agente escolhido está disponível."
 )
+# O agente escolhido no computador não respondeu. O nome vem da ponte, que é
+# quem sabe quem está atendendo — o robô não o adivinha.
+FALHA_AGENTE = "Não consegui falar com o {nome} agora. Tente de novo daqui a pouco."
+FALHA_AGENTE_TIMEOUT = "O {nome} demorou demais para responder."
+FALHA_AGENTE_ACESSO = ("O {nome} está sem acesso no computador: ele precisa de "
+                       "login ou de uma chave.")
+_FALAS_DE_FALHA = {"agent_timeout": FALHA_AGENTE_TIMEOUT, "agent_auth": FALHA_AGENTE_ACESSO,
+                   "agent_unavailable": FALHA_AGENTE, "agent_session_lost": FALHA_AGENTE,
+                   "agent_bad_response": FALHA_AGENTE}
+
+
+def _nome_do_agente(bruto: object) -> str:
+    """O nome que veio da ponte, pronto para ser DITO: curto e só com letras."""
+    limpo = "".join(c for c in str(bruto or "") if c.isalnum() or c in " -")
+    return " ".join(limpo.split())[:32] or "agente"
+
+
+def falha_do_agente(corpo: object) -> tuple[str, str, str | None] | None:
+    """`(fala, código, id do agente)` se o corpo é uma falha de agente da ponte."""
+    erro = corpo.get("error") if isinstance(corpo, dict) else None
+    codigo = erro.get("code") if isinstance(erro, dict) else None
+    if not isinstance(codigo, str) or codigo not in _FALAS_DE_FALHA:
+        return None
+    fala = _FALAS_DE_FALHA[codigo].format(nome=_nome_do_agente(erro.get("agent_name")))
+    agente = erro.get("agent")
+    return fala, codigo, agente if isinstance(agente, str) else None
 
 
 @dataclass
@@ -49,6 +75,9 @@ class RespostaCerebro:
     task_id: str | None = None
     erro: str | None = None    # "timeout" | "provider" | "parse" | "gateway_off" | ...
     marca: int | None = None   # marca d'água a confirmar DEPOIS de falar
+    # Quem respondeu de fato, quando a ponte diz (`hermes`, `garra`, `pi`, …).
+    # `modo` continua dizendo POR ONDE a resposta veio; isto diz DE QUEM.
+    agente: str | None = None
 
 
 class GatewayIndisponivel(Exception):
@@ -259,6 +288,11 @@ class GatewayBrain:
         corpo = {"content": texto, "agent_id": self.cfg.agent_id}
         if self.cfg.gateway_model:
             corpo["model"] = self.cfg.gateway_model
+        # O idioma da conversa, para o agente responder nele. Só quando difere
+        # do padrão: um gateway antigo não conhece o campo.
+        idioma = (self.cfg.conversa or {}).get("speech_language")
+        if isinstance(idioma, str) and idioma and idioma != "pt":
+            corpo["language"] = idioma
         # Turno inteiro sob trava: se o poller ler o histórico entre o POST e a
         # atualização do cursor, ele enfileira a resposta síncrona e o robô a
         # repete em voz alta no próximo silêncio.
@@ -285,21 +319,33 @@ class GatewayBrain:
                 codigo = r.status_code if r is not None else "?"
                 self.log.error("Gateway erro no turno: HTTP %s %s", codigo,
                                r.text[:300] if r is not None else "")
+                # A ponte explica quando é o AGENTE que não respondeu, e aí o
+                # robô diz quem — em vez de um "me embananei" que parece
+                # defeito dele.
+                try:
+                    falha = falha_do_agente(r.json()) if r is not None else None
+                except ValueError:
+                    falha = None
+                if falha is not None:
+                    return RespostaCerebro(False, falha[0], "gateway", "erro",
+                                           erro=falha[1], agente=falha[2])
                 return RespostaCerebro(False, FALHA_GENERICA, "gateway", "erro",
                                        erro=f"http_{codigo}")
             try:
-                conteudo = (r.json().get("content") or "").strip()
+                dados = r.json()
+                conteudo = (dados.get("content") or "").strip()
             except (ValueError, AttributeError, TypeError):
                 self.log.error("Gateway devolveu corpo ilegível no turno: %r",
                                r.text[:300])
                 return RespostaCerebro(False, FALHA_GENERICA, "gateway", "erro",
                                        erro="parse")
+            agente = dados.get("agent") if isinstance(dados.get("agent"), str) else None
             marca = self._sincronizar_cursor()
             if not conteudo:
                 return RespostaCerebro(False, FALHA_GENERICA, "gateway", "erro",
-                                       erro="vazio", marca=marca)
+                                       erro="vazio", marca=marca, agente=agente)
             self._ultima_resposta = conteudo
-            return RespostaCerebro(True, conteudo, "gateway", marca=marca)
+            return RespostaCerebro(True, conteudo, "gateway", marca=marca, agente=agente)
 
     def _sincronizar_cursor(self) -> int:
         """Marca o histórico atual como BUSCADO e devolve a marca d'água.
@@ -489,6 +535,36 @@ class OpenRouterBrain:
         return RespostaCerebro(True, resposta, "openrouter")
 
 
+def agente_ativo(cfg: Config, timeout: float = 2.0) -> dict | None:
+    """Quem atende do outro lado, segundo a ponte. `None` se ela não diz.
+
+    Um gateway do Garra falado direto, ou um companion anterior aos agentes,
+    não tem a rota — e a resposta certa é "não sei", não um erro.
+    """
+    cabecalhos = ({"Authorization": f"Bearer {cfg.gateway_key}"}
+                  if cfg.gateway_key else {})
+    try:
+        r = requests.get(f"{cfg.gateway_url.rstrip('/')}/api/agentes",
+                         headers=cabecalhos, timeout=timeout)
+        dados = r.json() if r.status_code == 200 else None
+    except (requests.RequestException, ValueError):
+        return None
+    if not isinstance(dados, dict) or not isinstance(dados.get("agents"), list):
+        return None
+    for a in dados["agents"]:
+        if isinstance(a, dict) and a.get("id") == dados.get("active"):
+            return {"id": str(a["id"]), "name": _nome_do_agente(a.get("name")),
+                    "available": bool(a.get("available"))}
+    return None
+
+
+def descricao_do_gateway(cfg: Config) -> str:
+    ativo = agente_ativo(cfg)
+    if ativo is None:
+        return f"Garra gateway ({cfg.gateway_url})"
+    return f"{ativo['name']} ({cfg.gateway_url})"
+
+
 def sondar(cfg: Config, timeout: float = 2.0) -> tuple[bool, str, str]:
     """Estado do cérebro sem construir nada — `(disponível, código, descrição)`.
 
@@ -512,7 +588,7 @@ def sondar(cfg: Config, timeout: float = 2.0) -> tuple[bool, str, str]:
     except requests.RequestException:
         pass
     if ok:
-        return True, "gateway", f"Garra gateway ({cfg.gateway_url})"
+        return True, "gateway", descricao_do_gateway(cfg)
     if descobrir_binario(cfg):
         return True, "garra_bin", "garra ask (local binary)"
     if chave_real(os.environ.get("OPENROUTER_API_KEY")):
@@ -577,7 +653,7 @@ class Cerebro:
     def descrever(self) -> tuple[str, str]:
         """(código, descrição legível) do cérebro em uso. Sem segredo nenhum."""
         if self._gateway_ok:
-            return "gateway", f"Garra gateway ({self.cfg.gateway_url})"
+            return "gateway", descricao_do_gateway(self.cfg)
         if isinstance(self.reserva, AskBrain):
             return "garra_bin", "garra ask (local binary)"
         if isinstance(self.reserva, OpenRouterBrain):

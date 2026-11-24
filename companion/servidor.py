@@ -407,6 +407,10 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
+    # O httpx registra em INFO cada requisição que faz. Com a saúde dos
+    # agentes conferida a cada sonda do robô, isso seria uma linha a cada
+    # poucos segundos no journal — ruído que esconde o que importa.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     token = voz.token()  # cria o token 0600 na primeira execução
 
     # Dois servidores no mesmo processo, de propósito:
@@ -419,7 +423,18 @@ def main() -> int:
     # recusa a sessão (400) e o robô fica sem cérebro — falha fechada.
     log.info("modo restrito da voz (%s): %s", modo.NOME,
              ponte._garantir_modo(chave))
-    lan = ponte.montar(token, chave)
+    # Os agentes que podem atender o robô. O nome e o jeito do robô vêm da
+    # identidade (hoje guardada no config do Garra); o agente é escolha à parte.
+    from . import agentes as agentes_mod
+    registro = agentes_mod.Registro(
+        chave_gateway=chave, modelo_do_garra=ponte.modelo_configurado,
+        identidade=agente.ler)
+    resumo = registro.listar()
+    log.info("agentes: %s · ativo: %s%s",
+             ", ".join(f"{a['id']}{'' if a['available'] else ' (indisponível)'}"
+                       for a in resumo["agents"]),
+             resumo["active"], "" if resumo["explicit"] else " (padrão)")
+    lan = ponte.montar(token, chave, registro=registro)
     cfg = uvicorn.Config(lan, host="0.0.0.0", port=ponte.PORTA, log_level="warning")
     threading.Thread(target=uvicorn.Server(cfg).run, daemon=True,
                      name="ponte-robo").start()

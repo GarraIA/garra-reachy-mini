@@ -45,7 +45,7 @@ import urllib.parse
 import httpx
 
 from . import agente, casa as casa_mod, familia as familia_mod, modo, musica as musica_mod, visao
-from . import musica_comandos, spotatui
+from . import musica_comandos, ponte_agentes, spotatui
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -296,17 +296,25 @@ _STATUS_DA_CASA = {"invalid_url": 400, "invalid_token": 400, "unreachable": 502,
                    "not_configured": 409, "config_error": 500, "gateway_restart_failed": 502}
 
 
+_agentes: ponte_agentes.Agentes | None = None
+
+
 def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None,
-           casa=None, musica=None, familia=None, comandos=None) -> FastAPI:
+           casa=None, musica=None, familia=None, comandos=None,
+           registro=None) -> FastAPI:
     """Devolve o app da ponte já com o token e a chave real do gateway.
 
     `visao_local`/`visao_nuvem` são os provedores de visão; sem eles, os de
     verdade — o Ollama deste PC e a OpenRouter com a chave do ambiente. `casa`
     é quem liga o Home Assistant ao gateway (`casa.Casa`).
+
+    `registro` é o catálogo de agentes (`agentes.Registro`). Sem ele a ponte é
+    a de sempre: tudo vai ao gateway do Garra.
     """
     # Módulo, não closure: o `app` é um só e as rotas ficam registradas na
     # primeira chamada; o que `montar` decide depois precisa valer também.
-    global _olho_local, _olho_nuvem, _casa, _musica, _comandos, _familia
+    global _olho_local, _olho_nuvem, _casa, _musica, _comandos, _familia, _agentes
+    _agentes = ponte_agentes.Agentes(registro) if registro is not None else None
     _olho_local = visao_local or visao.Local()
     _olho_nuvem = visao_nuvem or visao.Nuvem(chave=os.environ.get("OPENROUTER_API_KEY"))
     _casa = casa or casa_mod.Casa(chave_gateway=chave_gateway)
@@ -334,6 +342,15 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
         cabecalhos = {"Cache-Control": "no-store"}
         if not _ping_liberado():
             return Response(status_code=429, headers=cabecalhos)
+        # Agente atendido aqui (Hermes, Pi, …): a sonda diz se ELE está de pé.
+        # O gateway do Garra pode estar parado sem que isso importe ao robô.
+        vivo = await asyncio.to_thread(_agentes.vivo) if _agentes is not None else None
+        if vivo is not None:
+            if vivo:
+                return Response(content=b"pong", status_code=200,
+                                media_type="text/plain", headers=cabecalhos)
+            return Response(content=b"agent unavailable", status_code=503,
+                            media_type="text/plain", headers=cabecalhos)
         global _cliente
         if _cliente is None:
             _cliente = httpx.AsyncClient(base_url=GATEWAY, timeout=180.0)
@@ -350,6 +367,13 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
                             media_type="text/plain", headers=cabecalhos)
         return Response(content=b"pong", status_code=200,
                         media_type="text/plain", headers=cabecalhos)
+
+    # ── agentes: escolher, testar, cadastrar ─────────────────────────────────
+    # Antes do catch-all, como tudo o que a ponte atende sem repassar.
+    # Leem o registro em vigor a cada chamada (`_agentes` é do módulo): sem
+    # registro, respondem 404 como qualquer rota que a ponte não expõe.
+    ponte_agentes.registrar_rotas(
+        app, lambda request: _autorizado(request, token), lambda: _agentes)
 
     # ── identidade do agente, tratada AQUI dentro ────────────────────────────
     # Não é proxy: o catch-all abaixo repassa ao gateway, e o dono do
@@ -930,6 +954,13 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
             return JSONResponse({"erro": "rota não exposta"}, status_code=404)
         if not _autorizado(request, token):
             return JSONResponse({"erro": "token inválido"}, status_code=401)
+
+        # Quem atende esta conversa? Com outro agente ativo, ela não chega ao
+        # gateway: é respondida pelo adaptador dele, aqui mesmo.
+        if _agentes is not None:
+            atendida = await _agentes.atender(request, alvo)
+            if atendida is not None:
+                return atendida
 
         if _cliente is None:
             _cliente = httpx.AsyncClient(base_url=GATEWAY, timeout=180.0)
