@@ -18,6 +18,8 @@ Uma receita é um dicionário:
 
 `{prompt}`, `{session}` (um id estável da conversa) e `{instructions}` (o papel
 do agente) são trocados dentro de cada argumento; nenhum deles passa por shell.
+O pedido vem de um microfone e pode começar com hífen: ponha `"--"` antes de
+`{prompt}` quando ele for um argumento solto, ou use a forma `--flag={prompt}`.
 Sem `continue`, o programa não tem memória: o histórico recente vai junto do
 pedido.
 
@@ -46,9 +48,9 @@ CLAUDE = {
     "id": "claude", "name": "Claude", "kind": "command",
     "command": ["claude", "-p", "--output-format", "json", "--tools", "",
                 "--strict-mcp-config", "--session-id", "{session}",
-                "--append-system-prompt", "{instructions}", "{prompt}"],
+                "--append-system-prompt", "{instructions}", "--", "{prompt}"],
     "continue": ["claude", "-p", "--output-format", "json", "--tools", "",
-                 "--strict-mcp-config", "--resume", "{session}", "{prompt}"],
+                 "--strict-mcp-config", "--resume", "{session}", "--", "{prompt}"],
     "output": "json:result", "safety": SEM_FERRAMENTAS, "timeout_s": 90,
 }
 

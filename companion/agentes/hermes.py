@@ -100,7 +100,9 @@ class Hermes(Adaptador):
             # O Hermes não tem flag de prompt de sistema na CLI: o papel vai na
             # frente do primeiro pedido, e a sessão o carrega dali em diante.
             pedido = f"{instrucoes}\n\n{texto}" if instrucoes else texto
-        argv += ["-q", pedido]
+        # `--query=…` num argumento só: a transcrição pode começar com hífen
+        # ("- Oi, tudo bem?"), e separada do `-q` ela seria lida como flag.
+        argv.append(f"--query={pedido}")
 
         partes: list[str] = []
         final: str | None = None

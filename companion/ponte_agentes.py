@@ -45,6 +45,10 @@ NAO_GUARDAR = {"Cache-Control": "no-store"}
 # Um teste é uma conversa de verdade: custa token e segundos do agente.
 TESTES_POR_MINUTO = 8
 MUDANCAS_POR_MINUTO = 30
+# Cada turno lança um agente (um processo, uma chamada paga). Uma conversa de
+# verdade não passa de meia dúzia por minuto; o teto existe para que um
+# aparelho da rede, pelo chat do painel, não transforme a ponte numa torneira.
+TURNOS_POR_MINUTO = 30
 PEDIDO_MAX = 24_000            # o envelope do robô, com folga
 
 # Como cada falha do agente chega ao robô. O código vai no corpo; o status é
@@ -90,6 +94,7 @@ class Agentes:
         self.sessoes = sessoes or Sessoes()
         self._testes = _Janela(TESTES_POR_MINUTO)
         self._mudancas = _Janela(MUDANCAS_POR_MINUTO)
+        self._turnos = _Janela(TURNOS_POR_MINUTO)
         registro.ao_mudar = self._esquecer
 
     def _esquecer(self, agente: str) -> None:
@@ -184,6 +189,8 @@ class Agentes:
         # começo com barra como comando dele, e a voz não manda comando.
         if texto.strip().startswith("/"):
             return _erro("slash_command_refused", 400)
+        if not self._turnos.liberado():
+            return _erro("too_many_requests", 429)
         idioma = dados.get("language") if dados.get("language") in IDIOMAS else "pt"
 
         def responder() -> tuple[str, Adaptador]:

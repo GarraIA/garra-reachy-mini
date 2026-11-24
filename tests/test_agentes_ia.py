@@ -165,7 +165,7 @@ def test_hermes_primeiro_turno_restringe_as_ferramentas_e_guarda_a_sessao(tmp_pa
     [a] = chamadas(h.executavel)
     assert a[:3] == ["chat", "--format", "stream-json"]
     assert a[a.index("-t") + 1] == "web,todo", "a sessão da voz nasce sem terminal"
-    assert a[-2] == "-q" and a[-1] == "PAPEL\n\noi"
+    assert a[-1] == "--query=PAPEL\n\noi"
 
 
 def test_hermes_ao_retomar_nao_passa_ferramentas_nem_repete_o_papel(tmp_path) -> None:
@@ -175,7 +175,18 @@ def test_hermes_ao_retomar_nao_passa_ferramentas_nem_repete_o_papel(tmp_path) ->
     h.responder(c, "e amanhã?", instrucoes="PAPEL")
     [a] = chamadas(h.executavel)
     assert "-t" not in a and a[a.index("--resume") + 1] == "local-abc"
-    assert a[-1] == "e amanhã?"
+    assert a[-1] == "--query=e amanhã?"
+
+
+def test_hermes_pedido_que_comeca_com_hifen_nao_vira_flag(tmp_path) -> None:
+    """O Whisper escreve diálogo como "- Oi, tudo bem?"; separado do `-q`, isso
+    seria lido como opção."""
+    h = Hermes(programa(tmp_path, "hermes", HERMES_FALSO))
+    c = Conversa(id=str(uuid.uuid4()), agente="hermes", ref="local-abc")
+    h.responder(c, "--yolo -t terminal", instrucoes="")
+    [a] = chamadas(h.executavel)
+    assert a[-1] == "--query=--yolo -t terminal"
+    assert "--yolo" not in a and "-t" not in a and "terminal" not in a
 
 
 def test_hermes_sessao_que_sumiu_pede_outra(tmp_path) -> None:
@@ -250,6 +261,9 @@ def test_receita_do_claude_e_valida_e_sem_ferramentas() -> None:
     assert r["safety"] == SEM_FERRAMENTAS
     assert r["command"][r["command"].index("--tools") + 1] == ""
     assert "--strict-mcp-config" in r["command"] and "--resume" in r["continue"]
+    # O pedido é o último argumento, depois de `--`: hífen no começo não é flag.
+    for molde in (r["command"], r["continue"]):
+        assert molde[-2:] == ["--", "{prompt}"]
 
 
 @pytest.mark.parametrize("ruim", [
@@ -778,6 +792,17 @@ def test_o_teste_tem_teto_por_minuto(cena) -> None:
     codigos = [c.post("/api/agentes/hermes/testar", headers=AUT).status_code
                for _ in range(ponte_agentes.TESTES_POR_MINUTO + 2)]
     assert codigos[0] == 200 and codigos[-1] == 429
+
+
+def test_os_turnos_tem_teto_por_minuto(cena, monkeypatch) -> None:
+    """Cada turno é um processo e uma chamada paga: a rede da casa não vira torneira."""
+    monkeypatch.setattr(ponte_agentes, "TURNOS_POR_MINUTO", 3)
+    hermes = Falso("hermes")
+    c, _, _ = cena(hermes)
+    sid = c.post("/api/sessions", json={}, headers=AUT).json()["session_id"]
+    codigos = [c.post(f"/api/sessions/{sid}/messages", json={"content": f"oi {i}"},
+                      headers=AUT).status_code for i in range(5)]
+    assert codigos == [200, 200, 200, 429, 429] and len(hermes.recebidos) == 3
 
 
 def test_sem_registro_a_ponte_e_a_de_sempre(monkeypatch) -> None:
