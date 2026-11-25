@@ -42,6 +42,8 @@ Issues = "https://github.com/GarraIA/garra-reachy-mini/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Só no computador (companion): o par WebRTC da conversa ao vivo. O robô não precisa.
+hera = ["aiortc>=1.13"]
 
 [project.entry-points."reachy_mini_apps"]
 # A chave, o `project.name` e o diretório do pacote têm de ser a MESMA string:

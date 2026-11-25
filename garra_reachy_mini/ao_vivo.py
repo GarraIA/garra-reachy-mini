@@ -75,3 +75,26 @@ def prova(papel: str, *, segredo: str, nonce_robo: str, nonce_pc: str,
         raise ValueError("papel desconhecido")
     mensagem = "\n".join(("garra-hera-v1", papel, nonce_robo, nonce_pc, host, dispositivo))
     return hmac.new(segredo.encode("utf-8"), mensagem.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+# ─── quadros de som do canal ao vivo ─────────────────────────────────────────
+# Gêmeas de `companion/hera/canal.py` (o app do robô não importa o companion).
+MICROFONE, FALA = 1, 2
+VERSAO_QUADRO = 1
+
+
+def quadro(tipo: int, seq: int, t_ms: int, pcm: bytes) -> bytes:
+    """12 bytes de cabeçalho (tipo, versão, flags, sequência, tempo em ms) + PCM s16le."""
+    import struct
+    return struct.pack("<BBHII", tipo, VERSAO_QUADRO, 0, seq & 0xFFFFFFFF, t_ms & 0xFFFFFFFF) + pcm
+
+
+def ler_quadro(dados: bytes) -> tuple[int, int, int, bytes] | None:
+    import struct
+    if len(dados) < 12:
+        return None
+    tipo, versao, _flags, seq, t_ms = struct.unpack_from("<BBHII", dados)
+    pcm = dados[12:]
+    if versao != VERSAO_QUADRO or tipo not in (MICROFONE, FALA) or len(pcm) % 2:
+        return None
+    return tipo, seq, t_ms, pcm

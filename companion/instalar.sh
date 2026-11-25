@@ -29,7 +29,12 @@ for unidade in garra-reachy-voice.service garra-reachy-companion.service garra-r
   cp "$AQUI/systemd/$unidade" "$DESTINO/$unidade"
   echo "instalada: $DESTINO/$unidade"
 done
-chmod +x "$AQUI/systemd/garra-voz.sh" "$AQUI/systemd/garra-rostos.sh"
+chmod +x "$AQUI/systemd/garra-voz.sh" "$AQUI/systemd/garra-rostos.sh" "$AQUI/systemd/garra-hera.sh"
+
+# A ponte da Hera para o robô: instalada, mas NÃO ligada. Quem decide é o dono:
+#   python -m companion.hera liberar && systemctl --user start garra-hera-bridge
+cp "$AQUI/systemd/garra-hera-bridge.service" "$DESTINO/garra-hera-bridge.service"
+echo "instalada (desligada): $DESTINO/garra-hera-bridge.service"
 
 systemctl --user daemon-reload
 systemctl --user enable --now garra-reachy-companion.service

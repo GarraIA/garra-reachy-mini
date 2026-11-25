@@ -297,6 +297,7 @@ _STATUS_DA_CASA = {"invalid_url": 400, "invalid_token": 400, "unreachable": 502,
 
 
 _agentes: ponte_agentes.Agentes | None = None
+_hera_registrada = False
 
 
 def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None,
@@ -940,6 +941,14 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
                   for c in dados["checks"] if isinstance(c, dict)]
         return JSONResponse({"status": dados.get("status"), "version": dados.get("version"),
                              "generated_at": dados.get("generated_at"), "checks": checks}, headers=cabecalhos)
+
+    # A conversa ao vivo (Hera): um WebSocket, que não colide com o repasse HTTP
+    # abaixo. O aperto de mão dela tem prova própria (não usa este token).
+    global _hera_registrada
+    if not _hera_registrada:
+        from .hera import canal as canal_hera
+        canal_hera.registrar(app)
+        _hera_registrada = True
 
     @app.api_route("/{caminho:path}",
                    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
