@@ -6,6 +6,7 @@
     python -m companion.hera limite <nome> <segundos>
     python -m companion.hera perfil
     python -m companion.hera token [--girar | --revogar]
+    python -m companion.hera parear [--painel http://<ip-do-robo>:8042]
 
 Liberar, subir de nível e aumentar teto só existem aqui, no computador. Pela
 rede (o painel do robô) só se desliga e se reduz. Este comando nunca mostra o
@@ -118,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     grupo = token.add_mutually_exclusive_group()
     grupo.add_argument("--girar", action="store_true")
     grupo.add_argument("--revogar", action="store_true")
+    parear = sub.add_parser("parear", help="grava no robô o segredo e o nome do dispositivo")
+    parear.add_argument("--painel", help="padrão: o robô que o vigia lembra")
     args = parser.parse_args(argv)
 
     r = registro.Registro()
@@ -148,6 +151,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.comando == "perfil":
             print(f"Perfil do canal gravado em {_regravar_perfil(r.ler())}")
             _reiniciar_ponte()
+            return 0
+        if args.comando == "parear":
+            from .. import reachy
+            painel = args.painel or reachy.painel_lembrado()
+            if not painel:
+                print("não achei o robô; passe --painel http://<ip-do-robo>:8042", file=sys.stderr)
+                return 2
+            reg = r.ler()
+            try:
+                # Pela mesma gravação assinada de sempre: o robô pareado só aceita
+                # isto de quem conhece a credencial dele. O segredo vai no corpo,
+                # pela rede de casa, uma vez; depois disso só circulam provas.
+                reachy._gravar(painel, {"hera_token": credencial.segredo(),
+                                        "hera_device": reg["device"]["id"]})
+            except reachy.ErroReachy as erro:
+                print(f"o robô recusou: {erro}", file=sys.stderr)
+                return 1
+            print(f"Robô em {painel} pareado com a Hera (dispositivo {reg['device']['id']}).")
             return 0
         if args.comando == "token":
             if args.revogar:

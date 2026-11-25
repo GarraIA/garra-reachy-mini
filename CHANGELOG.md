@@ -15,9 +15,19 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
   (`strict`) só o nome sozinho ou com saudação ("Oi Hera, que horas são?").
   "Hera, pare" é parada. Quem chama a Hera fecha a conversa aberta com o Garra, e
   o que disse não vai para a escuta de contexto dele, para evento ou para o
-  registro. **Neste ponto o robô reconhece o chamado e responde que a Hera não
-  está disponível** (`voice.live.unavailable`); a conversa em si vem nas próximas
-  fases.
+  registro.
+- **A conversa ao vivo no robô** (`ao_vivo.py`). Pareado pelo computador
+  (`python -m companion.hera parear`, gravação assinada), o robô atende o chamado
+  abrindo um WebSocket na ponte `:8126`: o computador prova primeiro, o robô
+  prova, e daí o microfone sobe em PCM 16 kHz e a voz da Hera desce pelo
+  `CoordenadorAudio`, com uma folga de 120 ms contra os solavancos do Wi-Fi. Três
+  notas subindo ao abrir e descendo ao fechar; fases `live_*` em cor própria no
+  painel. O corpo fica parado durante a conversa (os servos estão ao lado dos
+  microfones). PARAR no painel encerra a conversa e a cobrança; o "pare" que o
+  computador ouvir para os motores; desligar a escuta ou a Hera no painel
+  encerra em até 1 s; sem nada do computador por 3 s, o robô sai sozinho. O
+  painel não fala por cima dela. Sem pareamento, sem saída de voz ou com o
+  computador recusando, o robô diz que a Hera não está disponível.
 
 ### Security
 

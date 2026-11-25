@@ -39,6 +39,9 @@ OUVINDO = "listening"
 PENSANDO = "thinking"
 FALANDO = "speaking"
 OCIOSO = "idle"
+# Conversa ao vivo (Hera): o corpo fica parado. Os micro-movimentos só acontecem
+# em OUVINDO, e o balanço da cabeça é desligado.
+AO_VIVO = "live"
 
 # ── fase da voz ─────────────────────────────────────────────────────────────
 # Os quatro estados acima dirigem os GESTOS, e bastam para isso. A fase é o que
@@ -54,8 +57,16 @@ FASE_TRANSCREVENDO = "transcribing"
 FASE_PROCESSANDO = "processing"         # o agente está pensando
 FASE_FALANDO = "speaking"
 FASE_ERRO = "error"
+# A conversa ao vivo tem as suas: quem olha a tela precisa saber com quem fala, e
+# que nesse intervalo o som da sala vai para a nuvem.
+FASE_AO_VIVO_CONECTANDO = "live_connecting"
+FASE_AO_VIVO_OUVINDO = "live_listening"
+FASE_AO_VIVO_PENSANDO = "live_thinking"
+FASE_AO_VIVO_FALANDO = "live_speaking"
 FASES = (FASE_CONECTANDO, FASE_ESPERA, FASE_AGUARDANDO_FRASE, FASE_OUVINDO,
-         FASE_TRANSCREVENDO, FASE_PROCESSANDO, FASE_FALANDO, FASE_ERRO)
+         FASE_TRANSCREVENDO, FASE_PROCESSANDO, FASE_FALANDO, FASE_ERRO,
+         FASE_AO_VIVO_CONECTANDO, FASE_AO_VIVO_OUVINDO, FASE_AO_VIVO_PENSANDO,
+         FASE_AO_VIVO_FALANDO)
 
 # Intervalo entre micro-movimentos enquanto ouve. Longo de propósito: o robô tem
 # de parecer atento, não inquieto.
@@ -144,6 +155,17 @@ class Comportamento:
         devolve as antenas ao lugar.
         """
         self._gesto({"action": "move_antennas", "preset": "up", "duration": 0.25})
+
+    def ao_vivo(self) -> None:
+        """Conversa ao vivo: o corpo para e fica parado até ela acabar.
+
+        Sem gesto nenhum aqui — nem para "parar": os servos ficam ao lado dos
+        microfones, e o barulho deles iria para a nuvem junto com a conversa. O
+        `ouvindo()` do fim devolve o robô ao normal.
+        """
+        self._mudar(AO_VIVO)
+        if self.wobbling:
+            self.ctrl.wobbling_pedir(False)
 
     def atualizar_fase_de_escuta(self) -> None:
         """Esperando a frase, ou ouvindo a pessoa? Pergunta a quem sabe."""

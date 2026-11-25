@@ -1882,6 +1882,8 @@ const CLASSE_DA_FASE = {
   connecting: 'warning', standby: 'warning', wake_listening: 'success',
   listening: 'accent', transcribing: 'accent', processing: 'accent',
   speaking: 'accent', error: 'danger', offline: 'danger', acting: 'accent',
+  // A Hera em cor própria: quem olha precisa saber que o som está indo para a nuvem.
+  live_connecting: 'warning', live_listening: 'danger', live_thinking: 'danger', live_speaking: 'danger',
 };
 
 function pintarFase(v) {

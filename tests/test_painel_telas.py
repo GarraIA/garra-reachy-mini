@@ -294,3 +294,11 @@ def test_o_texto_da_gpu_ocupada_diz_o_que_acontece() -> None:
         trecho = I18N[inicio:I18N.index("\n  },", inicio)]
         texto = re.search(r"'visao\.gpu_ocupada': '([^']*)'", trecho).group(1)
         assert "espera" not in texto and "waits" not in texto, texto
+
+
+def test_as_fases_da_conversa_ao_vivo_tem_texto_e_cor() -> None:
+    from garra_reachy_mini.robo import comportamento as c
+    en = _dicionario("en")
+    for fase in c.FASES:
+        assert f"fase.{fase}" in en, fase
+        assert re.search(rf"\b{fase}: '", JS), f"{fase} sem cor em CLASSE_DA_FASE"

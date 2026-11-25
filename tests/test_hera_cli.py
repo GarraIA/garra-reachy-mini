@@ -83,3 +83,33 @@ def test_perfil_mostra_o_caminho_e_nao_o_conteudo(capsys):
     saida = capsys.readouterr().out
     assert str(perfil.caminho_padrao()) in saida
     assert "Canal desta sessão" not in saida
+
+
+def test_parear_grava_o_segredo_no_robo_com_assinatura(monkeypatch, capsys):
+    from companion import reachy
+    gravados = []
+    monkeypatch.setattr(reachy, "painel_lembrado", lambda: "http://10.0.0.142:8042")
+    monkeypatch.setattr(reachy, "_gravar", lambda painel, valores: gravados.append((painel, dict(valores))) or {"ok": True})
+    assert cli.main(["parear"]) == 0
+    ((painel, valores),) = gravados
+    assert painel == "http://10.0.0.142:8042"
+    assert valores == {"hera_token": credencial.segredo(), "hera_device": "garra-sala"}
+    assert credencial.segredo() not in "".join(capsys.readouterr())
+
+
+def test_parear_sem_robo_conhecido(monkeypatch, capsys):
+    from companion import reachy
+    monkeypatch.setattr(reachy, "painel_lembrado", lambda: None)
+    assert cli.main(["parear"]) == 2
+    assert "--painel" in capsys.readouterr().err
+
+
+def test_parear_com_robo_travado_por_outro(monkeypatch, capsys):
+    from companion import reachy
+
+    def travado(painel, valores):
+        raise reachy.ErroReachy("travado", codigo="config_locked")
+
+    monkeypatch.setattr(reachy, "_gravar", travado)
+    assert cli.main(["parear", "--painel", "http://10.0.0.142:8042"]) == 1
+    assert "travado" in capsys.readouterr().err

@@ -725,6 +725,15 @@ class CoordenadorAudio:
                 self._tipo = None
         self._log.info("Turno %s cancelado (%s).", turno.id, motivo)
 
+    def cortar_tudo(self) -> bool:
+        """Esvazia a fila do player, de quem quer que seja.
+
+        Para a conversa ao vivo, que não tem turno: o PARAR, o "pare" e o fim
+        dela cortam a voz da Hera onde estiver. Fora dela ninguém chama isto.
+        """
+        with self._lock:
+            return self._limpar_player()
+
     # ── internos, sempre sob o lock ────────────────────────────────────────
     def _empurrar(self, onda) -> None:
         self._media.push_audio_sample(onda)
@@ -733,6 +742,9 @@ class CoordenadorAudio:
         """Flush do player. Só sobre o áudio DESTE turno, nunca do seguinte."""
         if self._turno_atual != turno.id:
             return False
+        return self._limpar_player()
+
+    def _limpar_player(self) -> bool:
         audio = getattr(self._media, "audio", None)
         limpar = getattr(audio, "clear_player", None)
         if limpar is None:

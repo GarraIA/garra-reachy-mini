@@ -67,7 +67,7 @@ from .web import trava
 
 # A página é servida sem autenticação no loopback (é o daemon quem sobe o
 # uvicorn): nada de segredo sai pelo GET /api/config.
-SEGREDOS = ("gateway_key", "voz_token")
+SEGREDOS = ("gateway_key", "voz_token", "hera_token")
 MASCARA = "***"
 
 # Quantas falhas seguidas de STT/TTS bastam para concluir que o servidor de voz
@@ -152,6 +152,10 @@ class OpcoesSalvas(BaseModel):
     # Ligada pelo companion ao parear: daí em diante endereços e credenciais
     # só mudam com a assinatura do PC (ver web/trava.py).
     trava_pc: bool | None = None
+    # A conversa ao vivo (Hera): segredo e nome do dispositivo, gravados pelo
+    # computador (`python -m companion.hera parear`). Ver ao_vivo.credenciais.
+    hera_token: str | None = None
+    hera_device: str | None = None
 
 
 class GarraReachyMini(ReachyMiniApp):
@@ -1024,6 +1028,10 @@ class GarraReachyMini(ReachyMiniApp):
 
         def calar(motivo: str = "barge-in") -> None:
             """Corta o áudio agora. É o e-stop do alto-falante, sem limite de 1,2 s."""
+            em_conversa = getattr(self, "_atendente_ao_vivo", None)
+            if em_conversa is not None and em_conversa.ativo:
+                # PARAR com a Hera falando: encerra a conversa (e a cobrança dela).
+                em_conversa.pedir_parada(motivo)
             alvo = self._turno
             if alvo is not None and alvo.vivo:
                 coordenador.cancelar(alvo, motivo)
@@ -1121,7 +1129,39 @@ class GarraReachyMini(ReachyMiniApp):
         # `processar` só ANOTA o chamado aqui; quem atende é o laço, depois que
         # o turno devolveu o controle (ver `atender_ao_vivo`).
         pedido_ao_vivo: dict = {}
-        atendente = ao_vivo.Atendente(controlador.eventos.publicar, falar)
+        conferida_ao_vivo = {"em": 0.0, "parar": False}
+
+        def deve_parar_ao_vivo() -> bool:
+            """Robô desligando, escuta ou Hera desligadas no painel: a conversa acaba.
+            O laço principal não está rodando durante ela, então a conferência é daqui."""
+            if stop_event.is_set():
+                return True
+            agora_c = time.monotonic()
+            if agora_c - conferida_ao_vivo["em"] >= 1.0:
+                conferida_ao_vivo["em"] = agora_c
+                prefs_c = conversa.normalizar(Config.carregar().conversa)
+                conferida_ao_vivo["parar"] = not (prefs_c["listening_enabled"]
+                                                  and prefs_c["live_voice_enabled"])
+            return conferida_ao_vivo["parar"]
+
+        atendente = ao_vivo.Atendente(
+            controlador.eventos.publicar, falar,
+            portas=ao_vivo.Portas(
+                ler_mono=ler_mono, sr_in=sr_in, sr_out=sr_out,
+                # Pelo coordenador, como todo som do robô. O mestre da saída é
+                # conferido uma vez, antes de abrir (`saida_habilitada`).
+                tocar=lambda onda: coordenador.tocar_sinal(onda, True),
+                cortar=coordenador.cortar_tudo,
+                fase=gestos.fase,
+                sem_movimento=gestos.ao_vivo,
+                estop=lambda: controlador.submeter("stop", source="voz", esperar=False),
+                deve_parar=deve_parar_ao_vivo,
+                credenciais=lambda: ao_vivo.credenciais(armazenamento.carregar_config(),
+                                                        Config.carregar().gateway_url),
+                saida_habilitada=lambda: conversa.Politica.de(
+                    Config.carregar().conversa).saida_habilitada,
+                trava_fala=self._lock_fala))
+        self._atendente_ao_vivo = atendente
 
         def atender_ao_vivo() -> None:
             """Atende o chamado anotado pelo turno. Roda na thread do laço, que é
@@ -1133,9 +1173,18 @@ class GarraReachyMini(ReachyMiniApp):
             # chamou a Hera trocou de conversa.
             sessao_ativacao.fechar()
             try:
-                atendente.atender(chamado)
+                conversou = atendente.atender(chamado)
             except Exception:
                 log.exception("A conversa ao vivo falhou ao atender o chamado")
+                conversou = False
+            if conversou:
+                # O que o microfone juntou durante a conversa foi para o
+                # computador, não para o detector: recomeça limpo, e a voz da
+                # Hera ainda no ar não abre chamado nenhum (margem de eco). Sem
+                # conversa, quem falou foi o aviso local, e `falar` já cuidou.
+                drenar_mic(0.4)
+                detector.descartar()
+                sessao_ativacao.falou_ate = time.monotonic()
             gestos.ouvindo()
 
         bipe = ativacao.bipe(sr_out)
@@ -1799,6 +1848,7 @@ class GarraReachyMini(ReachyMiniApp):
             self._detector = None
             self._falar_texto = None
             self._calar = None
+            self._atendente_ao_vivo = None
             self._trocar_sessao = None
             # O executor sobrevive ao laço de propósito (ver acima). Quem o
             # encerra é `_encerrar_executor`, no fim da vida do app.

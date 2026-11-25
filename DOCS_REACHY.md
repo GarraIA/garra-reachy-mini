@@ -260,6 +260,8 @@ linha do tempo completa: mensagem → ferramenta → ação → movimento → re
 | `voice.wake.acknowledged` | O "ouvi": `sound` (bipe tocado) e `motion` (antenas) |
 | `voice.wake.rejected` | Fala recusada por falta da frase — sem texto, só a faixa de duração |
 | `voice.wake.near_miss` | Diagnóstico: o trecho que pareceu a frase, e o que a conferência decidiu |
+| `voice.live.connecting` / `voice.live.started` | Chamado aceito: o robô está abrindo o canal com o computador / a conversa ao vivo começou (o som da sala passa a ir para a nuvem) |
+| `voice.live.ended` | A conversa ao vivo acabou — `reason` (idle, no_speech, max, stop, handoff_garra, farewell, robot_stop, pc_lost…) e `seconds` cobrados |
 | `voice.live.unavailable` | Alguém chamou a conversa ao vivo (`destination: hera`) e ela não pôde começar — `reason`, e como o chamado veio (`match`); nunca o que foi dito |
 | `voice.turn.started` / `.completed` / `.cancelled` | Um turno de conversa (`brain_ms`, `total_ms`, `agent`) |
 | `chat.message` | Mensagem de voz ou do painel (`role`, `content`, `source`) |

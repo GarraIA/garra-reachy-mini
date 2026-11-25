@@ -113,12 +113,14 @@ class Gestos:
         self.erros: list[str] = []
         self.ativacoes = 0
         self.pensou = 0           # quantas vezes o corpo foi a "pensando"
+        self.parado_ao_vivo = 0   # quantas vezes a conversa ao vivo pediu o corpo parado
         self.fase_ao_ouvir = None
 
     def ouvindo(self) -> None: self.atualizar_fase_de_escuta()
     def pensando(self) -> None: self.pensou += 1
     def falando(self) -> None: self.fase("speaking")
     def ativado(self) -> None: self.ativacoes += 1
+    def ao_vivo(self) -> None: self.parado_ao_vivo += 1
     def erro(self, codigo: str, detalhe: str = "") -> None: self.erros.append(codigo)
 
     def fase(self, nova: str, motivo: str | None = None) -> None:

@@ -158,3 +158,160 @@ def test_o_chamado_e_decidido_antes_do_portao_e_atendido_fora_do_turno():
     # Quem conduz a conversa é o laço, dono do microfone — nunca `processar`.
     assert "atendente" not in corpo and "ao_vivo." not in corpo
     assert MAIN.count("atender_ao_vivo()") >= 3      # a definição e as duas chamadas
+
+
+# ═══ a conversa de verdade, com um computador de mentira ═════════════════════
+from garra_reachy_mini import armazenamento  # noqa: E402
+from hera_pc_falso import FALA_DA_HERA, SEGREDO, PcFalso  # noqa: E402
+
+PONTE = "http://192.0.2.10:8126"          # endereço de documentação: ninguém responde nele
+
+
+@pytest.fixture()
+def pareado(montar_cena, monkeypatch):
+    """Robô pareado (ponte e segredo gravados) e um computador de mentira no canal."""
+    def _montar(pc: PcFalso | None = None, conversa: dict | None = None,
+                roteiro=("Oi Hera",), parear: bool = True):
+        pc = pc or PcFalso()
+        monkeypatch.setattr(ao_vivo, "conectar", pc)
+        cena = montar_cena(conversa or COM_HERA, list(roteiro), [])
+        if parear:
+            armazenamento.salvar_config({**armazenamento.carregar_config(), "gateway_url": PONTE,
+                                         "hera_token": SEGREDO, "hera_device": "garra-sala"})
+        return cena, pc
+    return _montar
+
+
+def tipos(cena) -> list[str]:
+    return [e["type"] for e in cena.eventos() if e["type"].startswith("voice.live.")]
+
+
+def fases(cena) -> list[str]:
+    return [f for f, _ in cena.app.comportamento.fases]
+
+
+def abrir(cena) -> None:
+    cena.mic.dizer()
+    assert esperar(lambda: cena.eventos("voice.live.started")), \
+        f"a conversa ao vivo não abriu: {tipos(cena)}"
+
+
+def test_conversa_inteira(pareado):
+    cena, pc = pareado()
+    abrir(cena)
+    assert pc.conectou == ["ws://192.0.2.10:8126/api/hera/ao-vivo"]
+    assert pc.tipos()[:2] == ["ola", "prova"]
+    # a voz da Hera sai pelo alto-falante, depois das três notas de entrada
+    assert esperar(lambda: sum(o.size for o in cena.mic.tocadas) >= len(FALA_DA_HERA) // 2)
+    # o microfone sobe para o computador
+    cena.mic.dizer()
+    assert esperar(lambda: len(pc.som) >= 6)
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 12})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+    (fim,) = cena.eventos("voice.live.ended")
+    assert (fim["reason"], fim["seconds"]) == ("idle", 12)
+    assert tipos(cena) == ["voice.live.connecting", "voice.live.started", "voice.live.ended"]
+    # nada foi ao agente do Garra, nada virou turno
+    assert cena.cerebro.recebidas == [] and cena.eventos("voice.turn.started") == []
+    assert "live_connecting" in fases(cena) and "live_listening" in fases(cena)
+    assert "live_speaking" in fases(cena)
+    assert esperar(lambda: fases(cena)[-1] == "wake_listening")
+
+
+def test_o_corpo_nao_se_mexe_durante_a_conversa(pareado):
+    cena, pc = pareado()
+    abrir(cena)
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 3})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+    g = cena.app.comportamento
+    assert g.parado_ao_vivo == 1 and g.ativacoes == 0 and g.pensou == 0
+    assert ("speaking", None) not in g.fases     # "falando" do Garra liga o balanço da cabeça
+
+
+def test_microfone_nao_sobe_antes_de_a_sessao_abrir(pareado, monkeypatch):
+    monkeypatch.setattr(ao_vivo, "PRAZO_ABERTURA_S", 0.6)
+    cena, pc = pareado(PcFalso(abrir=False))
+    cena.mic.dizer()
+    assert esperar(lambda: cena.eventos("voice.live.unavailable"))
+    cena.mic.dizer()
+    time.sleep(0.3)
+    assert pc.som == []
+    assert cena.eventos("voice.live.unavailable")[0]["reason"] == "unavailable"
+
+
+def test_parar_do_painel_encerra_a_sessao(pareado):
+    cena, pc = pareado()
+    abrir(cena)
+    cena.app._calar("painel")
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+    assert "parar" in pc.tipos()
+    assert cena.eventos("voice.live.ended")[0]["reason"] == "robot_stop"
+
+
+def test_o_pare_do_computador_para_os_motores(pareado):
+    cena, pc = pareado()
+    abrir(cena)
+    pc.empurrar({"t": "estop"})
+    assert esperar(lambda: cena.ctrl.em_estop), "o estop do computador não parou o robô"
+    pc.empurrar({"t": "fim", "motivo": "stop", "segundos": 4})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+
+
+def test_prova_do_computador_errada_o_robo_nao_fala_nada(pareado):
+    cena, pc = pareado(PcFalso(prova_errada=True))
+    cena.mic.dizer()
+    assert esperar(lambda: cena.eventos("voice.live.unavailable"))
+    assert cena.eventos("voice.live.unavailable")[0]["reason"] == "bad_pc_proof"
+    assert "prova" not in pc.tipos() and pc.som == []
+
+
+def test_computador_recusa_e_o_robo_avisa(pareado):
+    cena, pc = pareado(PcFalso(recusa="disabled"), conversa={**COM_HERA, "speech_output_enabled": True})
+    cena.mic.dizer()
+    assert esperar(lambda: cena.eventos("voice.live.unavailable"))
+    assert cena.eventos("voice.live.unavailable")[0]["reason"] == "disabled"
+    assert esperar(lambda: cena.voz.faladas == [ao_vivo.AVISO_INDISPONIVEL])
+
+
+def test_sem_pareamento_nem_tenta_conectar(pareado):
+    cena, pc = pareado(parear=False)
+    cena.mic.dizer()
+    assert esperar(lambda: cena.eventos("voice.live.unavailable"))
+    assert cena.eventos("voice.live.unavailable")[0]["reason"] == "not_paired"
+    assert pc.conectou == []
+
+
+def test_computador_mudo_encerra_a_conversa(pareado):
+    cena, pc = pareado(PcFalso(pings=False, falar=False))
+    abrir(cena)
+    assert esperar(lambda: cena.eventos("voice.live.ended"), 6.0)
+    assert cena.eventos("voice.live.ended")[0]["reason"] == "pc_lost"
+
+
+def test_o_painel_nao_fala_por_cima_da_hera(pareado):
+    cena, pc = pareado()
+    abrir(cena)
+    with pytest.raises(RuntimeError):
+        cena.app._falar_texto("oi", bloqueante=False)
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 2})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+
+
+def test_desligar_a_escuta_encerra_a_conversa(pareado):
+    cena, pc = pareado()
+    abrir(cena)
+    conf = armazenamento.carregar_config()
+    armazenamento.salvar_config({**conf, "conversation": {**conf["conversation"], "listening_enabled": False}})
+    assert esperar(lambda: "parar" in pc.tipos(), 3.0)
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+
+
+def test_depois_da_conversa_o_fala_garra_volta(pareado):
+    cena, pc = pareado(roteiro=("Oi Hera", "Fala Garra, que horas são?"))
+    cena.cerebro.respostas = ["São dez horas."]
+    abrir(cena)
+    pc.empurrar({"t": "fim", "motivo": "handoff_garra", "segundos": 5})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+    time.sleep(1.0)        # o dreno do microfone e a margem de eco depois da voz dela
+    cena.alguem_fala()
+    assert cena.cerebro.recebidas == ["que horas são?"]

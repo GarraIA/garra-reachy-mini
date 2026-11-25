@@ -29,9 +29,12 @@ import time
 from typing import Callable
 
 # O que decide para onde o robô fala, e a própria trava.
-PROTEGIDOS = ("gateway_url", "voz_url", "gateway_key", "voz_token", "garra_bin", "trava_pc")
+PROTEGIDOS = ("gateway_url", "voz_url", "gateway_key", "voz_token", "garra_bin", "trava_pc",
+              "hera_token", "hera_device")
 # As credenciais que provam ser o PC pareado. Hoje carregam o mesmo valor.
 CREDENCIAIS = ("voz_token", "gateway_key")
+# O que a tela recebe mascarado e pode devolver mascarado sem que isso seja mudança.
+MASCARADOS = CREDENCIAIS + ("hera_token",)
 CABECALHO = "X-Garra-Assinatura"
 VERSAO = "v1"
 
@@ -82,7 +85,7 @@ def mudancas_protegidas(salva: dict, pedido: dict, mascara: str) -> list[str]:
         if campo not in pedido:
             continue
         novo = pedido[campo]
-        if novo == mascara and campo in CREDENCIAIS:
+        if novo == mascara and campo in MASCARADOS:
             continue                                  # a tela devolveu a máscara
         if (novo or None) != (salva.get(campo) or None):
             mudam.append(campo)
