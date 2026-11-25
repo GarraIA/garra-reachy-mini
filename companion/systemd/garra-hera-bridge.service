@@ -24,5 +24,9 @@ NoNewPrivileges=yes
 StandardOutput=journal
 StandardError=journal
 
-# De propósito SEM [Install]/WantedBy: não sobe sozinha no boot. Quem a liga é
-# o dono, depois de liberar a Hera no robô (`python -m companion.hera liberar`).
+[Install]
+# O instalador copia a unit DESLIGADA. Quem a liga é o dono:
+#   systemctl --user enable --now garra-hera-bridge
+# Ligada, ela sobe com o sistema. Se o robô pode usar a Hera é outra chave,
+# também do dono: python -m companion.hera liberar | desligar
+WantedBy=default.target
