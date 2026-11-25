@@ -115,15 +115,56 @@ disponível (`voice.live.unavailable`, aviso falado no máximo a cada 30 s).
 | Fala simultânea (caixas do PC por cima do robô falando) | microfone fixo em −31 dBFS durante os 13 s; o Whisper não ouviu nada |
 | Parâmetros do chip (firmware 2.1.2) | `PP_DTSENSITIVE=1`, `PP_NLATTENONOFF=1`, `PP_ECHOONOFF=1`, `PP_NLAEC_MODE=0`, `PP_AGCMAXGAIN=64`, 4 microfones, AEC convergido |
 
-O que as medições de eco dizem: enquanto o alto-falante do robô toca, o chip
-abafa o microfone inteiro (nível fixo, abaixo até do ruído da sala). É ótimo
-contra autoativação e contra a Hera se interromper sozinha. Em compensação, **a
-interrupção por voz pode não funcionar com os parâmetros de fábrica**: a voz de
-quem interrompe pode ser abafada junto. Isto ainda não está decidido — a "pessoa"
-do teste foram as caixas do PC, numa sala com outro som ligado, e nem no controle
-(sem o robô falando) o Whisper entendeu a frase. Falta medir com voz humana a 1 m
-e, se preciso, ajustar `PP_NLATTENONOFF`/`PP_DTSENSITIVE` pelo SDK
-(`apply_audio_config`), que são graváveis.
+### 6.1 Interromper a Hera por voz
+
+Duas metades, medidas separadamente.
+
+**A sessão do GPT-Live** (no PC, sem o robô, áudio limpo entrando pelo par
+WebRTC do companion; duas sessões reais, 36 s cobrados ≈ US$ 0,03):
+
+| Medida | Resultado |
+|---|---|
+| Abertura (oferta → `session.started`) | 6,4 s com o STUN do site; **0,6 s sem STUN** (a sessão conecta igual) |
+| Primeira resposta audível depois do fim da pergunta | 1,08 s |
+| Interrupção: do começo da fala por cima até a saída calar | **0,36 s**; depois disso ela não retomou o assunto e respondeu "Claro." |
+| Pergunta só no histórico inicial (`input`), sem áudio | respondeu sozinha ("Quarta-feira.") 1,5 s depois de começar |
+| `session.started` | traz `expires_at` ≈ 2 h depois; instruções e voz `bossa` conferem |
+| `session.usage.updated` / `session.closed` | `active_seconds`, `paused_seconds`, `seconds` |
+
+Ou seja: a interrupção é do servidor e funciona bem, e o pedido dito junto do
+chamado ("Oi Hera, que horas são?") pode ir no histórico inicial — ela responde
+sem ninguém repetir.
+
+**O chip de áudio do robô** (XVF3800, firmware 2.1.2). O robô fala 12,9 s; a
+"pessoa" (as caixas do PC, no volume máximo) fala três vezes — duas por cima do
+robô e uma depois, como controle na mesma gravação. Subida do nível do
+microfone na janela da pessoa:
+
+| Ajuste do chip | Por cima do robô | Depois do robô (controle) |
+|---|---|---|
+| fábrica (`PP_DTSENSITIVE=1`) | +0,6 / +0,4 dB | +9,0 dB |
+| `PP_DTSENSITIVE=5` | +0,2 / −0,2 dB | +4,7 dB |
+| `PP_DTSENSITIVE=12` (detector de fala local) | +0,8 / +1,3 dB | +10,1 dB |
+| `PP_DTSENSITIVE=15` | +0,4 / −0,7 dB | +3,2 dB |
+| `12` com `PP_NLATTENONOFF=0` | +0,7 / +0,4 dB | +7,0 dB |
+
+Enquanto o alto-falante toca, o chip abafa o que chega fraco ao microfone — com
+qualquer um destes ajustes. É ótimo contra autoativação e contra a Hera se
+interromper sozinha, e é por isso que a interrupção por voz **não está provada
+no robô**. Ressalva: a "pessoa" do teste é fraca e distorcida (nem no controle o
+Whisper entendeu a frase); uma voz humana a 1 m chega muito mais forte. Só um
+teste com gente decide. Os ajustes do chip são voláteis (voltam ao padrão quando
+ele reinicia) e foram restaurados depois da medição.
+
+Consequências para o desenho:
+
+- a interrupção fica com o servidor (WebRTC); o robô não precisa detectar nada;
+- se a voz humana também for abafada, a conversa fica em turnos naturais — as
+  respostas são curtas por instrução — e o que para a Hera no meio é o botão
+  PARAR do painel e o fim da sessão;
+- pelo mesmo motivo, o "pare" dito por cima da Hera não é garantido: o botão
+  PARAR é a garantia, como no "Fala Garra";
+- o teste com voz humana entra no roteiro do dono, com medição objetiva.
 
 O jitter do Wi-Fi (p99 de 120 ms) pede folga de reprodução de 120–150 ms no robô,
 ou o PC no cabo.
@@ -138,5 +179,6 @@ ou o PC no cabo.
 | 6 | painel: cartão Hera, pílula, consumo |
 | 7 | documentação, validação física, versão 1.6.0 |
 
-Dependem do dono: o teste pago da API (não autorizado ainda), os testes com voz
-humana e a revisão dos arquivos de memória do Hermes antes de ligar a Hera no robô.
+Dependem do dono: os testes com voz humana (inclusive a interrupção, seção 6.1)
+e a revisão dos arquivos de memória do Hermes antes de ligar a Hera no robô. O
+teste pago da API foi autorizado (até US$ 2) e usado na seção 6.1.
