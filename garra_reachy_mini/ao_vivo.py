@@ -58,3 +58,20 @@ class Atendente:
             # O alto-falante ocupado ou a síntese fora do ar não podem derrubar
             # o laço: o evento já contou o que houve.
             log.debug("aviso de conversa ao vivo indisponível não foi falado", exc_info=True)
+
+
+def prova(papel: str, *, segredo: str, nonce_robo: str, nonce_pc: str,
+          host: str, dispositivo: str) -> str:
+    """A prova de posse do canal ao vivo — a mesma conta de `companion/hera/credencial.py`.
+
+    Cada lado prova que conhece o segredo do dispositivo sem mandá-lo: HMAC sobre
+    os dois desafios, o endereço que o robô discou e o nome do dispositivo. O
+    robô só manda som depois de conferir a prova do computador.
+    """
+    import hashlib
+    import hmac
+
+    if papel not in ("pc", "robo"):
+        raise ValueError("papel desconhecido")
+    mensagem = "\n".join(("garra-hera-v1", papel, nonce_robo, nonce_pc, host, dispositivo))
+    return hmac.new(segredo.encode("utf-8"), mensagem.encode("utf-8"), hashlib.sha256).hexdigest()
