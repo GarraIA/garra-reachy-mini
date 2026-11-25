@@ -1,0 +1,28 @@
+[Unit]
+Description=Garra Reachy — ponte da Hera para o robô (GPT-Live + Hermes, perfil de canal)
+Documentation=https://github.com/GarraIA/garra-reachy-mini
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# GARRA_PONTE_DO_PAINEL (outro caminho para a ponte do Painel-Local) pode vir daqui.
+EnvironmentFile=-%h/.config/garra-reachy/companion.env
+ExecStart=%h/Documents/Projetos/Reachy-Mini-Control/garra_reachy_mini/companion/systemd/garra-hera.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+# Só o dono: o soquete e o que este processo criar nascem 0600/0700. É aqui que
+# vive a chave da OpenAI — sem porta TCP, só o soquete Unix.
+UMask=0077
+NoNewPrivileges=yes
+
+StandardOutput=journal
+StandardError=journal
+
+# De propósito SEM [Install]/WantedBy: não sobe sozinha no boot. Quem a liga é
+# o dono, depois de liberar a Hera no robô (`python -m companion.hera liberar`).

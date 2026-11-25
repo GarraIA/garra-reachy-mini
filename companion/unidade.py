@@ -23,7 +23,10 @@ UNIDADE_VOZ = "garra-reachy-voice.service"
 # rotas de voz continuam passando a unidade explicitamente, então nenhuma delas
 # alcança o gateway por acidente.
 UNIDADE_GATEWAY = "garraia.service"
-UNIDADES = frozenset({UNIDADE_VOZ, "garra-reachy-companion.service", UNIDADE_GATEWAY})
+# A ponte da Hera para o robô: o comando do dono a reinicia quando o perfil muda.
+UNIDADE_HERA = "garra-hera-bridge.service"
+UNIDADES = frozenset({UNIDADE_VOZ, "garra-reachy-companion.service", UNIDADE_GATEWAY,
+                      UNIDADE_HERA})
 VERBOS = frozenset({"start", "stop", "restart", "enable", "disable"})
 CONSULTAS = frozenset({"is-active", "is-enabled", "show"})
 
