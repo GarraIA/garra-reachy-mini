@@ -486,6 +486,21 @@ próprio robô (loopback) — é por ali que se desfaz um pareamento perdido:
 por SSH. Quem usa o app sem companion nunca liga a trava e segue configurando
 pelo formulário.
 
+**O robô travado depende do código do PC que assina.** Enquanto o endereço do
+computador não muda, nada se nota. Mudou (outro Wi-Fi, DHCP, outro computador),
+só um companion com a mesma credencial consegue reapontar o robô; o vigia passa a
+mostrar `address_locked` e avisa uma vez no registro. Por isso, **antes** de:
+
+- voltar o computador para um código que não assina (o 1.5.0 ou anterior),
+- trocar de computador, ou
+- apagar ou girar `~/.config/garra-reachy/voz.token`,
+
+destrave o robô a partir do computador pareado:
+`python -m companion.reachy destravar` (e `python -m companion.reachy estado`
+para conferir). Depois disso o pareamento pela tela volta a funcionar com
+qualquer computador. Sem o computador antigo, a saída é o SSH acima. Voltar o
+**robô** para o 1.5.0 não exige nada: ele ignora a trava.
+
 **`POST /api/robot/stop` é a única rota que nunca pede token.** Um botão de
 pânico que responde 401 é um risco de segurança física maior do que o acesso que
 ele barraria: quem alcança o robô com a mão precisa conseguir pará-lo.

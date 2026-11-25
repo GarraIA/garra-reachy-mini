@@ -120,6 +120,7 @@ class Vigia:
         # ganha o app.
         self._faltas = FALTAS_PARA_SUMIR
         self._nao_regravar_antes_de = 0.0
+        self._avisou_trava = False
         self.estado: dict[str, Any] = {"status": "starting", "checked_at": None}
 
     # ── onde está o robô ─────────────────────────────────────────────────────
@@ -240,10 +241,25 @@ class Vigia:
         try:
             # Só as URLs: o token não sai deste computador pelo vigia.
             relatorio = reachy.configurar(painel, so_enderecos=True)
-        except (reachy.ErroReachy, requests.RequestException) as e:
+        except reachy.ErroReachy as e:
+            self._nao_regravar_antes_de = agora + ESPERA_APOS_FALHA_S
+            if e.codigo == "config_locked":
+                # Pareado com OUTRA credencial: tentar de novo não muda nada, e
+                # repetir o aviso a cada volta só enche o registro.
+                if not self._avisou_trava:
+                    log.warning(
+                        "vigia: o robô está travado por outra credencial e recusou o endereço "
+                        "novo. Com o computador antigo: python -m companion.reachy destravar. "
+                        "Sem ele: SSH no robô (ver DOCS_REACHY.md, \"A trava do PC\").")
+                    self._avisou_trava = True
+                return {"status": "address_locked", "panel": painel}
+            log.warning("vigia: regravação falhou (%s)", type(e).__name__)
+            return {"status": "address_update_failed", "panel": painel}
+        except requests.RequestException as e:
             self._nao_regravar_antes_de = agora + ESPERA_APOS_FALHA_S
             log.warning("vigia: regravação falhou (%s)", type(e).__name__)
             return {"status": "address_update_failed", "panel": painel}
+        self._avisou_trava = False
         if relatorio.get("ok"):
             log.info("vigia: robô reapontado para %s", meu)
             return {"status": "address_updated", "panel": painel}

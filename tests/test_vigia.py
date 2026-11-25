@@ -278,3 +278,22 @@ def test_reapontar_nao_reenvia_o_token(monkeypatch, tmp_path) -> None:
         assert set(valores) == {"gateway_url", "voz_url"}
         assert "SEGREDO-DO-TESTE" not in str(valores)
     assert "SEGREDO-DO-TESTE" not in str(relatorio)
+
+
+def test_robo_travado_por_outra_credencial_tem_estado_proprio_e_avisa_uma_vez(cena, monkeypatch, caplog):
+    """O robô pareado só aceita endereço assinado. Se este computador não
+    consegue assinar (credencial perdida, código antigo do outro lado), o vigia
+    diz isso com nome — e não repete o aviso a cada volta."""
+    import logging
+
+    def travado(painel, **kw):
+        raise reachy.ErroReachy("travado", codigo="config_locked")
+
+    monkeypatch.setattr(reachy, "configurar", travado)
+    v = cena(Robo(app=vigia.APP, aponta_para="10.0.0.99"))
+    caplog.set_level(logging.WARNING)
+    assert v.uma_volta()["status"] == "address_locked"
+    v._nao_regravar_antes_de = 0.0
+    assert v.uma_volta()["status"] == "address_locked"
+    avisos = [r for r in caplog.records if "travado" in r.getMessage()]
+    assert len(avisos) == 1 and "destravar" in avisos[0].getMessage()

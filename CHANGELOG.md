@@ -33,6 +33,12 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
   projeto da Hera e apontado como bloqueador pelos dois revisores externos.
   Limite que fica: o primeiro pareamento ainda é aceito sem prova (não há
   segredo anterior com que provar), então pareie o robô logo depois de instalar.
+- **Sair da trava sem SSH.** Um robô travado só aceita endereço assinado, então
+  voltar o computador para um código que não assina, trocar de computador ou
+  perder `voz.token` o deixaria preso ao endereço antigo. `python -m
+  companion.reachy destravar` desfaz a trava com a assinatura do computador
+  pareado — é o passo antes de qualquer um desses. O vigia, ao dar com um robô
+  travado por outra credencial, mostra `address_locked` e avisa uma vez.
 
 ## 1.5.0 — 2026-11-24
 

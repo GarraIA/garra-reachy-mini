@@ -315,3 +315,46 @@ def test_reapontar_sozinho_nao_mexe_na_trava(monkeypatch):
     monkeypatch.setattr(reachy, "_esperar_alcancar", lambda *a, **k: (True, {}))
     reachy.configurar("http://10.0.0.142:8042", so_enderecos=True)
     assert [set(g) for g in gravados] == [{"gateway_url", "voz_url"}]
+
+
+# ─── sair da trava sem SSH ───────────────────────────────────────────────────
+def test_o_companion_destrava_com_a_propria_assinatura(painel, monkeypatch):
+    """Antes de voltar o computador para um código que não assina (rollback), ou
+    de trocar de computador: o pareado desfaz a trava, e o robô volta a aceitar
+    o formulário e o pareamento de qualquer um."""
+    from companion import reachy, voz
+
+    armazenamento.salvar_config(dict(PAREADO))
+    cliente = painel()
+    monkeypatch.setattr(voz, "token", lambda: SEGREDO)
+    monkeypatch.setattr(reachy.requests, "get", lambda url, **kw: cliente.get(url.replace("http://robo", "")))
+    monkeypatch.setattr(reachy.requests, "post", lambda url, json=None, headers=None, **kw:
+                        cliente.post(url.replace("http://robo", ""), json=json, headers=headers))
+    assert reachy.destravar("http://robo")["travada"] is False
+    assert "trava_pc" not in armazenamento.carregar_config()
+    assert cliente.post("/api/config", json={"voz_url": B}).status_code == 200
+
+
+def test_destravar_com_outra_credencial_diz_o_que_fazer(robo_falso):
+    from companion import reachy
+
+    robo_falso.resposta_do_post = _Resposta(403, {"ok": False, "error": {"code": "config_locked"}})
+    with pytest.raises(reachy.ErroReachy) as erro:
+        reachy.destravar("http://10.0.0.142:8042")
+    assert erro.value.codigo == "config_locked" and "SSH" in str(erro.value)
+
+
+def test_o_comando_do_dono(monkeypatch, capsys, tmp_path):
+    from companion import reachy
+
+    monkeypatch.setenv("GARRA_REACHY_CONF", str(tmp_path))
+    chamados = []
+    monkeypatch.setattr(reachy, "_painel", lambda host: f"http://{host}:8042")
+    monkeypatch.setattr(reachy, "destravar", lambda painel: chamados.append(painel) or {"travada": False})
+    monkeypatch.setattr(reachy, "_config_atual", lambda painel: {"travada": True, "efetiva": {"voz_url": A}})
+    (tmp_path / "robo.json").write_text('{"host": "10.0.0.142"}')
+    assert reachy.main(["estado"]) == 0
+    assert "travado: sim" in capsys.readouterr().out
+    assert reachy.main(["destravar"]) == 0 and chamados == ["http://10.0.0.142:8042"]
+    assert reachy.main(["destravar", "--painel", "http://10.0.0.7:8042"]) == 0
+    assert chamados[-1] == "http://10.0.0.7:8042"

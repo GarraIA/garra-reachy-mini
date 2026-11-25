@@ -34,7 +34,11 @@ ESPERA_APLICAR_S = 12.0
 
 
 class ErroReachy(RuntimeError):
-    pass
+    """`codigo` diz o tipo quando ele muda o que fazer (ex.: `config_locked`)."""
+
+    def __init__(self, mensagem: str = "", codigo: str | None = None) -> None:
+        super().__init__(mensagem)
+        self.codigo = codigo
 
 
 def _painel(endereco: str) -> str | None:
@@ -225,9 +229,62 @@ def _gravar(painel: str, valores: dict) -> dict:
             "o robô está pareado com outra credencial e recusou a mudança. Para parear "
             "de novo, entre no robô por SSH e desligue a trava dali: "
             "curl -X POST http://127.0.0.1:8042/api/config -H 'Content-Type: application/json' "
-            "-d '{\"trava_pc\": null}'")
+            "-d '{\"trava_pc\": null}'", codigo="config_locked")
     r.raise_for_status()
     return r.json()
+
+
+def destravar(painel: str) -> dict:
+    """Desliga a trava do robô, com a assinatura deste computador.
+
+    É o passo ANTES de voltar o computador para um código que não assina (o
+    1.5.0), de trocar de computador ou de apagar `voz.token`: depois disso o
+    robô não teria mais quem assinasse por ele, e a única saída seria o SSH.
+    """
+    _gravar(painel, {"trava_pc": None})
+    return {"travada": bool(_config_atual(painel).get("travada"))}
+
+
+def painel_lembrado() -> str | None:
+    """O painel do robô que o vigia lembra (ou `GARRA_ROBO_HOST`)."""
+    import json
+    import os
+
+    host = os.environ.get("GARRA_ROBO_HOST")
+    if not host:
+        try:
+            host = json.loads((voz.pasta_conf() / "robo.json").read_text(encoding="utf-8")).get("host")
+        except (OSError, ValueError, AttributeError):
+            host = None
+    return _painel(host) if isinstance(host, str) and host else None
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m companion.reachy estado | destravar [--painel URL]`"""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m companion.reachy",
+                                     description="O robô pareado com este computador.")
+    parser.add_argument("comando", choices=("estado", "destravar"))
+    parser.add_argument("--painel", help="ex.: http://10.0.0.142:8042 (padrão: o que o vigia lembra)")
+    args = parser.parse_args(argv)
+    painel = args.painel or painel_lembrado()
+    if not painel:
+        print("não achei o robô; passe --painel http://<ip-do-robo>:8042")
+        return 2
+    try:
+        if args.comando == "destravar":
+            r = destravar(painel)
+            print(f"{painel}: travado: {'sim' if r['travada'] else 'não'}")
+            return 0 if not r["travada"] else 1
+        atual = _config_atual(painel)
+        efetiva = atual.get("efetiva") or {}
+        print(f"{painel}: travado: {'sim' if atual.get('travada') else 'não'} · "
+              f"voz: {efetiva.get('voz_url')} · ponte: {efetiva.get('gateway_url')}")
+        return 0
+    except (ErroReachy, requests.RequestException) as erro:
+        print(f"{painel}: {erro}")
+        return 1
 
 
 def _codigo(r: requests.Response) -> str | None:
@@ -343,3 +400,7 @@ def configurar(painel: str, *, agente: str = "reachy_voice",
             "anterior restaurada. Confira se a voz está no ar e se o firewall "
             f"deixa o robô chegar em {ip}:{voz.PORTA_VOZ} e {ip}:{ponte.PORTA}.")
     return relatorio
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
