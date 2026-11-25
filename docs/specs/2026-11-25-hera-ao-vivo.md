@@ -200,12 +200,33 @@ delegado. Gasto total das provas pagas até aqui: ~106 s de sessão (≈ US$ 0,0
 O jitter do Wi-Fi (p99 de 120 ms) pede folga de reprodução de 120–150 ms no robô,
 ou o PC no cabo.
 
+### 6.3 No robô de verdade (fase 4)
+
+O `Atendente` instalado no robô (1.6.0.dev3), com o microfone e o alto-falante
+dele pelos dispositivos compartilhados, contra o companion e a ponte da Hera no
+PC. O chamado em si não foi feito por voz: pela bancada (caixas do PC → microfone
+do robô) o Whisper entendeu "na igreja.", "e já está mais gostando." e "Oh, yeah.
+O cheiro é o maravilloso?" no lugar de "Oi Hera, que dia da semana é hoje?" — o
+caminho acústico da bancada não serve, e o teste por voz fica para uma pessoa.
+
+| Medida | Resultado |
+|---|---|
+| Aperto de mão do robô pelo Wi-Fi | 0,06–0,13 s |
+| Chamado → sessão aberta | 1,0–1,9 s |
+| Fim do chamado reenviado (2,76 s) → consulta ao Hermes | 0,78 s |
+| Fim do chamado reenviado → primeira fala da Hera no alto-falante do robô | 1,5 s |
+| O que o alto-falante tocou (transcrito) | "Já vejo isso. Hoje é a quarta-feira." (certo) |
+| Fases no robô | conectando → ouvindo → verificando → falando |
+
+Antes do reenvio do som do chamado, duas sessões abertas do robô ficaram caladas
+— foi assim que a variação do modelo com o histórico apareceu (6.1).
+
 ## 7. O que falta, em fases
 
 | Fase | Entrega |
 |---|---|
 | 3 | lado do PC **[feito]**: liberação e tetos, credencial, canal com prova de posse, par WebRTC, condução da sessão, livro de uso, comando do dono, unit `garra-hera-bridge` (instalada desligada) |
-| 4 | modo ao vivo mínimo no robô, sem movimento |
+| 4 | modo ao vivo no robô **[feito]**: canal com prova, voz pelo `CoordenadorAudio`, corpo parado, PARAR, reenvio do chamado; implantado (1.6.0.dev3), desligado por padrão |
 | 5 | sentinela ("pare", troca, despedida), interrupção ou plano B, movimento, reconexão |
 | 6 | painel: cartão Hera, pílula, consumo |
 | 7 | documentação, validação física, versão 1.6.0 |
