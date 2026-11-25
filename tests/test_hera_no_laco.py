@@ -12,6 +12,8 @@ chamados — é ela que não pode vazar.
 from __future__ import annotations
 
 import time
+
+import numpy as np
 from pathlib import Path
 
 import pytest
@@ -315,3 +317,26 @@ def test_depois_da_conversa_o_fala_garra_volta(pareado):
     time.sleep(1.0)        # o dreno do microfone e a margem de eco depois da voz dela
     cena.alguem_fala()
     assert cena.cerebro.recebidas == ["que horas são?"]
+
+
+def test_o_pedido_dito_junto_do_chamado_e_reenviado_como_som(pareado):
+    """Só o texto no histórico não basta: medido, a Hera respondeu em 1 de 4
+    sessões; com o áudio do chamado reenviado logo que a sessão abre, 4 de 4."""
+    cena, pc = pareado(roteiro=("Oi Hera, que horas são?",))
+    abrir(cena)
+    assert pc.recebidos[0]["como"] == "leading" and pc.recebidos[0]["pedido"] == "que horas são?"
+    # sem ninguém falar de novo, o som do chamado sobe para a sessão
+    assert esperar(lambda: len(pc.som) >= 5), "o áudio do chamado não foi reenviado"
+    valores = np.frombuffer(b"".join(pc.som), dtype="<i2")
+    assert abs(int(np.median(valores)) - 6553) < 50          # os blocos de 0,2 que o Microfone "disse"
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 3})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+
+
+def test_chamado_sozinho_nao_reenvia_nada(pareado):
+    cena, pc = pareado(roteiro=("Oi Hera",))
+    abrir(cena)
+    time.sleep(0.6)
+    assert pc.som == []
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 3})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))

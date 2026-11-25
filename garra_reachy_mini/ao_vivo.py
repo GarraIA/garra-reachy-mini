@@ -349,8 +349,14 @@ class Atendente:
             self._motivo_parada = motivo
             self._parar.set()
 
-    def atender(self, chamado: Chamado) -> bool:
-        """Bloqueia até a conversa acabar. `True` se ela chegou a acontecer."""
+    def atender(self, chamado: Chamado, reenvio: np.ndarray | None = None) -> bool:
+        """Bloqueia até a conversa acabar. `True` se ela chegou a acontecer.
+
+        `reenvio`: o áudio do próprio chamado, quando o pedido veio junto ("Oi
+        Hera, que horas são?"). Sobe para a sessão logo que ela abre, no lugar do
+        microfone, como se a pessoa tivesse acabado de dizer. Medido: só o texto
+        no histórico fez a Hera responder em 1 de 4 sessões; com o som, 4 de 4.
+        """
         p = self._portas
         if p is None:
             self.indisponivel(chamado, "unsupported")
@@ -378,7 +384,7 @@ class Atendente:
             except Recusado as recusa:
                 motivo = recusa.motivo
             else:
-                motivo, segundos, aberta = self._conduzir(canal, p)
+                motivo, segundos, aberta = self._conduzir(canal, p, reenvio)
         except Exception:
             log.exception("a conversa ao vivo falhou")
             motivo = "robot_error"
@@ -396,9 +402,13 @@ class Atendente:
                        seconds=segundos)
         return True
 
-    def _conduzir(self, canal: Canal, p: Portas) -> tuple[str, float, bool]:
+    def _conduzir(self, canal: Canal, p: Portas,
+                  reenvio: np.ndarray | None = None) -> tuple[str, float, bool]:
         """O laço da conversa: microfone sobe, voz desce. `(motivo, segundos, abriu)`."""
         saida = Saida(p.tocar, p.sr_out, relogio=self._relogio)
+        a_reenviar = np.asarray(reenvio, dtype=np.float32) if reenvio is not None else np.empty(0, np.float32)
+        bloco_reenvio = max(1, int(p.sr_in * 0.064))
+        proximo_reenvio: float | None = None
         aberta = False
         prazo_abrir = self._relogio() + PRAZO_ABERTURA_S
         ultimo_contato = self._relogio()
@@ -421,7 +431,18 @@ class Atendente:
                 except CanalCaiu:
                     return motivo_local, duracao(agora), aberta
             mono = p.ler_mono()
+            reenviar = np.empty(0, np.float32)
+            if aberta and a_reenviar.size and pediu_fim_em is None:
+                # O chamado sobe em tempo real, um bloco de 64 ms por vez, no lugar
+                # do microfone — o que a sala diz nesse meio-tempo não se mistura.
+                proximo_reenvio = agora if proximo_reenvio is None else proximo_reenvio
+                if agora >= proximo_reenvio:
+                    reenviar, a_reenviar = a_reenviar[:bloco_reenvio], a_reenviar[bloco_reenvio:]
+                    proximo_reenvio += 0.064
+                mono = np.empty(0, np.float32)
             try:
+                if reenviar.size:
+                    canal.enviar_som(para_pcm16(reenviar, p.sr_in))
                 if mono.size and aberta and pediu_fim_em is None:
                     canal.enviar_som(para_pcm16(mono, p.sr_in))
                 itens = canal.receber()

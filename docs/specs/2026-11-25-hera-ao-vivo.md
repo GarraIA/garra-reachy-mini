@@ -131,9 +131,17 @@ WebRTC do companion; duas sessões reais, 36 s cobrados ≈ US$ 0,03):
 | `session.started` | traz `expires_at` ≈ 2 h depois; instruções e voz `bossa` conferem |
 | `session.usage.updated` / `session.closed` | `active_seconds`, `paused_seconds`, `seconds` |
 
-Ou seja: a interrupção é do servidor e funciona bem, e o pedido dito junto do
-chamado ("Oi Hera, que horas são?") pode ir no histórico inicial — ela responde
-sem ninguém repetir.
+Ou seja: a interrupção é do servidor e funciona bem.
+
+**Correção (25/11, fase 4): o histórico sozinho não basta.** Repetido com mais
+amostras, a pergunta só no histórico inicial teve resposta em 1 de 4 sessões (a
+medição acima, 1 de 1, foi sorte); uma instrução extra pedindo a resposta
+(`session.instructions.append`) não mudou nada (0 de 3). O GPT-Live espera ouvir
+alguém para tomar a vez. O que resolve é reenviar o **áudio** do próprio chamado
+assim que a sessão abre: 4 de 4 sessões responderam, cada uma com uma consulta
+só ao Hermes, de 0,6 a 1,3 s depois do fim do áudio — com e sem o texto no
+histórico, sem resposta em dobro. O robô reenvia o som do chamado em tempo real
+(blocos de 64 ms) e mantém o texto no histórico.
 
 **O chip de áudio do robô** (XVF3800, firmware 2.1.2). O robô fala 12,9 s; a
 "pessoa" (as caixas do PC, no volume máximo) fala três vezes — duas por cima do

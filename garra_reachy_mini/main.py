@@ -1167,13 +1167,14 @@ class GarraReachyMini(ReachyMiniApp):
             """Atende o chamado anotado pelo turno. Roda na thread do laço, que é
             a única que lê o microfone — e a conversa ao vivo precisa dele."""
             chamado = pedido_ao_vivo.pop("chamado", None)
+            som_do_chamado = pedido_ao_vivo.pop("som", None)
             if chamado is None:
                 return
             # A conversa com o Garra não segue aberta por baixo desta: quem
             # chamou a Hera trocou de conversa.
             sessao_ativacao.fechar()
             try:
-                conversou = atendente.atender(chamado)
+                conversou = atendente.atender(chamado, som_do_chamado)
             except Exception:
                 log.exception("A conversa ao vivo falhou ao atender o chamado")
                 conversou = False
@@ -1293,11 +1294,14 @@ class GarraReachyMini(ReachyMiniApp):
             # ele, e o que disse não é conversa da sala para ele guardar nem
             # candidato à segunda escuta dele. Aqui só se anota — nada é
             # publicado, registrado ou enviado; quem atende é o laço.
-            chamado_ao_vivo = roteador.chamado(
+            chamado_hera = roteador.chamado(
                 texto, rota_ao_vivo, capturado_em=capturado_em,
                 falou_ate=sessao_ativacao.falou_ate)
-            if chamado_ao_vivo is not None:
-                pedido_ao_vivo["chamado"] = chamado_ao_vivo
+            if chamado_hera is not None:
+                pedido_ao_vivo["chamado"] = chamado_hera
+                if chamado_hera.como == "leading":
+                    # O pedido veio junto: o som dele sobe para a sessão quando abrir.
+                    pedido_ao_vivo["som"] = audio
                 return
             # O e-stop é reconhecido ANTES da decisão e é o único bypass: um
             # "pare" que dependa de frase de ativação não é um e-stop.
