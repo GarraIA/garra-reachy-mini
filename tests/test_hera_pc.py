@@ -179,6 +179,8 @@ def _perfil(**mudancas):
 def test_o_perfil_e_do_robo_e_nao_do_painel():
     p = _perfil()
     assert p["name"] == "garra" and p["find_by_title"] is False
+    # O histórico inicial é montado pelo companion (só o pedido dito junto do chamado).
+    assert p["accept_history"] is True
     assert p["voice"] == "bossa" and p["model"] == "gpt-live-1"
     assert "Hera" in p["persona"] and "português" in p["persona"]
     assert "Painel-Local" not in json.dumps(p, ensure_ascii=False)

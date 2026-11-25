@@ -149,6 +149,15 @@ def comando(segmento: str) -> str | None:
 
 # ─── a condução ──────────────────────────────────────────────────────────────
 FALHA_DO_HERMES = "Não consegui consultar isso agora. Tente de novo em instantes."
+_DIAS = ("segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo")
+
+
+def agora_local(momento: float | None = None) -> str:
+    """Data e hora deste computador, para acompanhar cada turno delegado. Sem isso,
+    num nível sem ferramentas o Hermes respondeu que não conseguia ver o relógio."""
+    lt = time.localtime(momento)
+    return (f"Data e hora locais: {_DIAS[lt.tm_wday]}, {lt.tm_mday:02d}/{lt.tm_mon:02d}/{lt.tm_year}, "
+            f"{lt.tm_hour:02d}:{lt.tm_min:02d} ({time.strftime('%Z', lt)}).")
 NAO_OUVI = "Não consegui ouvir a pergunta. Pode repetir?"
 PENSANDO = "Consultando."
 PEDACO_MAX = 1400              # por `session.commentary.append` (≤ 500 tokens)
@@ -331,7 +340,7 @@ class Conversa:
         self._estado("pensando")
         self._par.enviar({"type": "session.thinking.append", "delegation_id": ident, "content": PENSANDO})
         try:
-            turno = await asyncio.to_thread(self._ponte.turno, self._id, texto)
+            turno = await asyncio.to_thread(self._ponte.turno, self._id, texto, agora_local())
             resposta = turno.texto.strip() or FALHA_DO_HERMES
         except ErroDaPonte as erro:
             log.info("o Hermes não atendeu a delegação (%s)", erro.codigo)

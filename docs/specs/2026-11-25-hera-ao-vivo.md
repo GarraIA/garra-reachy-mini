@@ -166,6 +166,29 @@ Consequências para o desenho:
   PARAR é a garantia, como no "Fala Garra";
 - o teste com voz humana entra no roteiro do dono, com medição objetiva.
 
+### 6.2 Ponta a ponta no PC, sem o robô
+
+Um "robô" simulado no próprio PC faz o aperto de mão pelo WebSocket da ponte
+`:8126`, manda a pergunta em quadros de 64 ms ("Oi Hera! Que dia da semana é
+hoje, e que horas são agora?") e recebe a fala. Tudo de verdade daí para a
+frente: canal, par WebRTC, ponte da Hera com o perfil do robô, OpenAI e Hermes
+(sessão de prova, nível `conversa`).
+
+| Medida | Resultado |
+|---|---|
+| Aperto de mão até `aceito` | 0,02 s |
+| Abertura da sessão (`aceito` → `aberta`) | 0,87 s (com a ponte já aquecida) |
+| Fim da pergunta → delegação ao Hermes | 0,77 s |
+| Fim da pergunta → primeiro som ("Oi, já te digo.") | 1,46 s |
+| Turno no Hermes | ~9 s; a resposta foi falada logo depois |
+| Encerramento | sozinho, por silêncio, 30 s depois da última fala (`idle`) |
+| Livro | 53 s cobrados, `idle`, 1 delegação, id da sessão da OpenAI |
+| Ao robô chegaram | `aceito`, `aberta`, fases, `fim` — nenhuma transcrição |
+
+Achado: sem ferramenta nenhuma, o Hermes respondeu que não conseguia ver o
+relógio. Desde então a data e a hora do computador acompanham cada turno
+delegado. Gasto total das provas pagas até aqui: ~106 s de sessão (≈ US$ 0,09).
+
 O jitter do Wi-Fi (p99 de 120 ms) pede folga de reprodução de 120–150 ms no robô,
 ou o PC no cabo.
 
@@ -173,7 +196,7 @@ ou o PC no cabo.
 
 | Fase | Entrega |
 |---|---|
-| 3 | lado do PC: dispositivo e credencial, canal com prova de posse, par WebRTC, sessão, livro de uso; unit `garra-hera-bridge` |
+| 3 | lado do PC **[feito]**: liberação e tetos, credencial, canal com prova de posse, par WebRTC, condução da sessão, livro de uso, comando do dono, unit `garra-hera-bridge` (instalada desligada) |
 | 4 | modo ao vivo mínimo no robô, sem movimento |
 | 5 | sentinela ("pare", troca, despedida), interrupção ou plano B, movimento, reconexão |
 | 6 | painel: cartão Hera, pílula, consumo |

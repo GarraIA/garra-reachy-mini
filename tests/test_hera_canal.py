@@ -77,6 +77,7 @@ class PonteFalsa:
         self.resposta, self.falha = resposta, falha
         self.sessoes: list[tuple] = []
         self.turnos: list[tuple] = []
+        self.contextos: list[str] = []
 
     def sessao(self, oferta, historico=None):
         self.sessoes.append((oferta, historico))
@@ -84,6 +85,7 @@ class PonteFalsa:
 
     def turno(self, conversa, texto, contexto=""):
         self.turnos.append((conversa, texto))
+        self.contextos.append(contexto)
         if self.falha:
             raise self.falha
         return ponte_hera.Turno(self.resposta, 120)
@@ -199,6 +201,9 @@ def test_delegacao_vai_ao_hermes_com_o_que_a_pessoa_disse_e_volta_falada():
 
     ponte, par, robo = asyncio.run(cena())
     assert [t for _, t in ponte.turnos] == ["que horas são?"]
+    # Data e hora do computador acompanham o turno: sem ferramenta nenhuma, o
+    # Hermes respondeu (medido) que não conseguia ver o relógio.
+    assert ponte.contextos and ponte.contextos[0].startswith("Data e hora locais: ")
     pensando = next(e for e in par.enviados if e["type"] == "session.thinking.append")
     falado = next(e for e in par.enviados if e["type"] == "session.commentary.append")
     assert pensando["delegation_id"] == falado["delegation_id"] == "d1"

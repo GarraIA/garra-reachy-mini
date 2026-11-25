@@ -87,8 +87,9 @@ def montar(reg: dict, *, versao: str) -> dict:
         "persona": reg.get("persona") or PERSONA_PADRAO,
         "voice": reg["voice"],
         "model": reg["model"],
-        # Quem chama esta ponte é só o companion; o robô nunca manda histórico.
-        "accept_history": False,
+        # Quem chama esta ponte é só o companion, e o histórico é ele quem monta:
+        # o pedido dito junto do chamado, como mensagem do usuário — nada mais.
+        "accept_history": True,
         "session_extra": {},
         "create_params": criar,
         "turn_timeout_s": 120,
