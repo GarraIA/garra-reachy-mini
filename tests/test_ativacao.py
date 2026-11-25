@@ -552,6 +552,12 @@ def test_toda_chave_do_padrao_sobrevive_a_escrita_pelo_painel() -> None:
         "progress_update_delay_ms": 5000,
         "max_progress_messages": 3,
         "acknowledgement_cut_threshold_ms": 900,
+        "live_voice_enabled": True,
+        "live_wake_phrase_text": "Atena",
+        "live_wake_phrase_alternatives": ["Oi Atena"],
+        "live_wake_spellings": ["Atenas"],
+        "live_wake_strictness": "normal",
+        "live_idle_close_s": 45,
         "mode": "informative",
     }
     escrito = conversa.perfil_atualizado(base, alteracoes)

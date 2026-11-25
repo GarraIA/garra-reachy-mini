@@ -101,6 +101,24 @@ PADRAO: dict[str, Any] = {
     # obedece também ao mestre da saída de voz; o gesto, não.
     "wake_ack_sound_enabled": True,
     "wake_ack_motion_enabled": True,
+    # ── conversa ao vivo (Hera) ──────────────────────────────────────────────
+    # Um segundo chamado, que abre conversa de voz em tempo real em vez de um
+    # turno com o agente. Nasce DESLIGADO: durante essa conversa o som da sala
+    # sai de casa, e isso é escolha de quem mora nela. Ver `roteador.py`.
+    "live_voice_enabled": False,
+    "live_wake_phrase_text": "Hera",
+    # Formas com saudação. No rigor padrão o nome só chama sozinho; com
+    # saudação ele pode vir junto do pedido ("Oi Hera, que horas são?").
+    "live_wake_phrase_alternatives": ["Oi Hera", "Olá Hera", "Ei Hera", "Alô Hera"],
+    # Como o reconhecimento escreve o nome. "Hera" e "era" são o mesmo som, e
+    # ele escolhe "era" (medido: 5 de 5).
+    "live_wake_spellings": ["Era"],
+    # strict: o nome sozinho, ou saudação + nome. greeting: só com saudação.
+    # normal: também o nome seguido de pausa e pedido.
+    "live_wake_strictness": "strict",
+    # Quanto silêncio encerra a conversa ao vivo. O teto por conversa e por dia
+    # é do computador, não daqui.
+    "live_idle_close_s": 30,
     # ── microfone e fala ─────────────────────────────────────────────────────
     # Sensibilidade do microfone, de 1 (só voz forte e perto) a 10 (qualquer
     # som). 5 é o detector como sempre foi. Ver `segmentador.Segmentador.ajustar`.
@@ -204,7 +222,7 @@ BOOLEANOS = ("speech_output_enabled", "listening_enabled", "automatic_speech_ena
              "wake_ack_sound_enabled", "wake_ack_motion_enabled",
              "ambient_context_enabled", "notebook_enabled", "clock_enabled",
              "vision_enabled", "vision_cloud_enabled", "family_recognition_enabled",
-             "music_voice_enabled")
+             "music_voice_enabled", "live_voice_enabled")
 
 # A frase cabe numa linha de painel e é dita em voz alta; 64 caracteres é
 # folgado para isso e curto o bastante para não virar um parágrafo.
@@ -212,6 +230,8 @@ FRASE_MAX = 64
 # Quantas frases além da principal. Cada frase a mais é mais uma chance de a
 # conversa da sala parecer um chamado; quatro cobrem apelido, idioma e variação.
 FRASES_ALTERNATIVAS_MAX = 4
+# Rigor do chamado da conversa ao vivo (ver `roteador.chamado`).
+RIGORES_AO_VIVO = ("strict", "greeting", "normal")
 
 # Visão: o provedor é um de três; o endpoint local é uma URL http(s) curta (a
 # ponte confere de novo se é da casa); nome de modelo é o que o Ollama e a
@@ -232,7 +252,8 @@ INTEIROS = ("progress_update_delay_ms", "max_progress_messages",
             "acknowledgement_cut_threshold_ms",
             "wake_phrase_window_s", "wake_phrase_session_max_s",
             "ambient_context_window_s",
-            "mic_sensitivity", "vad_silence_ms", "speech_rate_pct", "speech_volume_pct")
+            "mic_sensitivity", "vad_silence_ms", "speech_rate_pct", "speech_volume_pct",
+            "live_idle_close_s")
 
 LIMITES = {
     "mic_sensitivity": (1, 10),
@@ -240,6 +261,8 @@ LIMITES = {
     "speech_rate_pct": (70, 140),
     "speech_volume_pct": (10, 100),
     "wake_phrase_window_s": (3, 120),
+    # Piso de 10 s: menos que isso fecha a conversa numa pausa para pensar.
+    "live_idle_close_s": (10, 120),
     "wake_phrase_session_max_s": (15, 600),
     # Piso de 30 s: menos que isso não cobre nem uma troca de frases. Teto de
     # 5 min: é o que separa "o que se falava agora" de gravar a tarde inteira.
@@ -299,6 +322,7 @@ def _aplicar(c: dict, bruto: dict) -> None:
                     vistas.add(chave)
                     limpas.append(frase)
             c["wake_phrase_alternatives"] = limpas[:FRASES_ALTERNATIVAS_MAX]
+    _aplicar_ao_vivo(c, bruto)
     if "speech_language" in bruto and bruto["speech_language"] in IDIOMAS:
         c["speech_language"] = bruto["speech_language"]
     if "speech_voice" in bruto:
@@ -327,6 +351,47 @@ def _aplicar(c: dict, bruto: dict) -> None:
         c["wake_phrase_session_max_s"] = c["wake_phrase_window_s"]
 
 
+def _frases(lista: Any, maximo: int, *, uma_palavra: bool = False) -> list[str] | None:
+    """A lista como o painel mandou, sem o que não é frase e sem repetição.
+    `None` quando não veio uma lista — aí a anterior permanece."""
+    from .ativacao import tokens as _tokens
+    if not isinstance(lista, (list, tuple)):
+        return None
+    vistas, limpas = set(), []
+    for item in lista:
+        frase = str(item or "").strip()[:FRASE_MAX]
+        chave = tuple(_tokens(frase))
+        if not chave or chave in vistas or (uma_palavra and len(chave) != 1):
+            continue
+        vistas.add(chave)
+        limpas.append(frase)
+    return limpas[:maximo]
+
+
+def _aplicar_ao_vivo(c: dict, bruto: dict) -> None:
+    """As chaves do chamado da conversa ao vivo, pelo mesmo caminho único.
+
+    Aqui só a forma de cada valor. Frase que colide com as do Garra é deixada de
+    fora na hora de montar a rota (`roteador.Rota.de`), porque qualquer um dos
+    dois lados pode mudar depois.
+    """
+    from .ativacao import tokens as _tokens
+    if "live_wake_phrase_text" in bruto:
+        candidata = str(bruto["live_wake_phrase_text"] or "").strip()[:FRASE_MAX]
+        if candidata and _tokens(candidata):
+            c["live_wake_phrase_text"] = candidata
+    if "live_wake_phrase_alternatives" in bruto:
+        formas = _frases(bruto["live_wake_phrase_alternatives"], FRASES_ALTERNATIVAS_MAX)
+        if formas is not None:
+            c["live_wake_phrase_alternatives"] = formas
+    if "live_wake_spellings" in bruto:
+        grafias = _frases(bruto["live_wake_spellings"], FRASES_ALTERNATIVAS_MAX, uma_palavra=True)
+        if grafias is not None:
+            c["live_wake_spellings"] = grafias
+    if bruto.get("live_wake_strictness") in RIGORES_AO_VIVO:
+        c["live_wake_strictness"] = bruto["live_wake_strictness"]
+
+
 def normalizar(bruto: dict | None) -> dict:
     """Mescla o que veio do disco com o padrão, validando faixas.
 
@@ -334,7 +399,9 @@ def normalizar(bruto: dict | None) -> dict:
     à mão com um número absurdo, não pode impedir o robô de conversar.
     """
     c = {**PADRAO, "profiles": {k: dict(v) for k, v in PADRAO["profiles"].items()},
-         "wake_phrase_alternatives": list(PADRAO["wake_phrase_alternatives"])}
+         "wake_phrase_alternatives": list(PADRAO["wake_phrase_alternatives"]),
+         "live_wake_phrase_alternatives": list(PADRAO["live_wake_phrase_alternatives"]),
+         "live_wake_spellings": list(PADRAO["live_wake_spellings"])}
     if not isinstance(bruto, dict):
         return c
 

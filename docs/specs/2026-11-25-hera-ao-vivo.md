@@ -1,0 +1,142 @@
+# Hera ao vivo no robô — desenho, decisões e medições
+
+**Data:** 25/11/2026 · **Versão-alvo:** 1.6.0 · **Ramo:** `feature/hera-ao-vivo`
+
+O robô ganha um segundo chamado. "Fala Garra" continua abrindo um turno com o
+agente escolhido. "Hera" abre uma conversa de voz em tempo real com a mesma Hera
+por voz do site do dono: modelo `gpt-live-1` da OpenAI (API Live), voz `bossa`,
+com todo trabalho real delegado em texto a uma sessão do Hermes.
+
+Este documento é o registro do desenho. O que já está no código está marcado
+**[feito]**; o resto é o que falta, na ordem das fases.
+
+## 1. De onde se partiu
+
+- A Hera por voz do site é uma ponte pequena (`Painel-Local/voice_bridge/server.py`)
+  na mesma máquina do companion. Ela guarda a chave da OpenAI, troca o SDP e
+  executa os turnos delegados no Hermes. O áudio vai por WebRTC, direto do
+  navegador à OpenAI.
+- No site não existe dispositivo, origem, teto de custo nem cliente sem navegador.
+- A camada falada do site se apresenta como "Hermes"; "Hera" está só na tela.
+
+## 2. Arquitetura
+
+```
+pessoa ──► robô ──(trecho de fala)──► Whisper do PC ──► roteador (no robô)
+                                                          │ chamado da Hera
+robô ◄──── PCM 16 kHz por WebSocket (ponte :8126) ────► companion
+                                                          │ WebRTC (aiortc)
+                                   ponte da Hera ◄─ SDP ──┤────────► OpenAI Live
+                                   (socket Unix, chave)   │ delegação em texto
+                                        └────────────────►└────────► Hermes
+```
+
+1. **Ativação local.** `roteador.py`, antes do portão do Garra. Nada sai de casa
+   antes do chamado. **[feito]**
+2. **Robô = terminal de áudio.** Troca PCM 16 kHz com o companion. Não fala com a
+   OpenAI, não guarda chave, não ganha dependência (o `apps_venv` do robô tem
+   `websockets` 15 e não tem `aiortc`: conferido).
+3. **Companion = "navegador sem tela".** É o par WebRTC da OpenAI e dono do canal
+   de eventos; aplica tetos, sentinela e registro.
+4. **Ponte da Hera = o código do site, em segundo processo**, com perfil de canal
+   próprio (`ChannelProfile`, ramo `feat/voice-channel-profile` do Painel-Local).
+   **[feito, ainda não ligado]**
+5. **Hermes = a mesma Hera**, com sessão durável só do robô.
+
+Por que o áudio passa pelo PC: a chave, a memória e o Hermes já moram nele, então
+tirá-lo do caminho não compra disponibilidade; mantê-lo dá um ponto único de
+corte, de tetos e de escuta do "pare", e deixa o robô sem dependência nativa nova.
+O preço estimado é ~100 ms de latência a mais que o robô falando WebRTC direto.
+
+## 3. Decisões do dono (25/11/2026)
+
+| Tema | Decisão |
+|---|---|
+| Reuso da ponte | perfil de canal no Painel-Local, segundo processo |
+| Ferramentas da Hera no robô | **completo, sempre ligado** (como no site) |
+| Memória | a mesma da Hera; conversa separada da do site |
+| Rigor do chamado | estrito |
+
+"Completo sempre ligado" significa que quem estiver na sala fala com a Hera com
+todas as ferramentas, e que o Hermes executa código sem pedir aprovação (a
+`command_allowlist` do Hermes libera `execute_code`). Ficam valendo: só o
+computador muda o nível; o painel do robô só consegue reduzir; pedidos de
+aprovação são cancelados; tetos de tempo no PC.
+
+## 4. O chamado **[feito]**
+
+"Hera" e "era" são o mesmo som. Medido com o Whisper do servidor de voz (voz
+sintética, sem robô): "Hera, …" saiu escrito "Era, …" em 5 de 5; com a dica
+"Hera", "Era uma vez um rei" virou "Hera era uma vez um rei". Daí:
+
+- sem dica e sem segunda escuta para este chamado; a grafia "era" vale pelo nome;
+- o que separa chamado de conversa é a forma do enunciado (`live_wake_strictness`):
+
+| Rigor | Chama | Não chama |
+|---|---|---|
+| `strict` (padrão) | "Hera." sozinha; "Oi Hera"; "Oi Hera, que horas são?" | "Era uma vez…", "Hera, que horas são?" |
+| `greeting` | só com saudação | "Hera." sozinha |
+| `normal` | também "Hera, que horas são?" (nome + pausa escrita) | "Era uma vez…" |
+
+- formas com saudação vêm de `live_wake_phrase_alternatives` ("Oi/Olá/Ei/Alô Hera");
+- forma que começa como uma frase do Garra é deixada de fora na hora de montar a
+  rota ("Fala Hera" × "Fala Garra");
+- "Hera, pare" é parada de emergência, nunca chamado;
+- o chamado fecha a conversa aberta com o Garra, e o que foi dito à Hera não vai
+  para a escuta de contexto dele, nem para evento, nem para o registro.
+
+Preço conhecido do rigor estrito: "Oi, era só isso mesmo." tem a forma de um
+chamado com pedido. Quem quiser fechar isso tira as formas com saudação.
+
+Neste ponto do código o robô reconhece o chamado e responde que a Hera não está
+disponível (`voice.live.unavailable`, aviso falado no máximo a cada 30 s).
+
+## 5. Segurança
+
+- **Trava do PC [feito, implantado].** Ver `DOCS_REACHY.md`, "A trava do PC".
+- **Canal robô↔PC:** prova de posse nos dois sentidos (HMAC sobre desafio +
+  endereço discado). O robô só envia áudio depois que o PC se prova.
+- **Chave da OpenAI:** só no processo da ponte da Hera, sem porta TCP.
+- **Painel do robô (sem senha):** liga/desliga o chamado e reduz; nunca aumenta
+  nível ou teto. Transcrições não vão ao robô.
+- **Tetos no PC:** 1 sessão por vez; 10 min por conversa; 30 min por dia; 300 min
+  por mês; 12 aberturas por hora; 3 sessões vazias em 10 min suspendem o chamado.
+
+## 6. Medições (25/11/2026)
+
+| Medida | Resultado |
+|---|---|
+| ping PC → robô (os dois no Wi-Fi), 900 amostras em 3 min | p50 4,0 · p90 30,6 · p95 49,5 · p99 120 · máx. 125 ms; 24 acima de 100 ms; 1 perdida |
+| ping PC → api.openai.com | mín. 12 / méd. 16 / máx. 29 ms |
+| TLS até api.openai.com | 34–89 ms |
+| Robô: `apps_venv` | `websockets` 15.0.1; sem `aiortc`, sem `av`; 4 núcleos, 3,8 GB |
+| Robô: ALSA | dmix/dsnoop a 16 kHz, período 1024 (64 ms), buffer 4096 (256 ms) |
+| Eco: o robô toca 6,4 s de fala; o microfone, enquanto isso | −31,2 dBFS, contra piso da sala de −23,7 dBFS; 0 de 90 blocos acima do limiar do detector; nenhum trecho de fala aberto |
+| Fala simultânea (caixas do PC por cima do robô falando) | microfone fixo em −31 dBFS durante os 13 s; o Whisper não ouviu nada |
+| Parâmetros do chip (firmware 2.1.2) | `PP_DTSENSITIVE=1`, `PP_NLATTENONOFF=1`, `PP_ECHOONOFF=1`, `PP_NLAEC_MODE=0`, `PP_AGCMAXGAIN=64`, 4 microfones, AEC convergido |
+
+O que as medições de eco dizem: enquanto o alto-falante do robô toca, o chip
+abafa o microfone inteiro (nível fixo, abaixo até do ruído da sala). É ótimo
+contra autoativação e contra a Hera se interromper sozinha. Em compensação, **a
+interrupção por voz pode não funcionar com os parâmetros de fábrica**: a voz de
+quem interrompe pode ser abafada junto. Isto ainda não está decidido — a "pessoa"
+do teste foram as caixas do PC, numa sala com outro som ligado, e nem no controle
+(sem o robô falando) o Whisper entendeu a frase. Falta medir com voz humana a 1 m
+e, se preciso, ajustar `PP_NLATTENONOFF`/`PP_DTSENSITIVE` pelo SDK
+(`apply_audio_config`), que são graváveis.
+
+O jitter do Wi-Fi (p99 de 120 ms) pede folga de reprodução de 120–150 ms no robô,
+ou o PC no cabo.
+
+## 7. O que falta, em fases
+
+| Fase | Entrega |
+|---|---|
+| 3 | lado do PC: dispositivo e credencial, canal com prova de posse, par WebRTC, sessão, livro de uso; unit `garra-hera-bridge` |
+| 4 | modo ao vivo mínimo no robô, sem movimento |
+| 5 | sentinela ("pare", troca, despedida), interrupção ou plano B, movimento, reconexão |
+| 6 | painel: cartão Hera, pílula, consumo |
+| 7 | documentação, validação física, versão 1.6.0 |
+
+Dependem do dono: o teste pago da API (não autorizado ainda), os testes com voz
+humana e a revisão dos arquivos de memória do Hermes antes de ligar a Hera no robô.

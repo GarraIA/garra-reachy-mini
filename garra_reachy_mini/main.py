@@ -38,7 +38,7 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 
 from enum import Enum
 
-from . import armazenamento, ativacao
+from . import ao_vivo, armazenamento, ativacao, roteador
 from . import caderno as caderno_mod
 from .acompanhamento import Acompanhamento
 from .cerebro import (AVISO_SEM_CEREBRO, FALHA_GENERICA, Cerebro,
@@ -1117,6 +1117,27 @@ class GarraReachyMini(ReachyMiniApp):
         # A partir daqui o painel também consegue falar pelo robô.
         self._falar_texto = falar
 
+        # ── conversa ao vivo ──────────────────────────────────────────────
+        # `processar` só ANOTA o chamado aqui; quem atende é o laço, depois que
+        # o turno devolveu o controle (ver `atender_ao_vivo`).
+        pedido_ao_vivo: dict = {}
+        atendente = ao_vivo.Atendente(controlador.eventos.publicar, falar)
+
+        def atender_ao_vivo() -> None:
+            """Atende o chamado anotado pelo turno. Roda na thread do laço, que é
+            a única que lê o microfone — e a conversa ao vivo precisa dele."""
+            chamado = pedido_ao_vivo.pop("chamado", None)
+            if chamado is None:
+                return
+            # A conversa com o Garra não segue aberta por baixo desta: quem
+            # chamou a Hera trocou de conversa.
+            sessao_ativacao.fechar()
+            try:
+                atendente.atender(chamado)
+            except Exception:
+                log.exception("A conversa ao vivo falhou ao atender o chamado")
+            gestos.ouvindo()
+
         bipe = ativacao.bipe(sr_out)
 
         def confirmar_ativacao(conf: dict) -> None:
@@ -1187,6 +1208,12 @@ class GarraReachyMini(ReachyMiniApp):
             if not texto or len(texto) < 2:
                 gestos.ouvindo()
                 return
+            # ── o nome da conversa ao vivo não esconde um "pare" ───────────
+            # "Hera, pare" é parada de emergência, nunca chamado: tira-se o nome
+            # e o "pare" segue o caminho de sempre — teste de escuta incluído.
+            rota_ao_vivo = roteador.Rota.de(Config.carregar().conversa)
+            if cfg.atalhos_locais:
+                texto = roteador.parada(texto, rota_ao_vivo) or texto
             # ── teste de escuta pedido pelo painel ─────────────────────────
             # A fala é do teste: volta para quem pediu e não vai a lugar
             # nenhum — nem chat, nem contexto, nem agente, nem registro.
@@ -1212,6 +1239,17 @@ class GarraReachyMini(ReachyMiniApp):
             # rejeitado não entra no log do app.
             conf_wake = Config.carregar()
             ativ = ativacao.Ativacao.de(conf_wake.conversa)
+            # ── chamado da conversa ao vivo ───────────────────────────────
+            # Antes do portão do Garra: quem chama a Hera não está falando com
+            # ele, e o que disse não é conversa da sala para ele guardar nem
+            # candidato à segunda escuta dele. Aqui só se anota — nada é
+            # publicado, registrado ou enviado; quem atende é o laço.
+            chamado_ao_vivo = roteador.chamado(
+                texto, rota_ao_vivo, capturado_em=capturado_em,
+                falou_ate=sessao_ativacao.falou_ate)
+            if chamado_ao_vivo is not None:
+                pedido_ao_vivo["chamado"] = chamado_ao_vivo
+                return
             # O e-stop é reconhecido ANTES da decisão e é o único bypass: um
             # "pare" que dependa de frase de ativação não é um e-stop.
             e_stop = bool(cfg.atalhos_locais
@@ -1683,6 +1721,7 @@ class GarraReachyMini(ReachyMiniApp):
                     trecho = detector.sem_audio(agora)
                     if trecho is not None:
                         processar(trecho.audio, esperas)
+                        atender_ao_vivo()
                     elif not detector.em_fala:
                         # O que foi ouvido há mais tempo que a janela sai da
                         # memória agora, e não na próxima fala.
@@ -1706,6 +1745,7 @@ class GarraReachyMini(ReachyMiniApp):
                 trecho = detector.bloco(mono, agora)
                 if trecho is not None:
                     processar(trecho.audio, esperas)
+                    atender_ao_vivo()
 
                 if self._acordar.is_set():
                     # Configuração nova. Voltar ao supervisor é o caminho mais

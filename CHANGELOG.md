@@ -2,6 +2,23 @@
 
 ## 1.6.0 — em desenvolvimento
 
+O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
+
+### Added
+
+- **Um segundo chamado: "Hera"** (`roteador.py`, desligado por padrão em
+  `live_voice_enabled`). É o chamado da conversa ao vivo, decidido antes do portão
+  do "Fala Garra" — que não muda. "Hera" e "era" são o mesmo som, e o
+  reconhecimento escreve "era" (medido: 5 de 5; com dica, "Era uma vez um rei"
+  virava chamado). Então este chamado não usa dica nem segunda escuta, aceita a
+  grafia "era" e distingue chamado de conversa pela forma: no rigor padrão
+  (`strict`) só o nome sozinho ou com saudação ("Oi Hera, que horas são?").
+  "Hera, pare" é parada. Quem chama a Hera fecha a conversa aberta com o Garra, e
+  o que disse não vai para a escuta de contexto dele, para evento ou para o
+  registro. **Neste ponto o robô reconhece o chamado e responde que a Hera não
+  está disponível** (`voice.live.unavailable`); a conversa em si vem nas próximas
+  fases.
+
 ### Security
 
 - **O robô pareado não muda mais de endereço pela rede.** O painel do robô não
