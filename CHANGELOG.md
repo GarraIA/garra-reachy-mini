@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.6.0 — em desenvolvimento
+
+### Security
+
+- **O robô pareado não muda mais de endereço pela rede.** O painel do robô não
+  pede senha, e até aqui qualquer aparelho do Wi-Fi podia gravar `voz_url` ou
+  `gateway_url` em `POST /api/config`: o robô passava a mandar para lá a
+  credencial e cada trecho de fala da sala. Agora, depois de pareado pelo
+  companion (`trava_pc`), endereços, credenciais e o caminho do binário só mudam
+  com a assinatura do PC — desafio de uso único mais HMAC com a credencial que o
+  robô já tem, sem relógio e sem o segredo trafegar. O companion e o vigia
+  assinam sozinhos; o formulário mostra os campos travados. Do próprio robô
+  (SSH, loopback) continua dando para desligar a trava. Achado na revisão do
+  projeto da Hera e apontado como bloqueador pelos dois revisores externos.
+  Limite que fica: o primeiro pareamento ainda é aceito sem prova (não há
+  segredo anterior com que provar), então pareie o robô logo depois de instalar.
+
 ## 1.5.0 — 2026-11-24
 
 O robô não respondia a "Fala Garra". Eram quatro causas empilhadas, nenhuma

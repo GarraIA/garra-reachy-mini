@@ -469,6 +469,22 @@ mudam algo, aceitando também a mesma origem que serviu a página (o painel aber
 em `http://reachy-mini.local:8042` não teria como estar numa allowlist montada no
 arranque); e limitador de 8 req/s por IP com balde de 40.
 
+**A trava do PC** (`web/trava.py`). Dentro do robô o painel não pede senha, e
+`POST /api/config` decide para onde o robô manda cada trecho de fala e a
+credencial. Depois que o companion pareia o robô (`trava_pc: true`, gravado por
+`companion/reachy.py::configurar`), os campos `gateway_url`, `voz_url`,
+`gateway_key`, `voz_token`, `garra_bin` e a própria `trava_pc` só mudam com a
+assinatura do PC: o robô emite um desafio de uso único em
+`GET /api/config/desafio` (60 s), e o pedido vem com
+`X-Garra-Assinatura: v1 <desafio> <HMAC-SHA256>` calculado com a credencial que o
+robô já guarda. Sem assinatura válida: 403 `config_locked`, e nada do pedido é
+gravado. O segredo nunca viaja. Ficam de fora o que não é protegido (agente,
+modelo, janela de turnos), repetir o valor que já está lá e os pedidos vindos do
+próprio robô (loopback) — é por ali que se desfaz um pareamento perdido:
+`curl -X POST http://127.0.0.1:8042/api/config -H 'Content-Type: application/json' -d '{"trava_pc": null}'`,
+por SSH. Quem usa o app sem companion nunca liga a trava e segue configurando
+pelo formulário.
+
 **`POST /api/robot/stop` é a única rota que nunca pede token.** Um botão de
 pânico que responde 401 é um risco de segurança física maior do que o acesso que
 ele barraria: quem alcança o robô com a mão precisa conseguir pará-lo.

@@ -5,6 +5,8 @@ const botao = formulario.querySelector("button[type=submit]");
 
 // Segredos nunca voltam preenchidos (o servidor manda "***").
 const SEGREDOS = new Set(["gateway_key"]);
+// Com o robô pareado, o que decide para onde ele fala só muda pelo computador.
+const TRAVADOS = ["gateway_url", "gateway_key", "voz_url", "garra_bin"];
 
 // null = o GET /api/config ainda não funcionou. Salvar com o form despovoado
 // apagaria a configuração inteira, então o botão fica travado até carregar.
@@ -30,6 +32,11 @@ async function carregar() {
       if (!campo.name || SEGREDOS.has(campo.name)) continue;
       if (dados.salva[campo.name] !== undefined) campo.value = dados.salva[campo.name];
       delete campo.dataset.sujo;
+    }
+    const travada = dados.travada === true;
+    document.getElementById("travada").hidden = !travada;
+    for (const nome of TRAVADOS) {
+      if (formulario.elements[nome]) formulario.elements[nome].disabled = travada;
     }
     salvaCarregada = dados.salva;
     botao.disabled = false;
@@ -72,6 +79,7 @@ formulario.addEventListener("submit", async (ev) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(corpo),
     });
+    if (r.status === 403) { status.textContent = t('cfg.travada'); carregar(); return; }
     if (!r.ok) throw new Error("HTTP " + r.status);
     const dados = await r.json();
     status.textContent = dados.ok ? '✔ ' + t('cfg.salvo') : t('cfg.erro_generico');

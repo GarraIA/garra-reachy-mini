@@ -31,6 +31,8 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from pathlib import Path
 
 import numpy as np
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from reachy_mini import ReachyMini, ReachyMiniApp
 
@@ -61,6 +63,7 @@ from .voz import VozClient, frases, limpar_para_voz
 from .web import (ContextoWeb, FrameHub, PonteChat, montar, preparar,
                   resolver_politica)
 from .web.integracoes import Ponte as PonteIntegracoes
+from .web import trava
 
 # A página é servida sem autenticação no loopback (é o daemon quem sobe o
 # uvicorn): nada de segredo sai pelo GET /api/config.
@@ -146,6 +149,9 @@ class OpcoesSalvas(BaseModel):
     model: str | None = None
     garra_bin: str | None = None
     janela_turnos: int | None = None
+    # Ligada pelo companion ao parear: daí em diante endereços e credenciais
+    # só mudam com a assinatura do PC (ver web/trava.py).
+    trava_pc: bool | None = None
 
 
 class GarraReachyMini(ReachyMiniApp):
@@ -211,6 +217,7 @@ class GarraReachyMini(ReachyMiniApp):
         @self.settings_app.get("/api/config")
         def obter_config():
             cfg = Config.carregar()
+            salva = armazenamento.carregar_config()
             return {
                 "efetiva": {
                     "gateway_url": cfg.gateway_url,
@@ -223,16 +230,34 @@ class GarraReachyMini(ReachyMiniApp):
                     "janela_turnos": cfg.janela_turnos,
                     "gateway_key_configurada": bool(cfg.gateway_key),
                 },
-                "salva": _salva_publica(armazenamento.carregar_config()),
+                "salva": _salva_publica(salva),
+                "travada": bool(salva.get("trava_pc")),
             }
 
+        desafios = trava.Desafios()
+
+        @self.settings_app.get("/api/config/desafio")
+        def desafio_da_config():
+            return {"nonce": desafios.emitir(), "expira_s": int(desafios.validade_s)}
+
         @self.settings_app.post("/api/config")
-        def salvar_config(opcoes: OpcoesSalvas):
+        def salvar_config(opcoes: OpcoesSalvas, request: Request):
             atual = armazenamento.carregar_config()
+            pedido = opcoes.model_dump(exclude_unset=True)
+            barrados = trava.recusa(
+                atual, pedido, request.headers.get(trava.CABECALHO), desafios,
+                request.client.host if request.client else None, MASCARA)
+            if barrados:
+                # Nada é gravado, nem a parte livre: um pedido meio aceito
+                # deixaria quem o fez sem saber o que valeu.
+                return JSONResponse(status_code=403, content={"ok": False, "error": {
+                    "code": "config_locked", "fields": barrados,
+                    "detail": "este robô está pareado com um computador; endereços e "
+                              "credenciais são definidos por ele"}})
             # Campo ausente do JSON = preservar; None ou "" = limpar (volta ao
             # padrão). Vale para texto e para número: o form manda null quando o
             # campo numérico está vazio.
-            for chave, valor in opcoes.model_dump(exclude_unset=True).items():
+            for chave, valor in pedido.items():
                 if chave in SEGREDOS and valor == MASCARA:
                     continue  # a UI devolveu a máscara: não sobrescreve o segredo
                 if valor is None or valor == "":

@@ -571,6 +571,15 @@ advice applies to the robot as a whole, not just to this app.
   to the model with every request so it can answer questions about it.
 - **Credentials are never returned by the API.** `GET /api/config` masks the
   gateway key; the panel can set it but never read it back.
+- **Once paired with the companion, the robot cannot be re-pointed from the
+  network.** The panel has no password on the robot, and the voice and gateway
+  addresses decide where every utterance and the credential are sent. After
+  pairing, those addresses, the credentials and the local binary path only
+  change with a signature from the paired computer (a one-time challenge and an
+  HMAC — the secret itself never travels). Anything else answers 403
+  `config_locked`. To undo a lost pairing, clear the lock from the robot itself
+  over SSH (see `DOCS_REACHY.md`, "A trava do PC"). Without the companion the
+  lock is never set and the settings page works as before.
 - **Identity fields reach the model.** The assistant name, operator name and
   personality you configure are part of the agent's context and are sent to
   the AI provider with each conversation — that is what they are for. Do not

@@ -100,6 +100,7 @@ const TEXTOS = {
     'cfg.salvando': 'saving…',
     'cfg.erro_generico': 'could not save',
     'cfg.erro_salvar': 'Could not save: {erro}',
+    'cfg.travada': 'This robot is paired with a computer. Addresses and keys are set by the Garra app on that computer, so they are locked here.',
 
     'status.titulo': 'System status',
     'status.acordar': 'Wake up',
@@ -913,6 +914,7 @@ const TEXTOS = {
     'cfg.salvando': 'salvando…',
     'cfg.erro_generico': 'erro ao salvar',
     'cfg.erro_salvar': 'Não consegui salvar: {erro}',
+    'cfg.travada': 'Este robô está pareado com um computador. Endereços e chaves são definidos pelo app do Garra nesse computador; por isso ficam travados aqui.',
 
     'status.titulo': 'Status do sistema',
     'status.acordar': 'Acordar',

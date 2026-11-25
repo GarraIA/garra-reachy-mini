@@ -13,6 +13,9 @@ IP errado deixaria o robô pior do que estava, sem ninguém perceber.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import time
 
 import requests
@@ -187,10 +190,52 @@ def _config_atual(painel: str) -> dict:
     return r.json()
 
 
+CABECALHO_ASSINATURA = "X-Garra-Assinatura"
+
+
+def _assinatura(segredo: str, nonce: str, valores: dict) -> str:
+    """HMAC do desafio do robô e do pedido. Gêmea de `garra_reachy_mini/web/trava.py`
+    (o companion não importa o pacote do robô); um teste compara as duas."""
+    corpo = json.dumps(valores, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    mensagem = f"garra-config-v1\n{nonce}\n{corpo}".encode("utf-8")
+    return hmac.new(segredo.encode("utf-8"), mensagem, hashlib.sha256).hexdigest()
+
+
+def _desafio(painel: str) -> str | None:
+    """Desafio de uso único do robô; `None` quando o app dele é anterior à trava."""
+    r = requests.get(f"{painel}/api/config/desafio", timeout=TIMEOUT_S)
+    if r.status_code in (404, 405):
+        return None
+    r.raise_for_status()
+    nonce = r.json().get("nonce")
+    return nonce if isinstance(nonce, str) and nonce else None
+
+
 def _gravar(painel: str, valores: dict) -> dict:
-    r = requests.post(f"{painel}/api/config", json=valores, timeout=TIMEOUT_S)
+    """Grava no robô, assinando: depois de pareado ele só troca de endereço para
+    quem prova conhecer a credencial. O que sai daqui é o HMAC, nunca o token."""
+    cabecalhos = {}
+    nonce = _desafio(painel)
+    if nonce:
+        cabecalhos[CABECALHO_ASSINATURA] = f"v1 {nonce} {_assinatura(voz.token(), nonce, valores)}"
+    r = requests.post(f"{painel}/api/config", json=valores, headers=cabecalhos,
+                      timeout=TIMEOUT_S)
+    if r.status_code == 403 and _codigo(r) == "config_locked":
+        raise ErroReachy(
+            "o robô está pareado com outra credencial e recusou a mudança. Para parear "
+            "de novo, entre no robô por SSH e desligue a trava dali: "
+            "curl -X POST http://127.0.0.1:8042/api/config -H 'Content-Type: application/json' "
+            "-d '{\"trava_pc\": null}'")
     r.raise_for_status()
     return r.json()
+
+
+def _codigo(r: requests.Response) -> str | None:
+    try:
+        erro = r.json().get("error")
+    except ValueError:
+        return None
+    return erro.get("code") if isinstance(erro, dict) else None
 
 
 def _servicos(painel: str) -> dict:
@@ -245,6 +290,9 @@ def configurar(painel: str, *, agente: str = "reachy_voice",
         "agent_id": agente,
         "voz_token": voz.token(),
         "gateway_key": voz.token(),
+        # Pareado: daqui em diante o robô só troca de endereço ou de credencial
+        # com a assinatura deste computador (ver `_gravar`).
+        "trava_pc": True,
     }
     anterior_bruto = _config_atual(painel)
     efetiva = anterior_bruto.get("efetiva", {})
@@ -256,6 +304,7 @@ def configurar(painel: str, *, agente: str = "reachy_voice",
     anterior = {c: salva.get(c, "")
                 for c in ("gateway_url", "voz_url", "agent_id",
                           "voz_token", "gateway_key")}
+    anterior["trava_pc"] = salva.get("trava_pc") or None
     if so_enderecos:
         novo = {c: novo[c] for c in ("gateway_url", "voz_url")}
         anterior = {c: anterior[c] for c in ("gateway_url", "voz_url")}
