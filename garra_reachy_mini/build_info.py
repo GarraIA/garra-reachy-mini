@@ -58,6 +58,9 @@ CAPACIDADES: dict[str, bool] = {
     # ativação acompanha o próximo pedido. Chave própria porque muda o que SAI
     # do robô — um painel tem de saber que este build oferece o interruptor.
     "ambient_context": True,
+    # A trava do PC (`web/trava.py`): depois de pareado, endereços e credenciais só
+    # mudam com assinatura. O companion pergunta por esta chave antes de contar com ela.
+    "config_lock": True,
     # Caderno (`notebook_enabled`, GET/DELETE /api/robot/notebook).
     "notebook": True,
     # Segunda escuta da frase de ativação (`wake_second_listen_enabled`) e
