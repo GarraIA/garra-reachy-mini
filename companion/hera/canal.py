@@ -240,6 +240,7 @@ class Conversa:
         # reconexão
         self.retomada = secrets.token_urlsafe(18)
         self._robo_caiu_em: float | None = None
+        self._encerrando = False           # o laço acabou: o robô sair agora é despedida
         self._terminou = asyncio.Event()
         self._geracao = 0                  # qual par é o da sessão atual
         self._reabrir: str | None = None
@@ -264,7 +265,7 @@ class Conversa:
     def robo_caiu(self, robo: Any) -> None:
         """A conexão com `robo` acabou. Se ele é o desta conversa, ela fica à
         espera da volta dele por `RETOMAR_S`; o que ela falar enquanto isso se perde."""
-        if robo is None or robo is not self._robo:
+        if robo is None or robo is not self._robo or self._encerrando:
             return
         self._robo = None
         self._robo_caiu_em = time.monotonic()
@@ -665,6 +666,7 @@ class Conversa:
         except Exception:
             log.exception("a conversa ao vivo não abriu")
             motivo = "unavailable"
+        self._encerrando = True
         if motivo == "stop":
             self._ao_robo("json", {"t": "estop"})
         segundos = await self._encerrar()

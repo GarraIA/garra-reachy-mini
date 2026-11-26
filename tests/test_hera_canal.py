@@ -690,6 +690,25 @@ def test_robo_que_nao_volta_a_tempo_encerra(monkeypatch):
     assert fim["motivo"] == "robot_lost" and not c.pode_retomar(c.retomada)
 
 
+def test_robo_que_fecha_depois_do_fim_nao_e_queda(caplog):
+    """Visto no PC (25/11): depois do fim, o robô fecha a conexão — e o registro
+    dizia "o robô saiu da conversa ao vivo; esperando a volta"."""
+    import logging
+    caplog.set_level(logging.INFO)
+
+    async def cena():
+        c, robo = conversa(idle_close_s=5.0)
+        tarefa, _ = await comecar(c)
+        c.parar("robot_stop")
+        await tarefa
+        c.robo_caiu(robo)
+        return c
+
+    c = asyncio.run(cena())
+    assert "esperando a volta" not in caplog.text
+    assert c._robo_caiu_em is None
+
+
 def test_so_se_retoma_com_a_senha_da_propria_conversa():
     async def cena():
         c, robo = conversa(idle_close_s=5.0)
