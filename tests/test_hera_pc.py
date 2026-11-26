@@ -331,3 +331,9 @@ def test_a_ponte_de_verdade_carrega_o_perfil_de_cada_nivel(nivel):
     assert carregado.name == "garra" and carregado.find_by_title is False
     assert carregado.request_id().startswith(f"garra-hera:garra-sala:{nivel}:")
     assert ("toolsets" in carregado.create_params) == (nivel != "completo")
+
+
+def test_a_camada_falada_sabe_que_enxerga_pela_camera_e_delega_para_ver():
+    contexto = _perfil()["session_context"]
+    assert "câmera" in contexto and "delegue" in contexto
+    assert "Não diga que não consegue ver" in contexto

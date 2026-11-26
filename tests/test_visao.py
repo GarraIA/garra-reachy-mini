@@ -177,6 +177,31 @@ def test_dois_quadros_dao_duas_descricoes_e_nada_e_reaproveitado() -> None:
                                                 b"\xff\xd8" + b"B" * 40 + b"\xff\xd9"]
 
 
+# ─── só o quadro: para a Hera, que descreve no computador ────────────────────
+def test_quadro_entrega_a_imagem_e_as_preferencias_sem_descrever() -> None:
+    hub, cliente, eventos = Hub(quadro(idade_s=0.3)), Cliente([DESCRICAO]), Barramento()
+    o = visao.Olho(hub, cliente, eventos, hora=lambda: "21:40:05")
+    jpeg, prefs, idade = o.quadro(LIGADA, origem="hera")
+    assert jpeg == JPEG and idade == pytest.approx(0.3, abs=0.2)
+    assert prefs == visao.preferencias_de(LIGADA) and prefs["nuvem_permitida"] is False
+    assert hub.pedidos == [visao.IDADE_MAXIMA_S]
+    assert cliente.chamadas == [], "quem descreve é o computador"
+    [pedido] = eventos.historico(20)
+    assert (pedido["type"], pedido["source"]) == ("vision.requested", "hera")
+
+
+@pytest.mark.parametrize("hub,conf,motivo", [
+    (Hub(quadro()), conversa.normalizar({}), "disabled"),
+    (Hub(None), LIGADA, "camera_unavailable"),
+    (Hub(quadro(idade_s=5.0)), LIGADA, "stale_frame"),
+])
+def test_quadro_sem_visao_diz_o_motivo(hub, conf, motivo) -> None:
+    pego = visao.Olho(hub, Cliente([]), Barramento(), hora=lambda: "21:40:05").quadro(conf)
+    assert isinstance(pego, visao.SemVisao) and pego.motivo == motivo
+    if motivo == "disabled":
+        assert hub.pedidos == [], "visão desligada nem pede quadro"
+
+
 # ─── o que fica e o que não fica ─────────────────────────────────────────────
 def test_os_eventos_contam_e_nao_mostram(caplog) -> None:
     caplog.set_level(logging.DEBUG)

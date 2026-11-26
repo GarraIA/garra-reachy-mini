@@ -180,27 +180,38 @@ class Olho:
         c = self._cliente
         return c() if callable(c) and not hasattr(c, "olhar") else c
 
-    def olhar(self, pergunta: str, conversa: dict[str, Any], correlacao: str | None = None,
-              origem: str = "voz") -> Visto | SemVisao:
+    def quadro(self, conversa: dict[str, Any], correlacao: str | None = None,
+               origem: str = "hera") -> tuple[bytes, dict[str, Any], float] | SemVisao:
+        """Só o quadro e as preferências, para quem descreve em outro lugar — a
+        Hera, cuja pergunta fica no computador. As regras são as do `olhar`:
+        visão ligada, quadro fresco, nada guardado. `(jpeg, prefs, idade_s)`."""
         if conversa.get("vision_enabled") is not True:
             return SemVisao("disabled", self._hora())
         self.eventos.publicar("vision.requested", correlation_id=correlacao, source=origem)
-        quadro = self.hub.instantaneo(idade_maxima_s=IDADE_MAXIMA_S)
+        quadro = self.hub.instantaneo(idade_maxima_s=IDADE_MAXIMA_S) if self.hub is not None else None
         if quadro is None:
             return self._falhou("camera_unavailable", correlacao, origem)
         idade = float(quadro.idade_s)
         if idade > IDADE_MAXIMA_S:
             return self._falhou("stale_frame", correlacao, origem)
+        return quadro.jpeg, preferencias_de(conversa), round(idade, 2)
+
+    def olhar(self, pergunta: str, conversa: dict[str, Any], correlacao: str | None = None,
+              origem: str = "voz") -> Visto | SemVisao:
+        pego = self.quadro(conversa, correlacao, origem)
+        if isinstance(pego, SemVisao):
+            return pego
+        jpeg, prefs, idade = pego
         capturado_em = self._hora()
         try:
-            r = self.cliente.olhar(quadro.jpeg, pergunta, preferencias_de(conversa))
+            r = self.cliente.olhar(jpeg, pergunta, prefs)
         except ErroDaPonte as e:
             return self._falhou(e.codigo, correlacao, origem)
         texto = str(r.get("texto") or "").strip()
         if not texto:
             return self._falhou("provider_error", correlacao, origem)
         visto = Visto(texto, str(r.get("provedor") or "?"), str(r.get("modelo") or "?"),
-                      capturado_em, round(idade, 2), int(r.get("ms") or 0))
+                      capturado_em, idade, int(r.get("ms") or 0))
         self.eventos.publicar("vision.completed", correlation_id=correlacao, source=origem,
                               provider=visto.provedor, model=visto.modelo, ms=visto.ms,
                               frame_age_s=visto.idade_s, chars=len(visto.texto))

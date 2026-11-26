@@ -221,12 +221,42 @@ caminho acústico da bancada não serve, e o teste por voz fica para uma pessoa.
 Antes do reenvio do som do chamado, duas sessões abertas do robô ficaram caladas
 — foi assim que a variação do modelo com o histórico apareceu (6.1).
 
+### 6.4 A Hera olha pela câmera (1.6.0.dev4)
+
+Pedido do dono depois da fase 4: "Hera, o que você está vendo?" tem de descrever o
+que está à frente do robô. A camada falada não tem ferramenta própria (delegação
+`client`, o evento traz só o id), então:
+
+1. o contexto fixo da sessão (`perfil.CONTEXTO_DA_VOZ`) diz que ela enxerga pela
+   câmera, uma imagem por pedido, e que para ver ela delega;
+2. no computador, a delegação cujo pedido é para olhar (o detector do "Fala
+   Garra", gêmeo em `companion/hera/olhar.py`) não vai ao Hermes: o canal manda
+   `{"t": "olhar", "id"}` ao robô — sem a pergunta;
+3. o robô responde com UM quadro do `FrameHub` e as preferências de visão do
+   painel (`Olho.quadro`: visão ligada, quadro de até 2 s, evento
+   `vision.requested` com `source: hera`) ou com o motivo de não ter;
+4. o quadro é descrito pelo mesmo olho do `/api/olhar` (`ponte._descrever_para_hera`,
+   preferências validadas, nuvem só com o interruptor do robô) e a descrição
+   volta como resultado da delegação, marcada como descrição de imagem.
+
+Falhas viram frase dita por ela ("Não consegui olhar agora: …"), nunca descrição
+inventada. Robô 1.6.0.dev3 não conhece `olhar`: em 4 s ela diz que a câmera não
+respondeu. A imagem não é gravada nem registrada; a descrição em texto vai para a
+sessão ao vivo, como qualquer resposta.
+
+Achado ao preparar a prova: o robô estava com a visão ligada, provedor
+"OpenRouter" e a nuvem desligada — combinação em que nenhum provedor descreve
+(o painel mostrava "nenhum disponível"), e que já calava a visão do "Fala
+Garra". O provedor passou para "automático" (local primeiro; nuvem segue
+desligada).
+
 ## 7. O que falta, em fases
 
 | Fase | Entrega |
 |---|---|
 | 3 | lado do PC **[feito]**: liberação e tetos, credencial, canal com prova de posse, par WebRTC, condução da sessão, livro de uso, comando do dono, unit `garra-hera-bridge` (instalada desligada) |
 | 4 | modo ao vivo no robô **[feito]**: canal com prova, voz pelo `CoordenadorAudio`, corpo parado, PARAR, reenvio do chamado; implantado (1.6.0.dev3), desligado por padrão |
+| 4b | a Hera olha pela câmera **[feito]** (seção 6.4): um quadro por pedido, descrito pelo modelo de visão da casa; implantado (1.6.0.dev4) |
 | 5 | sentinela ("pare", troca, despedida), interrupção ou plano B, movimento, reconexão |
 | 6 | painel: cartão Hera, pílula, consumo |
 | 7 | documentação, validação física, versão 1.6.0 |

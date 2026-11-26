@@ -340,3 +340,74 @@ def test_chamado_sozinho_nao_reenvia_nada(pareado):
     assert pc.som == []
     pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 3})
     assert esperar(lambda: cena.eventos("voice.live.ended"))
+
+
+# ═══ a Hera olha pela câmera ═════════════════════════════════════════════════
+# Quem descreve é o computador: o robô só entrega UM quadro e as preferências de
+# visão dele quando o computador pede — sem saber o que foi perguntado.
+import base64  # noqa: E402
+
+from garra_reachy_mini import visao  # noqa: E402
+from test_visao import JPEG, Cliente, Hub  # noqa: E402
+from test_visao_no_laco import HubVivo, quadro as quadro_da_camera  # noqa: E402
+
+COM_HERA_E_VISAO = {**COM_HERA, "vision_enabled": True}
+
+
+def com_camera(cena, hub) -> Cliente:
+    cliente = Cliente([])
+    cena.app.olho = visao.Olho(hub, cliente, cena.ctrl.eventos, hora=lambda: "21:40:05")
+    return cliente
+
+
+def imagens(pc) -> list[dict]:
+    return [m for m in pc.recebidos if m["t"] == "imagem"]
+
+
+def test_a_hera_pede_um_quadro_e_o_robo_manda_a_imagem(pareado):
+    cena, pc = pareado(conversa=COM_HERA_E_VISAO)
+    hub = HubVivo(quadro_da_camera())
+    cliente = com_camera(cena, hub)
+    abrir(cena)
+    pc.empurrar({"t": "olhar", "id": "o1"})
+    assert esperar(lambda: imagens(pc)), "o robô não respondeu ao pedido de quadro"
+    (imagem,) = imagens(pc)
+    assert imagem["id"] == "o1" and base64.b64decode(imagem["jpeg"]) == JPEG
+    assert imagem["prefs"] == visao.preferencias_de({"vision_enabled": True})
+    assert imagem["prefs"]["nuvem_permitida"] is False      # a nuvem segue sendo opt-in
+    assert len(hub.pedidos) == 1 and cliente.chamadas == []
+    (pedido,) = cena.eventos("vision.requested")
+    assert pedido["source"] == "hera"
+    # a conversa segue: nada de turno do Garra, e o fim é o de sempre
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 4})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+    assert cena.cerebro.recebidas == []
+
+
+@pytest.mark.parametrize("conversa,hub,motivo", [
+    (COM_HERA, Hub(quadro_da_camera()), "disabled"),
+    (COM_HERA_E_VISAO, Hub(None), "camera_unavailable"),
+])
+def test_sem_visao_o_robo_diz_o_motivo_e_nao_manda_imagem(pareado, conversa, hub, motivo):
+    cena, pc = pareado(conversa=conversa)
+    com_camera(cena, hub)
+    abrir(cena)
+    pc.empurrar({"t": "olhar", "id": "o2"})
+    assert esperar(lambda: imagens(pc))
+    (imagem,) = imagens(pc)
+    assert imagem == {"t": "imagem", "id": "o2", "motivo": motivo}
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 3})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
+
+
+def test_pedido_de_quadro_torto_e_ignorado(pareado):
+    cena, pc = pareado(conversa=COM_HERA_E_VISAO)
+    hub = HubVivo(quadro_da_camera())
+    com_camera(cena, hub)
+    abrir(cena)
+    for torto in ({"t": "olhar"}, {"t": "olhar", "id": 7}, {"t": "olhar", "id": "x" * 65}):
+        pc.empurrar(torto)
+    time.sleep(0.5)
+    assert imagens(pc) == [] and hub.pedidos == []
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 3})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))

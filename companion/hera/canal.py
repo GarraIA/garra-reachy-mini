@@ -9,12 +9,16 @@ firewall já libera). O protocolo:
     robô → {"t": "prova", "prova"}
     PC   → {"t": "aceito"}  ou  {"t": "fim", "motivo", "segundos": 0}
     PC   → {"t": "aberta"} quando a sessão começou; depois {"t": "estado", "fase"},
-           {"t": "estop"}, {"t": "ping"} e, no fim, {"t": "fim", "motivo", "segundos"}
+           {"t": "estop"}, {"t": "ping"}, {"t": "olhar", "id"} e, no fim,
+           {"t": "fim", "motivo", "segundos"}
     robô → {"t": "parar"} | {"t": "pong"}
+           | {"t": "imagem", "id", "jpeg" (base64), "prefs", "idade_s"}
+           | {"t": "imagem", "id", "motivo"}     (resposta a um `olhar`)
     som  → quadros binários: 12 bytes de cabeçalho + PCM s16le mono 16 kHz
            (MICROFONE do robô para cá, FALA daqui para o robô)
 
-Nada do que foi dito atravessa para o robô: o painel dele não pede senha.
+Nada do que foi dito atravessa para o robô: o painel dele não pede senha. Nem a
+pergunta de quem pede para a Hera olhar: o robô recebe só o pedido do quadro.
 
 `Conversa` conduz uma sessão do começo ao fim e decide quando ela acaba: silêncio,
 teto, "pare", "Fala Garra", despedida, queda. Os tetos que valem ANTES de abrir
@@ -39,7 +43,7 @@ from typing import Any, Callable
 # pelo módulo (este arquivo usa `from __future__ import annotations`).
 from fastapi import WebSocket, WebSocketDisconnect
 
-from . import credencial, livro as livro_mod, registro as registro_mod
+from . import credencial, livro as livro_mod, olhar, registro as registro_mod
 from .ponte_hera import ErroDaPonte, PonteHera
 
 log = logging.getLogger(__name__)
@@ -165,6 +169,7 @@ SEGMENTO_S = 1.2               # pausa entre deltas que separa um trecho do outr
 CONFIRMAR_COMANDO_S = 0.7      # um "pare" só vale se a frase acabou ali
 ESPERA_INICIO_S = 12.0
 ESPERA_FECHAR_S = 3.0
+ESPERA_IMAGEM_S = 4.0          # do pedido de quadro à imagem do robô
 
 
 def pedacos(texto: str, maximo: int = PEDACO_MAX) -> list[str]:
@@ -188,8 +193,13 @@ class Conversa:
     def __init__(self, robo: Any, *, ponte: Any, livro: livro_mod.Livro, limites: dict,
                  dispositivo: str, nivel: str, como: str = "alone", pedido: str = "",
                  abrir_par: Callable[..., Any] | None = None,
-                 tolerancia_despedida_s: float = 4.0) -> None:
+                 tolerancia_despedida_s: float = 4.0,
+                 descrever: Callable[[bytes, str, Any], Any] | None = None) -> None:
+        """`descrever(jpeg, pergunta, prefs)`: o modelo de visão da casa (o da
+        ponte). Sem ele, pedir para olhar segue para o Hermes como antes."""
         self._robo = robo
+        self._descrever = descrever
+        self._imagens: dict[str, asyncio.Future] = {}
         self._ponte = ponte
         self._livro = livro
         self._lim = limites
@@ -227,6 +237,12 @@ class Conversa:
     def parar(self, motivo: str) -> None:
         if self._motivo is None:
             self._motivo = motivo
+
+    def imagem(self, mensagem: dict) -> None:
+        """A resposta do robô a um pedido de quadro. Só vale a do pedido em aberto."""
+        futuro = self._imagens.get(mensagem.get("id"))
+        if futuro is not None and not futuro.done():
+            futuro.set_result(mensagem)
 
     # ── para o robô, em ordem ────────────────────────────────────────────────
     def _ao_robo(self, tipo: str, item: Any) -> None:
@@ -335,13 +351,18 @@ class Conversa:
             for pedaco in pedacos(NAO_OUVI):
                 self._par.enviar({"type": "session.commentary.append", "delegation_id": ident, "content": pedaco})
             return
+        ver = self._descrever is not None and olhar.pede_visao(texto)
         self._pendentes += 1
         self._delegacoes += 1
         self._estado("pensando")
-        self._par.enviar({"type": "session.thinking.append", "delegation_id": ident, "content": PENSANDO})
+        self._par.enviar({"type": "session.thinking.append", "delegation_id": ident,
+                          "content": olhar.OLHANDO if ver else PENSANDO})
         try:
-            turno = await asyncio.to_thread(self._ponte.turno, self._id, texto, agora_local())
-            resposta = turno.texto.strip() or FALHA_DO_HERMES
+            if ver:
+                resposta = await self._olhar(texto)
+            else:
+                turno = await asyncio.to_thread(self._ponte.turno, self._id, texto, agora_local())
+                resposta = turno.texto.strip() or FALHA_DO_HERMES
         except ErroDaPonte as erro:
             log.info("o Hermes não atendeu a delegação (%s)", erro.codigo)
             resposta = FALHA_DO_HERMES
@@ -355,6 +376,41 @@ class Conversa:
             for pedaco in pedacos(resposta):
                 self._par.enviar({"type": "session.commentary.append", "delegation_id": ident,
                                   "content": pedaco})
+
+    async def _olhar(self, pergunta: str) -> str:
+        """UM quadro do robô, descrito aqui. Devolve o que ela vai falar — a
+        descrição ou o porquê de não ter visto. Nunca levanta (salvo cancelamento)."""
+        pedido = uuid.uuid4().hex[:16]
+        futuro = asyncio.get_running_loop().create_future()
+        self._imagens[pedido] = futuro
+        self._ao_robo("json", {"t": "olhar", "id": pedido})
+        try:
+            resposta = await asyncio.wait_for(futuro, ESPERA_IMAGEM_S)
+        except asyncio.TimeoutError:
+            log.info("a Hera pediu um quadro e o robô não respondeu")
+            return olhar.sem_visao("camera_silent")
+        finally:
+            self._imagens.pop(pedido, None)
+        lido = olhar.ler_imagem(resposta)
+        if isinstance(lido, str):
+            log.info("a Hera pediu um quadro e o robô não mandou imagem (%s)", lido)
+            return olhar.sem_visao(lido)
+        jpeg, prefs = lido
+        try:
+            observado = await asyncio.to_thread(self._descrever, jpeg, pergunta, prefs)
+        except Exception as erro:
+            codigo = getattr(erro, "codigo", None)
+            if codigo is None:
+                log.exception("a descrição do quadro para a Hera falhou")
+            else:
+                log.info("a Hera não conseguiu ver: %s", codigo)
+            return olhar.sem_visao(codigo or "provider_error")
+        descricao = " ".join(str(getattr(observado, "texto", "") or "").split())
+        if not descricao:
+            return olhar.sem_visao("provider_error")
+        log.info("a Hera olhou: %s/%s em %s ms (%d bytes de imagem)", getattr(observado, "provedor", "?"),
+                 getattr(observado, "modelo", "?"), getattr(observado, "ms", "?"), len(jpeg))
+        return olhar.vista(descricao)
 
     # ── o relógio da conversa ────────────────────────────────────────────────
     def _vencido(self, inicio: float, agora: float) -> str | None:
@@ -474,8 +530,10 @@ class _RoboWS:
 
 def registrar(app: Any, *, ponte: Any = None, abrir_par: Callable[..., Any] | None = None,
               host_e_meu: Callable[[str], bool] = _host_e_meu,
-              limites_de_teste: dict | None = None) -> None:
-    """Põe `/api/hera/ao-vivo` no app da ponte do robô."""
+              limites_de_teste: dict | None = None,
+              descrever: Callable[[bytes, str, Any], Any] | None = None) -> None:
+    """Põe `/api/hera/ao-vivo` no app da ponte do robô. `descrever` é o olho da
+    ponte (`ponte._descrever_para_hera`); sem ele, a Hera não olha."""
     ponte = ponte or PonteHera()
     uma_por_vez = asyncio.Lock()
     try:
@@ -527,7 +585,8 @@ def registrar(app: Any, *, ponte: Any = None, abrir_par: Callable[..., Any] | No
                 conversa = Conversa(_RoboWS(ws), ponte=ponte, livro=livro,
                                     limites={**atual["limits"], **(limites_de_teste or {})},
                                     dispositivo=atual["device"]["id"], nivel=atual["level"],
-                                    como=aperto.como, pedido=aperto.pedido, abrir_par=abrir_par)
+                                    como=aperto.como, pedido=aperto.pedido, abrir_par=abrir_par,
+                                    descrever=descrever)
                 conduzindo = asyncio.ensure_future(conversa.conduzir())
                 ouvindo = asyncio.ensure_future(_escutar_robo(ws, conversa))
                 await conduzindo
@@ -560,3 +619,5 @@ def registrar(app: Any, *, ponte: Any = None, abrir_par: Callable[..., Any] | No
                     continue
                 if isinstance(pedido, dict) and pedido.get("t") == "parar":
                     conversa.parar("robot_stop")
+                elif isinstance(pedido, dict) and pedido.get("t") == "imagem":
+                    conversa.imagem(pedido)

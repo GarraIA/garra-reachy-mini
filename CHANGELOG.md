@@ -28,6 +28,14 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
   encerra em até 1 s; sem nada do computador por 3 s, o robô sai sozinho. O
   painel não fala por cima dela. Sem pareamento, sem saída de voz ou com o
   computador recusando, o robô diz que a Hera não está disponível.
+- **A Hera olha pela câmera** ("Hera, o que você está vendo?"). A camada falada
+  sabe que enxerga pelo robô e delega o pedido; o computador reconhece que é
+  para olhar (o mesmo detector do "Fala Garra"), pede UM quadro ao robô pelo
+  canal já autenticado — sem a pergunta — e o descreve com o modelo de visão da
+  casa, com as preferências e o interruptor da nuvem do painel do robô. A
+  descrição volta para ela falar; o Hermes não entra. Visão desligada, câmera
+  sem imagem, modelo fora do ar ou robô antigo viram uma frase dita por ela, nunca
+  uma descrição inventada. A imagem não é guardada nem vai a log.
 
 ### Security
 

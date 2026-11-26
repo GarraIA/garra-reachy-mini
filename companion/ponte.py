@@ -267,6 +267,18 @@ _olho_local = None
 _olho_nuvem = None
 
 
+def _descrever_para_hera(jpeg: bytes, pergunta: str, prefs: object) -> visao.Observacao:
+    """A Hera pediu para olhar: o quadro que o robô mandou pelo canal ao vivo,
+    descrito pelo MESMO olho e com as MESMAS preferências validadas do
+    `/api/olhar` — a Hera não abre caminho novo para a nuvem nem para outro
+    endereço de modelo. A imagem vive só nesta chamada."""
+    p = _preferencias(prefs)
+    if p is None:
+        raise visao.ErroDeVisao("no_provider", "preferências recusadas")
+    return visao.descrever(jpeg, (pergunta or "").strip()[:PERGUNTA_MAX] or "O que você está vendo?",
+                           p, _olho_local, _olho_nuvem)
+
+
 def _preferencias_da_query(q) -> visao.Preferencias | None:
     bruto = {k: q[k] for k in ("provedor", "local_endpoint", "local_modelo", "nuvem_modelo") if k in q}
     if "nuvem_permitida" in q:
@@ -947,7 +959,7 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
     global _hera_registrada
     if not _hera_registrada:
         from .hera import canal as canal_hera
-        canal_hera.registrar(app)
+        canal_hera.registrar(app, descrever=_descrever_para_hera)
         _hera_registrada = True
 
     @app.api_route("/{caminho:path}",

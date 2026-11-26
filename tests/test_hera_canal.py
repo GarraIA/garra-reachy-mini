@@ -106,12 +106,12 @@ class RoboFalso:
         return [m["t"] for m in self.json]
 
 
-def conversa(ponte=None, como="alone", pedido="", **limites):
+def conversa(ponte=None, como="alone", pedido="", descrever=None, **limites):
     robo = RoboFalso()
     c = canal.Conversa(robo, ponte=ponte or PonteFalsa(), livro=livro.Livro(),
                        limites={**LIMITES, **RAPIDO, **limites}, dispositivo="garra-sala",
                        nivel="completo", como=como, pedido=pedido, abrir_par=ParFalso,
-                       tolerancia_despedida_s=0.2)
+                       tolerancia_despedida_s=0.2, descrever=descrever)
     return c, robo
 
 
@@ -569,3 +569,249 @@ def test_quadro_ida_e_volta_e_gemeo_do_robo():
     assert ao_vivo.ler_quadro(q) == canal.ler_quadro(q)
     for torto in (b"", b"\x01" * 5, b"\x09\x01" + b"\x00" * 10, canal.quadro(canal.FALA, 1, 0, b"\x01")):
         assert canal.ler_quadro(torto) is None
+
+
+# ─── a Hera olha pela câmera ─────────────────────────────────────────────────
+# A camada falada delega "o que você está vendo?" como qualquer pedido. O
+# computador reconhece que é para olhar, pede UM quadro ao robô (sem dizer o que
+# foi perguntado), descreve com o modelo de visão da casa e devolve a descrição
+# para ela falar. O Hermes não entra.
+import base64  # noqa: E402
+
+from companion import visao as visao_pc  # noqa: E402
+from companion.hera import olhar  # noqa: E402
+
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64 + b"\xff\xd9"
+PREFS = {"provedor": "auto", "local_endpoint": "http://127.0.0.1:11434",
+         "local_modelo": "qwen2.5vl:7b", "nuvem_modelo": "google/gemini-3.8-flash",
+         "nuvem_permitida": False}
+
+
+class Descritor:
+    """O modelo de visão do computador, de mentira."""
+
+    def __init__(self, texto="Uma caneca azul sobre a mesa, e uma pessoa sentada ao fundo.",
+                 erro=None):
+        self.texto, self.erro = texto, erro
+        self.chamadas: list[tuple] = []
+
+    def __call__(self, jpeg, pergunta, prefs):
+        self.chamadas.append((jpeg, pergunta, prefs))
+        if self.erro:
+            raise visao_pc.ErroDeVisao(self.erro)
+        return visao_pc.Observacao(self.texto, "local", "qwen2.5vl:7b", 900)
+
+
+def _pedido_de_quadro(robo):
+    pedidos = [m for m in robo.json if m["t"] == "olhar"]
+    return pedidos[-1] if pedidos else None
+
+
+async def _perguntar(par, dito="Hera, o que você está vendo?", ident="d1"):
+    par.evento(type="session.input_transcript.delta", delta=dito)
+    par.evento(type="session.delegation.created", delegation={"id": ident})
+
+
+def _falado(par):
+    return " ".join(e["content"] for e in par.enviados if e["type"] == "session.commentary.append")
+
+
+def test_ver_pede_um_quadro_ao_robo_descreve_e_ela_fala():
+    async def cena():
+        ponte, descritor = PonteFalsa(), Descritor()
+        c, robo = conversa(ponte, descrever=descritor)
+        tarefa, par = await comecar(c)
+        await _perguntar(par)
+        assert await esperar(lambda: _pedido_de_quadro(robo) is not None)
+        pedido = _pedido_de_quadro(robo)
+        c.imagem({"t": "imagem", "id": pedido["id"], "jpeg": base64.b64encode(JPEG).decode(),
+                  "prefs": PREFS, "idade_s": 0.2})
+        assert await esperar(lambda: "session.commentary.append" in par.tipos())
+        c.parar("robot_stop")
+        await tarefa
+        return ponte, descritor, par, robo, pedido
+
+    ponte, descritor, par, robo, pedido = asyncio.run(cena())
+    assert set(pedido) == {"t", "id"}, "o robô não recebe o que foi perguntado"
+    assert descritor.chamadas == [(JPEG, "Hera, o que você está vendo?", PREFS)]
+    assert ponte.turnos == [], "olhar não passa pelo Hermes"
+    pensando = next(e for e in par.enviados if e["type"] == "session.thinking.append")
+    assert pensando["content"] == olhar.OLHANDO
+    falado = _falado(par)
+    assert "Uma caneca azul sobre a mesa" in falado and "câmera" in falado
+    assert {"t": "estado", "fase": "pensando"} in robo.json
+    # nem a pergunta nem a descrição vão ao robô (o painel dele não pede senha)
+    tudo = json.dumps(robo.json, ensure_ascii=False)
+    assert "caneca" not in tudo and "vendo" not in tudo
+
+
+@pytest.mark.parametrize("resposta_do_robo,explicacao", [
+    ({"motivo": "disabled"}, "a visão está desligada na configuração"),
+    ({"motivo": "camera_unavailable"}, "a câmera não está entregando imagem"),
+    ({"motivo": "qualquer-coisa"}, "a câmera não está entregando imagem"),
+    ({"jpeg": "isto não é base64!"}, "a imagem da câmera veio inválida"),
+    ({}, "a imagem da câmera veio inválida"),
+])
+def test_sem_imagem_ela_diz_por_que_e_nada_e_descrito(resposta_do_robo, explicacao):
+    async def cena():
+        descritor = Descritor()
+        c, robo = conversa(descrever=descritor)
+        tarefa, par = await comecar(c)
+        await _perguntar(par)
+        assert await esperar(lambda: _pedido_de_quadro(robo) is not None)
+        c.imagem({"t": "imagem", "id": _pedido_de_quadro(robo)["id"], **resposta_do_robo})
+        assert await esperar(lambda: "session.commentary.append" in par.tipos())
+        c.parar("robot_stop")
+        await tarefa
+        return descritor, par
+
+    descritor, par = asyncio.run(cena())
+    assert descritor.chamadas == []
+    assert _falado(par) == f"Não consegui olhar agora: {explicacao}."
+
+
+def test_robo_que_nao_responde_ao_pedido_de_quadro(monkeypatch):
+    """Um robô 1.6.0.dev3 não conhece `olhar`: a Hera diz que não conseguiu e segue."""
+    monkeypatch.setattr(canal, "ESPERA_IMAGEM_S", 0.3)
+
+    async def cena():
+        c, robo = conversa(descrever=Descritor())
+        tarefa, par = await comecar(c)
+        await _perguntar(par)
+        assert await esperar(lambda: "session.commentary.append" in par.tipos())
+        c.parar("robot_stop")
+        await tarefa
+        return par
+
+    assert _falado(asyncio.run(cena())) == "Não consegui olhar agora: a câmera do robô não respondeu."
+
+
+@pytest.mark.parametrize("codigo,explicacao", [
+    ("provider_offline", "o modelo de visão no computador não respondeu"),
+    ("cloud_disabled", "a descrição pela nuvem está desligada e o modelo local não serviu"),
+    ("no_provider", "não há modelo de visão configurado no computador"),
+])
+def test_modelo_de_visao_falhou(codigo, explicacao):
+    async def cena():
+        c, robo = conversa(descrever=Descritor(erro=codigo))
+        tarefa, par = await comecar(c)
+        await _perguntar(par)
+        assert await esperar(lambda: _pedido_de_quadro(robo) is not None)
+        c.imagem({"t": "imagem", "id": _pedido_de_quadro(robo)["id"],
+                  "jpeg": base64.b64encode(JPEG).decode(), "prefs": PREFS})
+        assert await esperar(lambda: "session.commentary.append" in par.tipos())
+        c.parar("robot_stop")
+        await tarefa
+        return par
+
+    assert _falado(asyncio.run(cena())) == f"Não consegui olhar agora: {explicacao}."
+
+
+def test_imagem_de_outro_pedido_nao_vale():
+    async def cena():
+        descritor = Descritor()
+        c, robo = conversa(descrever=descritor)
+        tarefa, par = await comecar(c)
+        await _perguntar(par)
+        assert await esperar(lambda: _pedido_de_quadro(robo) is not None)
+        c.imagem({"t": "imagem", "id": "outro", "jpeg": base64.b64encode(JPEG).decode(), "prefs": PREFS})
+        await asyncio.sleep(0.2)
+        assert descritor.chamadas == []
+        c.parar("robot_stop")
+        await tarefa
+
+    asyncio.run(cena())
+
+
+def test_pergunta_que_nao_e_para_olhar_vai_ao_hermes_sem_pedir_quadro():
+    async def cena():
+        ponte, descritor = PonteFalsa(), Descritor()
+        c, robo = conversa(ponte, descrever=descritor)
+        tarefa, par = await comecar(c)
+        await _perguntar(par, dito="que horas são?")
+        assert await esperar(lambda: "session.commentary.append" in par.tipos())
+        c.parar("robot_stop")
+        await tarefa
+        return ponte, descritor, robo
+
+    ponte, descritor, robo = asyncio.run(cena())
+    assert [t for _, t in ponte.turnos] == ["que horas são?"]
+    assert descritor.chamadas == [] and "olhar" not in [m["t"] for m in robo.json]
+
+
+def test_sem_descritor_o_pedido_de_ver_segue_para_o_hermes():
+    async def cena():
+        ponte = PonteFalsa()
+        c, robo = conversa(ponte)
+        tarefa, par = await comecar(c)
+        await _perguntar(par)
+        assert await esperar(lambda: "session.commentary.append" in par.tipos())
+        c.parar("robot_stop")
+        await tarefa
+        return ponte, robo
+
+    ponte, robo = asyncio.run(cena())
+    assert len(ponte.turnos) == 1 and "olhar" not in [m["t"] for m in robo.json]
+
+
+# ─── o detector e as frases (gêmeos do robô) ─────────────────────────────────
+def test_o_detector_e_os_motivos_sao_gemeos_dos_do_robo():
+    from garra_reachy_mini import visao as visao_robo
+    assert olhar._GATILHOS == visao_robo._GATILHOS
+    for codigo, texto in visao_robo.MOTIVOS.items():
+        assert olhar.MOTIVOS[codigo] == texto
+    for codigo in visao_pc.CODIGOS:
+        assert codigo in olhar.MOTIVOS, codigo
+    for frase in ("Hera, o que você está vendo?", "O que você tá vendo agora?", "descreve a sala",
+                  "olha isso aqui", "o que eu estou segurando?", "que horas são?",
+                  "você viu o jogo ontem?", "Era uma vez um rei"):
+        assert olhar.pede_visao(frase) is visao_robo.pede_visao(frase), frase
+
+
+def test_imagem_grande_demais_e_recusada():
+    grande = "A" * (olhar.IMAGEM_B64_MAX + 4)
+    assert olhar.ler_imagem({"t": "imagem", "id": "x", "jpeg": grande}) == "bad_image"
+
+
+# ─── pelo WebSocket de verdade ───────────────────────────────────────────────
+def test_websocket_o_robo_manda_a_imagem_e_ela_e_descrita(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    class ParQuePergunta(ParFalso):
+        """A "OpenAI" abre e, de dentro do laço do servidor, delega um pedido de ver."""
+
+        async def abrir(self):
+            await super().abrir()
+            self.ao_evento({"type": "session.started", "session": {"id": "s"}})
+            asyncio.get_running_loop().call_later(0.2, lambda: (
+                self.ao_evento({"type": "session.input_transcript.delta", "delta": "o que você está vendo?"}),
+                self.ao_evento({"type": "session.delegation.created", "delegation": {"id": "d9"}})))
+
+    descritor = Descritor()
+    app = FastAPI()
+    canal.registrar(app, ponte=PonteFalsa(), abrir_par=ParQuePergunta, host_e_meu=lambda h: h == HOST,
+                    limites_de_teste={"session_max_s": 5.0, "idle_close_s": 3.0, "no_speech_s": 3.0},
+                    descrever=descritor)
+    segredo = _liberar()
+    with TestClient(app).websocket_connect("/api/hera/ao-vivo") as ws:
+        assert _apertar(ws, segredo) == {"t": "aceito"}
+        while True:
+            m = json.loads(ws.receive_text())
+            assert m["t"] != "fim", m
+            if m["t"] == "olhar":
+                break
+        ws.send_text(json.dumps({"t": "imagem", "id": m["id"], "jpeg": base64.b64encode(JPEG).decode(),
+                                 "prefs": PREFS, "idade_s": 0.1}))
+        fim = None
+        prazo = 0
+        while fim is None and prazo < 200:
+            prazo += 1
+            if any(e["type"] == "session.commentary.append" for e in ParFalso.ultimo.enviados):
+                ws.send_text(json.dumps({"t": "parar"}))
+            m = ws.receive()
+            if m.get("text") and json.loads(m["text"])["t"] == "fim":
+                fim = json.loads(m["text"])
+    assert fim and fim["motivo"] == "robot_stop"
+    assert descritor.chamadas == [(JPEG, "o que você está vendo?", PREFS)]
+    assert "Uma caneca azul" in _falado(ParFalso.ultimo)

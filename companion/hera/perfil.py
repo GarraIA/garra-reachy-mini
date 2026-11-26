@@ -48,7 +48,12 @@ RESUMO = (
 CONTEXTO_DA_VOZ = (
     "Contexto fixo: esta conversa acontece em voz alta, pelo robô Garra, um Reachy Mini que "
     "fica na sala da casa. Quem fala pode ser qualquer pessoa presente; não presuma quem é. "
-    "Se disserem \"aqui\" ou \"este robô\", é isto."
+    "Se disserem \"aqui\" ou \"este robô\", é isto.\n"
+    "Você enxerga pela câmera do robô, uma imagem por pedido: quando pedirem para você olhar, "
+    "ver ou descrever o que está à sua frente, ou o que alguém segura ou mostra, delegue ao "
+    "backend e espere — a resposta trará o que a câmera mostra agora; então conte com "
+    "naturalidade, em poucas frases, sem dizer quem são as pessoas. Não diga que não consegue "
+    "ver sem antes delegar."
 )
 NOTA_DE_CONTEXTO = "[Dados do robô para esta pergunta, somente leitura.]"
 RESPOSTA_A_APROVACAO = (

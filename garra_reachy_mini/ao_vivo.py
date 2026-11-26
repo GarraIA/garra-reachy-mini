@@ -8,7 +8,9 @@ O robô é só o terminal de áudio da conversa. Ele abre um WebSocket na ponte 
 computador (o mesmo endereço da ponte de chat, `:8126`), prova quem é depois de
 o computador provar primeiro, e daí troca som: o do microfone sobe, a voz da Hera
 desce e sai pelo `CoordenadorAudio`. Chave da OpenAI, tetos, Hermes e o que foi
-dito ficam no computador; aqui chegam só a fase, o "pare" e o fim.
+dito ficam no computador; aqui chegam só a fase, o "pare", o fim e — quando
+pedem para a Hera olhar — o pedido de UM quadro da câmera, sem a pergunta. Quem
+descreve a imagem é o modelo de visão do computador, o mesmo do "Fala Garra".
 
 Nesta fase o corpo não se mexe durante a conversa: os servos ficam ao lado dos
 microfones, e o que eles fazem vai junto para a nuvem.
@@ -16,6 +18,7 @@ microfones, e o que eles fazem vai junto para a nuvem.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -326,6 +329,9 @@ class Portas:
     credenciais: Callable[[], dict | None]
     saida_habilitada: Callable[[], bool]
     trava_fala: Any                             # o mesmo lock do `falar` do laço
+    # Um quadro da câmera: `(jpeg, prefs, idade_s)` ou algo com `.motivo` (visão
+    # desligada, sem câmera, quadro velho). É o `Olho.quadro` do laço.
+    olhar: Callable[[], Any] | None = None
 
 
 class Atendente:
@@ -473,6 +479,8 @@ class Atendente:
                         canal.enviar({"t": "pong"})
                     except CanalCaiu:
                         pass
+                elif t == "olhar":
+                    self._mandar_imagem(canal, p, item.get("id"))
                 elif t == "fim":
                     if pediu_fim_em is None:
                         self._esperar_acabar(saida)
@@ -489,6 +497,31 @@ class Atendente:
                 return motivo_local, duracao(agora), aberta
             if mono.size == 0:
                 time.sleep(0.005)
+
+    def _mandar_imagem(self, canal: Canal, p: Portas, ident: Any) -> None:
+        """Pediram para a Hera olhar: UM quadro e as preferências de visão daqui.
+
+        O computador, que já provou ser o pareado, só pede o quadro — o que a
+        pessoa perguntou fica lá. As regras são as do "Fala Garra": visão ligada
+        no painel, quadro fresco, nuvem só com o interruptor dela, nada guardado.
+        """
+        if not isinstance(ident, str) or not 0 < len(ident) <= 64:
+            return
+        resposta: dict[str, Any] = {"t": "imagem", "id": ident}
+        try:
+            pego = p.olhar() if p.olhar is not None else None
+        except Exception:
+            log.exception("o quadro para a Hera falhou")
+            pego = None
+        if isinstance(pego, tuple):
+            jpeg, prefs, idade = pego
+            resposta.update(jpeg=base64.b64encode(jpeg).decode("ascii"), prefs=prefs, idade_s=idade)
+        else:
+            resposta["motivo"] = str(getattr(pego, "motivo", "") or "camera_unavailable")
+        try:
+            canal.enviar(resposta)
+        except CanalCaiu:
+            pass                     # a próxima volta do laço percebe a queda
 
     def _esperar_acabar(self, saida: Saida, teto_s: float = 6.0) -> None:
         """Fim pedido pelo computador: deixa a última frase dela terminar."""

@@ -1160,7 +1160,10 @@ class GarraReachyMini(ReachyMiniApp):
                                                         Config.carregar().gateway_url),
                 saida_habilitada=lambda: conversa.Politica.de(
                     Config.carregar().conversa).saida_habilitada,
-                trava_fala=self._lock_fala))
+                trava_fala=self._lock_fala,
+                # "Hera, o que você está vendo?": um quadro, com as regras da visão
+                # do painel. Quem descreve é o computador.
+                olhar=lambda: self.olho.quadro(Config.carregar().conversa, origem="hera")))
         self._atendente_ao_vivo = atendente
 
         def atender_ao_vivo() -> None:

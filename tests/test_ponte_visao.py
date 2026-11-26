@@ -195,3 +195,33 @@ def test_o_estado_responde_com_as_preferencias_da_query(montar) -> None:
 def test_o_estado_recusa_preferencia_invalida(montar) -> None:
     cliente, _, _ = montar()
     assert cliente.get("/api/olhar/estado", params={"provedor": "x"}, headers=AUT).status_code == 400
+
+
+# ─── a Hera: o quadro chega pelo canal ao vivo, não por esta rota ────────────
+# Mesmo descritor, mesmas preferências validadas: a Hera não abre um caminho
+# novo para a nuvem nem para outro endereço de modelo.
+def test_a_hera_descreve_pelo_mesmo_olho_e_com_as_mesmas_regras(montar):
+    _, local, nuvem = montar()
+    obs = ponte._descrever_para_hera(JPEG, "o que você está vendo?", {"provedor": "local"})
+    assert obs.texto == "Uma sala com um sofá." and local.recebidos[0][1] == "o que você está vendo?"
+    assert nuvem.recebidos == []
+
+
+@pytest.mark.parametrize("prefs", [
+    "não é dict",
+    {"provedor": "marte"},
+    {"local_endpoint": "http://8.8.8.8:11434"},       # endpoint fora da casa
+])
+def test_a_hera_com_preferencias_tortas_nao_descreve(montar, prefs):
+    _, local, nuvem = montar()
+    with pytest.raises(visao.ErroDeVisao) as erro:
+        ponte._descrever_para_hera(JPEG, "o que você vê?", prefs)
+    assert erro.value.codigo == "no_provider"
+    assert local.recebidos == [] and nuvem.recebidos == []
+
+
+def test_a_hera_so_usa_a_nuvem_com_o_interruptor(montar):
+    _, local, nuvem = montar(local=LocalFalso(erro="provider_offline"))
+    with pytest.raises(visao.ErroDeVisao):
+        ponte._descrever_para_hera(JPEG, "o que você vê?", {"provedor": "auto"})
+    assert nuvem.recebidos == []
