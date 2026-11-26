@@ -265,6 +265,13 @@ function tratarEvento(e) {
     case 'voice.phase':
       pintarFase({ phase: e.phase, reason: e.reason });
       break;
+    // A conversa ao vivo começou, acabou ou foi recusada: o consumo e a última
+    // conversa do cartão da Hera mudaram.
+    case 'voice.live.started':
+    case 'voice.live.ended':
+    case 'voice.live.unavailable':
+      carregarHera();
+      break;
     case 'voice.error':
       if (e.code) estado.erroDeVoz = { code: e.code, at: Date.now() / 1000 };
       pintarFase(estado.fase || {});
@@ -726,6 +733,7 @@ function pintarConversa(d) {
   $('v-conversa-contexto-janela').textContent = `${tras} s`;
   $('conversa-caderno').checked = c.notebook_enabled === true;
   pintarVisaoCampos(c);
+  pintarHeraCampos(c);
   $('familia-ligada').checked = c.family_recognition_enabled === true;
   $('musica-voz').checked = c.music_voice_enabled === true;
   sincronizarMestre();
@@ -985,7 +993,7 @@ function mostrarTela() {
   if (rota.tela === 'controle' && rota.sub === 'casa') carregarCasa();
   if (rota.tela === 'controle' && rota.sub === 'musica') carregarMusica();
   if (rota.tela === 'apps') carregarApps();
-  if (rota.tela === 'ajustes') carregarDiagnostico();   // que carrega visão e família antes
+  if (rota.tela === 'ajustes') { carregarDiagnostico(); carregarHera(); }   // o diagnóstico carrega visão e família antes
   if (rota.tela === 'inicio') pintarResumo();
   window.scrollTo({ top: 0 });
 }
@@ -1129,6 +1137,142 @@ async function analisarVisao() {
   } finally {
     b.disabled = false;
     carregarVisao();
+  }
+}
+
+// ─── Hera: a conversa ao vivo ────────────────────────────────────────────────
+// O que é deste robô grava pelo caminho da conversa; liberação, nível e tetos
+// são do computador e só aparecem. Nada do que foi dito à Hera chega aqui.
+const hera = { status: null };
+const LOCALE = IDIOMA === 'pt' ? 'pt-BR' : 'en-US';
+
+function duracaoCurta(segundos) {
+  const s = Math.max(0, Math.round(Number(segundos) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  if (h) return m ? `${h} h ${m} min` : `${h} h`;
+  if (m) return r ? `${m} min ${r} s` : `${m} min`;
+  return `${r} s`;
+}
+
+const dinheiro = (usd) => `US$ ${Number(usd || 0).toLocaleString(LOCALE,
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const horaCurta = (quando) => {
+  const d = new Date(quando);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
+};
+
+// Código conhecido vira texto; desconhecido aparece como veio, em vez de sumir.
+const textoDe = (chave, codigo) => {
+  const texto = t(`${chave}${codigo}`);
+  return texto === `${chave}${codigo}` ? String(codigo ?? '—') : texto;
+};
+
+function pintarHeraCampos(c) {
+  $('hera-ligada').checked = c.live_voice_enabled === true;
+  $('hera-frase').value = c.live_wake_phrase_text ?? 'Hera';
+  $('hera-outras').value = (c.live_wake_phrase_alternatives || []).join('\n');
+  $('hera-rigor').value = c.live_wake_strictness || 'strict';
+  $('hera-movimento').value = c.live_motion || 'still';
+  sincronizarHera();
+  pintarPilulaDaHera();
+}
+
+function sincronizarHera() {
+  const ligada = $('hera-ligada').checked;
+  for (const el of document.querySelectorAll('[data-hera-sub]')) {
+    el.style.opacity = ligada ? '' : '0.55';
+    for (const campo of el.querySelectorAll('input, select, textarea')) campo.disabled = !ligada;
+  }
+  $('hera-rigor-dica').textContent = t(`hera.rigor_${$('hera-rigor').value}_dica`);
+  $('hera-movimento-dica').textContent = t(`hera.movimento_${$('hera-movimento').value}_dica`);
+}
+
+function mudancasDaHera() {
+  return {
+    live_voice_enabled: $('hera-ligada').checked,
+    live_wake_phrase_text: $('hera-frase').value.trim() || undefined,
+    live_wake_phrase_alternatives: linhasDe($('hera-outras').value),
+    live_wake_strictness: $('hera-rigor').value,
+    live_motion: $('hera-movimento').value,
+  };
+}
+
+// A pílula responde "dá para chamar a Hera agora?" — e, em conversa, o que ela
+// está fazendo, na mesma cor da pílula do topo (o som da sala indo para a nuvem).
+function pintarPilulaDaHera() {
+  const el = $('p-hera');
+  if (!el) return;
+  const fase = (estado.fase || {}).phase || '';
+  const c = conversaEstado.conf || {};
+  const d = hera.status;
+  if (fase.startsWith('live_')) return pill(el, true, t(`fase.${fase}`), CLASSE_DA_FASE[fase] || 'danger');
+  if (c.live_voice_enabled !== true) return pill(el, false, t('hera.desligada'));
+  if (!d) return pill(el, false, '—');
+  if (!d.paired) return pill(el, false, t('hera.nao_pareada'), 'warning');
+  if (!d.pc) return pill(el, false, textoDe('hera.erro_', d.pc_error), 'danger');
+  if (d.pc.live_now) return pill(el, true, t('hera.em_conversa'), 'danger');
+  if (!d.pc.enabled) return pill(el, false, t('hera.bloqueio_disabled'), 'warning');
+  if (!d.pc.can_open) return pill(el, false, textoDe('hera.bloqueio_', d.pc.blocked_by), 'warning');
+  return pill(el, true, t('hera.pronta'), 'success');
+}
+
+function pintarHeraEstado(d) {
+  hera.status = d;
+  const item = (rotulo, valor, ok) =>
+    `<div class="status-item"><span class="status-dot ${ok === null ? 'offline' : ok ? '' : 'warning'}"></span>${esc(rotulo)}<b>${esc(valor)}</b></div>`;
+  const pc = d.pc;
+  const consumo = [];
+  if (pc) {
+    const u = pc.usage || {}, l = pc.limits || {}, preco = Number(pc.price_per_min_usd) || 0;
+    consumo.push(item(t('hera.hoje'), t('hera.consumo_hoje', {
+      tempo: duracaoCurta(u.today_s), teto: duracaoCurta(l.daily_s), n: u.sessions_today ?? 0,
+      custo: dinheiro((u.today_s || 0) / 60 * preco),
+    }), (u.today_s || 0) < (l.daily_s || 0)));
+    consumo.push(item(t('hera.mes'), t('hera.consumo_mes', {
+      tempo: duracaoCurta(u.month_s), teto: duracaoCurta(l.monthly_s),
+      custo: dinheiro((u.month_s || 0) / 60 * preco),
+    }), (u.month_s || 0) < (l.monthly_s || 0)));
+  } else {
+    consumo.push(item(t('hera.hoje'), textoDe('hera.erro_', d.pc_error), null));
+  }
+  // A última conversa: a vista aqui (traz também os chamados recusados) ou,
+  // sem ela (o app reiniciou), a do livro do computador.
+  const ult = d.last || (pc && pc.last ? { kind: 'ended', reason: pc.last.reason, seconds: pc.last.seconds,
+                                             at: pc.last.ended_at * 1000 } : null);
+  consumo.push(item(t('hera.ultima'), !ult ? t('hera.nenhuma')
+    : ult.kind === 'unavailable'
+      ? t('hera.ultima_recusada', { motivo: textoDe('hera.motivo_', ult.reason), hora: horaCurta(ult.at) })
+      : t('hera.ultima_ok', { motivo: textoDe('hera.motivo_', ult.reason), duracao: duracaoCurta(ult.seconds),
+                              hora: horaCurta(ult.at) }),
+    !ult ? null : ult.kind === 'ended'));
+  consumo.push(`<div class="dica">${esc(t('hera.estimado'))}</div>`);
+  $('hera-consumo').innerHTML = consumo.join('');
+
+  const estadoPc = [item(t('hera.pareamento'), d.paired ? t('hera.pareada') : t('hera.nao_pareada_dica'), d.paired)];
+  if (pc) {
+    const l = pc.limits || {};
+    estadoPc.push(item(t('hera.liberada'), pc.enabled ? t('hera.sim') : t('hera.nao_liberada'), pc.enabled));
+    estadoPc.push(item(t('hera.nivel'), textoDe('hera.nivel_', pc.level), null));
+    estadoPc.push(item(t('hera.voz_modelo'), `${pc.voice || '—'} · ${pc.model || '—'}`, null));
+    estadoPc.push(item(t('hera.tetos'), t('hera.tetos_valor', {
+      conversa: duracaoCurta(l.session_max_s), hora: l.opens_per_hour ?? '—' }), null));
+  } else {
+    estadoPc.push(item(t('hera.computador'), textoDe('hera.erro_', d.pc_error), false));
+  }
+  estadoPc.push(`<div class="dica">${esc(t('hera.so_no_computador'))}</div>`);
+  $('hera-estado').innerHTML = estadoPc.join('');
+  pintarPilulaDaHera();
+}
+
+async function carregarHera() {
+  try {
+    pintarHeraEstado(await api('/api/robot/hera/status'));
+  } catch (e) {
+    hera.status = null;
+    // Rota local: 404/405 é este app antigo demais para ela.
+    if (e.status === 404 || e.status === 405) { $('hera-bloco').hidden = true; return; }
+    pill($('p-hera'), false, e.message, 'danger');
   }
 }
 
@@ -1807,6 +1951,16 @@ function ligar() {
   // Telas e sub-abas: o endereço manda, e os links só mudam o endereço.
   window.addEventListener('hashchange', mostrarTela);
 
+  // Hera.
+  $('hera-ligada').addEventListener('change', sincronizarHera);
+  $('hera-rigor').addEventListener('change', sincronizarHera);
+  $('hera-movimento').addEventListener('change', sincronizarHera);
+  $('btn-hera-salvar').addEventListener('click', async () => {
+    await salvarConversa(mudancasDaHera());
+    carregarHera();
+  });
+  $('btn-hera-atualizar').addEventListener('click', carregarHera);
+
   // Visão.
   $('visao-ligada').addEventListener('change', sincronizarVisao);
   $('visao-nuvem').addEventListener('change', sincronizarVisao);
@@ -1905,6 +2059,7 @@ function pintarFase(v) {
     texto = `${t('fase.error')} — ${t(`fase.erro_${erro.code}`)}`;
   }
   pill(el, fase !== 'offline' && fase !== 'standby', texto, CLASSE_DA_FASE[fase] || '');
+  pintarPilulaDaHera();
 }
 
 function linhasDe(texto) {

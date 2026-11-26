@@ -67,6 +67,17 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
     - **Envio travado:** um envio ao robô preso por mais de 2 s conta como
       conexão morta, para não segurar o robô que voltou.
 
+- **Cartão "Hera — conversa ao vivo" no painel do robô** (Ajustes, fase 6):
+  ouvir o chamado neste robô, o nome e as formas com saudação, o rigor do
+  chamado e o corpo durante a conversa (`live_motion`), com o aviso de
+  privacidade sempre à vista. A pílula diz se dá para chamar a Hera agora
+  (pronta, desligada, não pareada, computador fora do ar, não liberada, teto
+  atingido) e, em conversa, a fase, na cor da pílula do topo. O consumo do dia e
+  do mês vem do livro do computador, contra os tetos, com o custo estimado
+  (US$ 0,05/min), e o último chamado com o motivo. Nível, tetos, voz e modelo
+  aparecem só para ler: mudam no computador. Novas rotas `GET
+  /api/robot/hera/status` (robô) e `GET /api/hera/estado` (ponte).
+
 ### Fixed
 
 - **O fim da conversa ao vivo não vira mais "queda".** A ponte manda o `fim` e

@@ -564,6 +564,16 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
         estado = await asyncio.to_thread(visao.estado, prefs, _olho_local, _olho_nuvem)
         return JSONResponse(estado, headers=cabecalhos)
 
+    # ── a Hera, para o cartão do painel do robô ──────────────────────────────
+    # Liberação, nível, tetos e consumo: números e motivos, nunca o que foi dito.
+    @app.get("/api/hera/estado")
+    async def hera_estado(request: Request) -> Response:
+        cabecalhos = {"Cache-Control": "no-store"}
+        if not _autorizado(request, token):
+            return JSONResponse({"erro": "token inválido"}, status_code=401, headers=cabecalhos)
+        from .hera import estado as hera_estado_mod
+        return JSONResponse(await asyncio.to_thread(hera_estado_mod.resumo), headers=cabecalhos)
+
     # ── casa ─────────────────────────────────────────────────────────────────
     # O painel do robô configura o Home Assistant por aqui. O token do HA
     # atravessa UMA vez, no `configurar`, e vai para o ambiente do gateway;

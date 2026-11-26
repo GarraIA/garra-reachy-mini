@@ -337,6 +337,7 @@
     <button data-ir="agente-ia-bloco" data-i18n="agenteia.titulo"></button>
     <button data-ir="robo-bloco" data-i18n="robo.titulo"></button>
     <button data-ir="conversa-bloco" data-i18n="conversa.titulo"></button>
+    <button data-ir="hera-bloco" data-i18n="hera.atalho"></button>
     <button data-ir="visao-bloco" data-i18n="visao.titulo"></button>
     <button data-ir="familia-bloco" data-i18n="familia.titulo"></button>
     <button data-ir="diagnostico-bloco" data-i18n="atalhos.diagnostico"></button>
@@ -609,6 +610,59 @@
       <span class="pill" id="p-conversa">—</span>
     </div>
     <div class="status-lista" id="conversa-metricas" style="margin-top:12px"></div>
+  </section>
+
+  <!-- ── Hera: a conversa ao vivo ──────────────────────────────────────────────
+       O segundo chamado. O que é DESTE robô (ouvir o chamado, a frase, o rigor,
+       o corpo) grava aqui; liberação, nível de ferramentas e tetos são do
+       computador e aparecem só para ler. O aviso de privacidade fica sempre à
+       vista: é o único caminho pelo qual o som da sala sai de casa. -->
+  <section class="card glass-panel" id="hera-bloco">
+    <h2><span data-i18n="hera.titulo"></span> <span class="pill" id="p-hera">—</span></h2>
+    <label class="caixa" id="linha-hera-ligada">
+      <input type="checkbox" id="hera-ligada">
+      <span data-i18n="hera.ligada"></span>
+    </label>
+    <div class="dica" data-i18n="hera.ligada_dica"></div>
+    <div class="aviso-caixa privacidade" id="hera-aviso" data-i18n="hera.aviso"></div>
+    <div class="campo" data-hera-sub="1">
+      <label for="hera-frase" data-i18n="hera.frase"></label>
+      <input type="text" id="hera-frase" maxlength="64" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="campo" data-hera-sub="1">
+      <label for="hera-outras" data-i18n="hera.outras"></label>
+      <textarea id="hera-outras" rows="3" maxlength="300" autocomplete="off" spellcheck="false"></textarea>
+    </div>
+    <div class="dica" data-i18n="hera.outras_dica"></div>
+    <div class="campo" data-hera-sub="1">
+      <label for="hera-rigor" data-i18n="hera.rigor"></label>
+      <select id="hera-rigor">
+        <option value="strict" data-i18n="hera.rigor_strict"></option>
+        <option value="greeting" data-i18n="hera.rigor_greeting"></option>
+        <option value="normal" data-i18n="hera.rigor_normal"></option>
+      </select>
+    </div>
+    <div class="dica" id="hera-rigor-dica"></div>
+    <!-- O corpo durante a conversa. Fora da fala dela os servos são ouvidos pelo
+         microfone e iriam para a nuvem (medido: antenas ~17 dB acima do
+         silêncio, cabeça até 28 dB); por isso o padrão é parado. -->
+    <div class="campo" data-hera-sub="1">
+      <label for="hera-movimento" data-i18n="hera.movimento"></label>
+      <select id="hera-movimento">
+        <option value="still" data-i18n="hera.movimento_still"></option>
+        <option value="speaking" data-i18n="hera.movimento_speaking"></option>
+        <option value="expressive" data-i18n="hera.movimento_expressive"></option>
+      </select>
+    </div>
+    <div class="dica" id="hera-movimento-dica"></div>
+    <div class="linha" style="margin-top:10px">
+      <button id="btn-hera-salvar" class="primario" data-i18n="hera.salvar"></button>
+      <button id="btn-hera-atualizar" data-i18n="hera.atualizar"></button>
+    </div>
+    <h3 data-i18n="hera.consumo"></h3>
+    <div class="status-lista" id="hera-consumo"></div>
+    <h3 data-i18n="hera.computador"></h3>
+    <div class="status-lista" id="hera-estado"></div>
   </section>
 
   <!-- ── visão ─────────────────────────────────────────────────────────────────

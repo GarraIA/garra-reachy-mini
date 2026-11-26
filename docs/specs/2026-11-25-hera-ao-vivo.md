@@ -360,7 +360,7 @@ banco antes.
 | 4 | modo ao vivo no robô **[feito]**: canal com prova, voz pelo `CoordenadorAudio`, corpo parado, PARAR, reenvio do chamado; implantado (1.6.0.dev3), desligado por padrão |
 | 4b | a Hera olha pela câmera **[feito]** (seção 6.4): um quadro por pedido, descrito pelo modelo de visão da casa; implantado (1.6.0.dev4) |
 | 5 | conversa natural **[feito]** (seção 6.5): sentinela local, "Fala Garra" com o trecho, interrupção (`cortar`), corpo por nível, reconexão das duas pontas; implantado (1.6.0.dev5). Falta a prova no robô com a sessão de verdade (pare, troca, volta) |
-| 6 | painel: cartão Hera, pílula, consumo |
+| 6 | painel **[feito]**: cartão "Hera — conversa ao vivo" em Ajustes (chamado, frase, rigor, `live_motion`), pílula de estado e fase, consumo do dia e do mês do livro do PC (`GET /api/hera/estado` → `GET /api/robot/hera/status`); implantado (1.6.0.dev7) |
 | 7 | documentação, validação física, versão 1.6.0 |
 
 Dependem do dono: os testes com voz humana (inclusive a interrupção, seção 6.1)

@@ -219,6 +219,19 @@ Base: `http://localhost:<porta>` (8042–8046, ver §1).
 Todas as de agente são repasse para a ponte do computador (`/api/agentes*`), que
 só aceita daqui o que não afrouxa a segurança de agente nenhum.
 
+### Hera — conversa ao vivo (1.6.0)
+
+| Método | Rota | O que faz |
+|---|---|---|
+| GET | `/api/robot/hera/status` | O cartão da Hera: os ajustes deste robô (`live_*`), se ele está pareado, o último chamado visto aqui e o estado do computador — liberação, nível, voz e modelo, tetos e consumo do dia e do mês (`pc`), ou o motivo de não ter (`pc_error`) |
+
+Os ajustes `live_*` gravam pelo `PUT /api/robot/conversation` de sempre
+(`live_voice_enabled`, `live_wake_phrase_text`, `live_wake_phrase_alternatives`,
+`live_wake_strictness`, `live_motion`). O estado do computador vem de
+`GET /api/hera/estado` na ponte, com o token do robô: só números e motivos, nunca
+o que foi dito, a persona ou o segredo do pareamento. Nível, tetos, voz e modelo
+só mudam no computador (`python -m companion.hera`).
+
 Respostas de ação sempre no mesmo formato:
 
 ```json

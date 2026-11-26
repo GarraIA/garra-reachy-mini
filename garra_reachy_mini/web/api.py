@@ -413,6 +413,46 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
             base["service"] = {"state": "unavailable", "error": erro or "bridge_error"}
         return base
 
+    # ── Hera: a conversa ao vivo ─────────────────────────────────────────────
+    # O cartão do painel lê tudo daqui: os ajustes deste robô, se ele está
+    # pareado, a última conversa vista aqui (pelos eventos) e o que o computador
+    # diz — liberação, nível, tetos e consumo. Números e motivos: o painel não
+    # pede senha, e nada do que foi dito à Hera passa por esta rota.
+    _CHAVES_DA_HERA = ("live_voice_enabled", "live_wake_phrase_text", "live_wake_phrase_alternatives",
+                       "live_wake_strictness", "live_motion")
+    _EVENTOS_DA_HERA = frozenset({"voice.live.ended", "voice.live.unavailable"})
+
+    @r.get("/hera/status")
+    async def hera_status() -> dict[str, Any]:
+        from .. import ao_vivo
+        conf = _conversa_atual()
+        salvo = armazenamento.carregar_config()
+        vistos = ctx.eventos.historico(50, tipos=_EVENTOS_DA_HERA) if ctx.eventos else []
+        ultima = vistos[-1] if vistos else None
+        base: dict[str, Any] = {
+            "settings": {k: conf.get(k) for k in _CHAVES_DA_HERA},
+            "paired": ao_vivo.credenciais(salvo, str(salvo.get("gateway_url") or "")) is not None,
+            "last": None if ultima is None else {
+                "kind": "ended" if ultima["type"] == "voice.live.ended" else "unavailable",
+                "reason": ultima.get("reason"), "seconds": ultima.get("seconds"),
+                "at": ultima.get("timestamp")},
+            "pc": None, "pc_error": None}
+        resposta = await repassar("GET", "/api/hera/estado")
+        try:
+            dados = json.loads(bytes(resposta.body))
+        except (ValueError, TypeError, AttributeError):
+            dados = None
+        if resposta.status_code == 200 and isinstance(dados, dict):
+            base["pc"] = dados
+        else:
+            erro = dados.get("erro") if isinstance(dados, dict) else None
+            if not erro and isinstance(dados, dict) and isinstance(dados.get("error"), dict):
+                erro = dados["error"].get("code")
+            # 404: o companion ainda não conhece esta rota (versão anterior).
+            base["pc_error"] = erro if isinstance(erro, str) and erro != "not_found" else (
+                "pc_outdated" if resposta.status_code == 404 else "bridge_error")
+        return base
+
     @r.get("/familia/perfis")
     async def familia_perfis() -> Any:
         return await repassar("GET", "/api/rostos/perfis")
