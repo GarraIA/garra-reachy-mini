@@ -63,6 +63,11 @@ CANCELADO = "cancelled"
 CONCLUIDO = "completed"
 EXPIRADO = "timeout"
 
+# Teto de mensagens descartadas por quadro: um quadro deixa ~17 no barramento do
+# pipeline de JPEG do SDK; o teto só existe para um barramento estranho nunca
+# prender a captura.
+MAX_MENSAGENS_POR_QUADRO = 1000
+
 
 class RoboBackend(Protocol):
     """Contrato síncrono. Quem chama é a thread executora."""
@@ -322,6 +327,32 @@ class BackendSdk:
             except Exception as e:
                 log.debug("frame indisponível: %s", e)
                 return None
+            finally:
+                self._esvaziar_barramento_jpeg()
+
+    def _esvaziar_barramento_jpeg(self) -> int:
+        """Descarta o que o pipeline de JPEG do SDK deixou no barramento.
+
+        O `read_jpeg()` do SDK (reachy_mini 1.15.1) alterna o pipeline entre
+        PLAYING e PAUSED a cada quadro e nunca lê o próprio barramento: ~17
+        mensagens (state-changed, async-done, latency) ficam presas por quadro.
+        Com o `FrameHub` pedindo um quadro por segundo mesmo ocioso, o app
+        crescia ~25 MB por hora no robô (medido em 26/11/2026). O pipeline é
+        atributo privado do SDK: se ele mudar de nome, isto vira um nada.
+        """
+        camera = getattr(getattr(self.reachy, "media", None), "camera", None)
+        pipeline = getattr(camera, "_jpeg_pipeline", None)
+        if pipeline is None:
+            return 0
+        try:
+            barramento = pipeline.get_bus()
+            descartadas = 0
+            while descartadas < MAX_MENSAGENS_POR_QUADRO and barramento.pop() is not None:
+                descartadas += 1
+            return descartadas
+        except Exception as e:  # pragma: no cover - a câmera não pode cair por isto
+            log.debug("não consegui esvaziar o barramento do JPEG: %s", e)
+            return 0
 
     def moves_disponiveis(self, dataset: str) -> list[str]:
         try:

@@ -91,6 +91,13 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
   com uma conversa do dono no ar, e o fim real (599 s) se perdeu. Agora só fica
   órfã a sessão de processo morto (o livro guarda o `pid` de quem a abriu), e
   os testes não alcançam os dados reais.
+- **O app não cresce mais ~25 MB por hora no robô.** A câmera guarda um quadro
+  por segundo mesmo com o robô ocioso, e o JPEG do SDK do Reachy (reachy_mini
+  1.15.1) deixa ~17 mensagens presas no barramento do GStreamer a cada quadro.
+  Em 2 h ociosas, o app foi de 122 MB a 172 MB. O app agora esvazia esse
+  barramento a cada quadro: 20 mil quadros no PC, sem crescer. O defeito
+  existia antes da 1.6.0 e foi achado na validação de recursos dela
+  (26/11/2026).
 
 ### Security
 
