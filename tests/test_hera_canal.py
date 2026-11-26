@@ -362,15 +362,349 @@ def test_o_que_nao_e_comando_segue_a_conversa(dito):
     assert asyncio.run(cena())["motivo"] == "idle"
 
 
-def test_queda_da_conexao_com_a_openai():
+# ─── a sentinela local ───────────────────────────────────────────────────────
+async def _fala_no_microfone(c, robo, inicio_ms=1000, fala_s=0.6):
+    """2 s de sala, uma fala curta, 1,5 s de sala — em blocos de 64 ms carimbados.
+    Como o robô de verdade, só manda som depois do `aberta`."""
+    import numpy as np
+    assert await esperar(lambda: "aberta" in robo.tipos())
+    gerador = np.random.default_rng(7)
+    onda = np.concatenate([gerador.standard_normal(32000) * 0.001,
+                           gerador.standard_normal(int(16000 * fala_s)) * 0.2,
+                           gerador.standard_normal(24000) * 0.001]).astype(np.float32)
+    for i in range(0, onda.size - 1023, 1024):
+        c.microfone((onda[i:i + 1024] * 32767).astype("<i2").tobytes(), inicio_ms + i // 16)
+
+
+class WhisperFalso:
+    def __init__(self, texto):
+        self.texto, self.chamadas = texto, 0
+
+    def __call__(self, audio):
+        self.chamadas += 1
+        return self.texto, None
+
+
+def conversa_com_sentinela(texto, **kw):
+    c, robo = conversa(**kw)
+    c._transcrever = WhisperFalso(texto)
+    return c, robo
+
+
+def test_pare_ouvido_pela_sentinela_para_sem_esperar_a_nuvem():
+    async def cena():
+        c, robo = conversa_com_sentinela("Pare.", idle_close_s=5.0, no_speech_s=5.0)
+        tarefa, _ = await comecar(c)
+        await _fala_no_microfone(c, robo)
+        return await asyncio.wait_for(tarefa, 3), robo
+
+    fim, robo = asyncio.run(cena())
+    assert fim["motivo"] == "stop" and {"t": "estop"} in robo.json
+
+
+def test_fala_garra_ouvido_pela_sentinela_leva_o_trecho_ao_robo():
+    async def cena():
+        c, robo = conversa_com_sentinela("Fala Garra, acende a luz.", idle_close_s=5.0, no_speech_s=5.0)
+        tarefa, _ = await comecar(c)
+        await _fala_no_microfone(c, robo, inicio_ms=1000)
+        return await asyncio.wait_for(tarefa, 3), robo
+
+    fim, robo = asyncio.run(cena())
+    assert fim["motivo"] == "handoff_garra"
+    ultimo = robo.json[-1]
+    a, b = ultimo["trecho_ms"]
+    # A fala foi de 3000 a 3600 ms no relógio do robô; o trecho a cobre.
+    assert a <= 3000 and b >= 3600 and b - a < 3000
+    assert {"t": "estop"} not in robo.json
+    # Só o intervalo; o que foi dito não atravessa.
+    assert "luz" not in json.dumps(robo.json)
+
+
+def test_fala_garra_pela_nuvem_espera_o_trecho_da_sentinela():
+    async def cena():
+        c, robo = conversa_com_sentinela("Fala Garra.", idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        par.evento(type="session.input_transcript.delta", delta="Fala Garra.")
+        await _fala_no_microfone(c, robo)
+        return await asyncio.wait_for(tarefa, 4), robo
+
+    fim, robo = asyncio.run(cena())
+    assert fim["motivo"] == "handoff_garra" and "trecho_ms" in robo.json[-1]
+
+
+def test_fala_garra_pela_nuvem_sem_trecho_nao_espera_para_sempre():
+    async def cena():
+        c, robo = conversa_com_sentinela("", idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        par.evento(type="session.input_transcript.delta", delta="Fala Garra.")
+        return await asyncio.wait_for(tarefa, 4), robo
+
+    fim, robo = asyncio.run(cena())
+    assert fim["motivo"] == "handoff_garra" and "trecho_ms" not in robo.json[-1]
+
+
+def test_pare_que_e_eco_dela_nao_para_nem_pela_sentinela():
+    async def cena():
+        c, robo = conversa_com_sentinela("Pare.", idle_close_s=0.8)
+        tarefa, par = await comecar(c)
+        par.evento(type="session.output_transcript.delta", delta=" Se quiser que eu pare, é só dizer.")
+        await _fala_no_microfone(c, robo)
+        return await asyncio.wait_for(tarefa, 4), robo
+
+    fim, robo = asyncio.run(cena())
+    assert fim["motivo"] != "stop" and {"t": "estop"} not in robo.json
+
+
+def test_fala_garra_que_e_eco_dela_nao_troca_de_conversa():
+    async def cena():
+        c, _ = conversa(idle_close_s=0.8)
+        tarefa, par = await comecar(c)
+        par.evento(type="session.output_transcript.delta", delta=" É só dizer fala Garra.")
+        par.evento(type="session.input_transcript.delta", delta="fala garra")
+        return await asyncio.wait_for(tarefa, 3)
+
+    assert asyncio.run(cena())["motivo"] != "handoff_garra"
+
+
+# ─── interrupção ─────────────────────────────────────────────────────────────
+class RoboLento(RoboFalso):
+    """Wi-Fi lento: o som dela se acumula na fila do computador para o robô."""
+
+    def __init__(self):
+        super().__init__()
+        self.solto = asyncio.Event()
+
+    async def enviar_audio(self, pcm):
+        await self.solto.wait()
+        self.audio.append(pcm)
+
+
+def test_falar_por_cima_dela_corta_o_que_ainda_nao_saiu():
+    async def cena():
+        robo = RoboLento()
+        c = canal.Conversa(robo, ponte=PonteFalsa(), livro=livro.Livro(),
+                           limites={**LIMITES, **RAPIDO, "idle_close_s": 5.0}, dispositivo="garra-sala",
+                           nivel="completo", abrir_par=ParFalso)
+        tarefa, par = await comecar(c)
+        assert await esperar(lambda: "aberta" in robo.tipos())
+        par.evento(type="session.output_transcript.delta", delta="Era uma vez")
+        for i in range(5):
+            par.ao_audio(bytes([i + 1, 0]) * 320)
+        await asyncio.sleep(0.05)
+        par.evento(type="session.input_transcript.delta", delta="espera")
+        robo.solto.set()
+        assert await esperar(lambda: "cortar" in robo.tipos())
+        par.ao_audio(b"\x09\x00" * 320)               # ela volta a falar depois
+        assert await esperar(lambda: b"\x09\x00" * 320 in robo.audio)
+        c.parar("robot_stop")
+        return await tarefa, robo
+
+    fim, robo = asyncio.run(cena())
+    # No máximo o pedaço que já estava a caminho; o resto da fila não sai.
+    assert len([a for a in robo.audio if a != b"\x09\x00" * 320]) <= 1
+    assert robo.tipos().count("cortar") == 1
+    assert fim["interrupcoes"] == 1
+
+
+def test_falar_com_ela_calada_nao_e_interrupcao():
     async def cena():
         c, robo = conversa(idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        assert await esperar(lambda: "aberta" in robo.tipos())
+        par.evento(type="session.input_transcript.delta", delta="que horas são")
+        await asyncio.sleep(0.1)
+        c.parar("robot_stop")
+        return await tarefa, robo
+
+    fim, robo = asyncio.run(cena())
+    assert "cortar" not in robo.tipos() and fim["interrupcoes"] == 0
+
+
+def test_a_interrupcao_vale_uma_vez_por_fala_dela():
+    async def cena():
+        c, robo = conversa(idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        assert await esperar(lambda: "aberta" in robo.tipos())
+        par.evento(type="session.output_transcript.delta", delta="Era uma vez")
+        for delta in ("es", "pe", "ra"):
+            par.evento(type="session.input_transcript.delta", delta=delta)
+        par.evento(type="session.output_transcript.delta", delta="Claro.")
+        par.evento(type="session.input_transcript.delta", delta="não")
+        await asyncio.sleep(0.1)
+        c.parar("robot_stop")
+        return await tarefa, robo
+
+    fim, robo = asyncio.run(cena())
+    assert robo.tipos().count("cortar") == 2 and fim["interrupcoes"] == 2
+
+
+# ─── reconexão: a sessão da OpenAI caiu ──────────────────────────────────────
+async def _nova_sessao(anterior):
+    """Espera o par novo e anuncia a sessão dele, como a OpenAI."""
+    assert await esperar(lambda: ParFalso.ultimo is not anterior and ParFalso.ultimo.pronto)
+    novo = ParFalso.ultimo
+    novo.evento(type="session.started", session={"id": "sess_2"})
+    return novo
+
+
+def test_queda_da_openai_abre_outra_sessao_com_o_historico():
+    async def cena():
+        ponte = PonteFalsa()
+        c, robo = conversa(ponte, idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        assert await esperar(lambda: "aberta" in robo.tipos())
+        par.evento(type="session.input_transcript.delta", delta="Meu nome é")
+        par.evento(type="session.input_transcript.delta", delta=" Ana.")
+        par.evento(type="session.output_transcript.delta", delta="Prazer, Ana.")
+        par.ao_cair("connection_failed")
+        novo = await _nova_sessao(par)
+        assert await esperar(lambda: robo.tipos().count("aberta") == 2)
+        c.parar("robot_stop")
+        return await tarefa, robo, ponte, par, novo
+
+    fim, robo, ponte, velho, novo = asyncio.run(cena())
+    assert fim["motivo"] == "robot_stop" and velho.fechado and novo.fechado
+    assert len(ponte.sessoes) == 2
+    assert ponte.sessoes[1][1] == [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Meu nome é Ana."}]},
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Prazer, Ana."}]},
+    ]
+    assert {"t": "estado", "fase": "conectando"} in robo.json
+    # A conversa é uma só: um registro no livro, com as duas sessões somadas.
+    (linha,) = livro.Livro().sessoes()
+    assert linha["motivo"] == "robot_stop" and fim["segundos"] >= 42
+
+
+def test_segunda_queda_da_openai_encerra():
+    async def cena():
+        c, robo = conversa(idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        par.ao_cair("connection_failed")
+        novo = await _nova_sessao(par)
+        novo.ao_cair("connection_failed")
+        return await asyncio.wait_for(tarefa, 3), robo
+
+    fim, robo = asyncio.run(cena())
+    assert fim["motivo"] == "connection_lost" and robo.json[-1]["t"] == "fim"
+
+
+def test_se_a_outra_sessao_nao_abre_encerra():
+    async def cena():
+        ponte = PonteFalsa()
+        sessao = ponte.sessao
+
+        def so_a_primeira(oferta, historico=None):
+            if ponte.sessoes:
+                raise ponte_hera.ErroDaPonte("unavailable")
+            return sessao(oferta, historico)
+
+        ponte.sessao = so_a_primeira
+        c, robo = conversa(ponte, idle_close_s=5.0)
         tarefa, par = await comecar(c)
         par.ao_cair("connection_failed")
         return await asyncio.wait_for(tarefa, 3), robo
 
     fim, robo = asyncio.run(cena())
     assert fim["motivo"] == "connection_lost" and robo.json[-1]["t"] == "fim"
+
+
+def test_o_que_a_sessao_velha_diz_depois_da_queda_nao_conta():
+    async def cena():
+        c, robo = conversa(idle_close_s=5.0, no_speech_s=5.0)
+        tarefa, par = await comecar(c)
+        par.ao_cair("connection_failed")
+        novo = await _nova_sessao(par)
+        par.evento(type="session.closed", reason="connection_lost", usage={"seconds": 999})
+        par.evento(type="session.input_transcript.delta", delta="pare")
+        await asyncio.sleep(1.0)
+        assert not tarefa.done()
+        c.parar("robot_stop")
+        return await tarefa
+
+    fim = asyncio.run(cena())
+    assert fim["motivo"] == "robot_stop" and fim["segundos"] < 999
+
+
+def test_resposta_do_hermes_da_sessao_que_caiu_nao_vai_para_a_nova():
+    async def cena():
+        lento = PonteFalsa()
+        liberar = __import__("threading").Event()
+
+        def turno_lento(conversa_id, texto, contexto=""):
+            liberar.wait(3)
+            return ponte_hera.Turno("Pronto.", 100)
+
+        lento.turno = turno_lento
+        c, _ = conversa(lento, idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        par.evento(type="session.input_transcript.delta", delta="pesquisa isso")
+        par.evento(type="session.delegation.created", delegation={"id": "d-velha"})
+        await asyncio.sleep(0.05)
+        par.ao_cair("connection_failed")
+        novo = await _nova_sessao(par)
+        liberar.set()
+        await asyncio.sleep(0.3)
+        c.parar("robot_stop")
+        await tarefa
+        return novo
+
+    novo = asyncio.run(cena())
+    assert not [e for e in novo.enviados if e.get("delegation_id") == "d-velha"]
+
+
+# ─── reconexão: o robô caiu ──────────────────────────────────────────────────
+def test_robo_que_cai_e_volta_segue_na_mesma_sessao(monkeypatch):
+    async def cena():
+        ponte = PonteFalsa()
+        c, robo = conversa(ponte, idle_close_s=5.0)
+        tarefa, par = await comecar(c)
+        assert await esperar(lambda: "aberta" in robo.tipos())
+        aberta = next(m for m in robo.json if m["t"] == "aberta")
+        assert aberta["retomar"] == c.retomada and len(c.retomada) >= 16
+        c.robo_caiu(robo)
+        par.ao_audio(b"\x07\x00" * 160)              # ela falando com o robô fora
+        await asyncio.sleep(0.1)
+        assert c.pode_retomar(c.retomada)
+        outro = RoboFalso()
+        c.reatar(outro)
+        assert await esperar(lambda: "estado" in outro.tipos())
+        c.parar("robot_stop")
+        return await tarefa, robo, outro, ponte
+
+    fim, robo, outro, ponte = asyncio.run(cena())
+    assert fim["motivo"] == "robot_stop" and len(ponte.sessoes) == 1
+    assert outro.json[-1]["t"] == "fim"
+    assert b"\x07\x00" * 160 not in outro.audio      # o que se perdeu, perdeu
+
+
+def test_robo_que_nao_volta_a_tempo_encerra(monkeypatch):
+    monkeypatch.setattr(canal, "RETOMAR_S", 0.3)
+
+    async def cena():
+        c, robo = conversa(idle_close_s=5.0)
+        tarefa, _ = await comecar(c)
+        c.robo_caiu(robo)
+        return await asyncio.wait_for(tarefa, 3), c
+
+    fim, c = asyncio.run(cena())
+    assert fim["motivo"] == "robot_lost" and not c.pode_retomar(c.retomada)
+
+
+def test_so_se_retoma_com_a_senha_da_propria_conversa():
+    async def cena():
+        c, robo = conversa(idle_close_s=5.0)
+        tarefa, _ = await comecar(c)
+        # O robô pode voltar antes de o computador perceber que ele caiu: o
+        # Wi-Fi não avisa. A senha vale enquanto a conversa vive.
+        presa = c.pode_retomar(c.retomada)
+        c.robo_caiu(robo)
+        errada = c.pode_retomar("outra-senha-qualquer")
+        certa = c.pode_retomar(c.retomada)
+        c.parar("robot_stop")
+        await tarefa
+        return presa, errada, certa, c.pode_retomar(c.retomada)
+
+    assert asyncio.run(cena()) == (True, False, True, False)
 
 
 def test_ponte_recusa_a_sessao():
@@ -463,8 +797,7 @@ def test_conferir_antes_do_ola_nao_vale():
 
 
 # ─── o WebSocket de verdade ──────────────────────────────────────────────────
-@pytest.fixture
-def app_do_canal(monkeypatch):
+def _montar_app(limites):
     """A rota da ponte com o par e a ponte da Hera dublados."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -479,8 +812,13 @@ def app_do_canal(monkeypatch):
     ponte = PonteFalsa()
     app = FastAPI()
     canal.registrar(app, ponte=ponte, abrir_par=ParQueComeca, host_e_meu=lambda h: h == HOST,
-                    limites_de_teste={"session_max_s": 5.0, "idle_close_s": 3.0, "no_speech_s": 3.0})
+                    limites_de_teste=limites)
     return TestClient(app), ponte
+
+
+@pytest.fixture
+def app_do_canal():
+    return _montar_app({"session_max_s": 5.0, "idle_close_s": 3.0, "no_speech_s": 3.0})
 
 
 def _liberar():
@@ -544,6 +882,44 @@ def test_websocket_prova_errada_nao_abre_sessao(app_do_canal):
         resposta = _apertar(ws, "segredo-errado-" + "x" * 30, conferir_pc=False)
     assert resposta == {"t": "fim", "motivo": "bad_proof", "segundos": 0}
     assert ponte.sessoes == []
+
+
+def _ate(ws, tipo):
+    while True:
+        m = ws.receive()
+        if m.get("text"):
+            mensagem = json.loads(m["text"])
+            if mensagem["t"] == tipo:
+                return mensagem
+
+
+def test_websocket_senha_de_retomada_errada_e_recusada(app_do_canal):
+    cliente, ponte = app_do_canal
+    segredo = _liberar()
+    with cliente.websocket_connect("/api/hera/ao-vivo") as ws:
+        assert _apertar(ws, segredo, retomar="senha-que-nao-existe") == {
+            "t": "fim", "motivo": "not_resumable", "segundos": 0}
+    assert ponte.sessoes == []
+
+
+def test_websocket_retomada_sem_prova_nao_passa(app_do_canal):
+    cliente, ponte = app_do_canal
+    segredo = _liberar()
+    with cliente.websocket_connect("/api/hera/ao-vivo") as ws1:
+        assert _apertar(ws1, segredo) == {"t": "aceito"}
+        senha = _ate(ws1, "aberta")["retomar"]
+        with cliente.websocket_connect("/api/hera/ao-vivo") as ws2:
+            resposta = _apertar(ws2, "segredo-errado-" + "x" * 30, conferir_pc=False, retomar=senha)
+        assert resposta == {"t": "fim", "motivo": "bad_proof", "segundos": 0}
+        ws1.send_text(json.dumps({"t": "parar"}))
+        assert _ate(ws1, "fim")["motivo"] == "robot_stop"
+
+
+@pytest.mark.parametrize("retomar", [12, "", "x" * 65])
+def test_ola_com_senha_de_retomada_torta(retomar):
+    with pytest.raises(canal.Recusa) as erro:
+        _aperto().responder(_ola(retomar=retomar))
+    assert erro.value.motivo == "bad_hello"
 
 
 def test_websocket_teto_atingido(app_do_canal):

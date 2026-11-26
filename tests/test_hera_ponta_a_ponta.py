@@ -5,7 +5,8 @@ a rota do computador (`companion.hera.canal.registrar`, FastAPI + uvicorn), num
 servidor local. A OpenAI e o Hermes são dublês; o que se prova é que as duas
 implementações — escritas separadas, porque o app do robô não importa o
 companion — falam o mesmo protocolo: aperto de mão, quadros, estado, fim.
-E que conversar vinte vezes não deixa thread nem soquete para trás.
+E que conversar vinte vezes não deixa thread nem soquete para trás. E que o robô
+que perde a conexão volta, por outra, à mesma conversa.
 """
 
 from __future__ import annotations
@@ -33,6 +34,9 @@ class ParQueComeca(ParFalso):
         self.ao_evento({"type": "session.started", "session": {"id": "s"}})
 
 
+ULTIMA: dict = {}          # a ponte falsa do servidor da vez
+
+
 def _porta_livre() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -49,7 +53,8 @@ def servidor(tmp_path, monkeypatch):
     porta = _porta_livre()
     host = f"127.0.0.1:{porta}"
     app = FastAPI()
-    canal.registrar(app, ponte=PonteFalsa(), abrir_par=ParQueComeca, host_e_meu=lambda h: h == host,
+    ponte = ULTIMA["ponte"] = PonteFalsa()
+    canal.registrar(app, ponte=ponte, abrir_par=ParQueComeca, host_e_meu=lambda h: h == host,
                     limites_de_teste={"session_max_s": 30.0, "idle_close_s": 20.0, "no_speech_s": 20.0})
     srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=porta, log_level="warning"))
     t = threading.Thread(target=srv.run, daemon=True)
@@ -68,11 +73,14 @@ def _conversar(host: str, segredo: str) -> tuple[str, list]:
     c.abrir("alone", "")
     vistos: list = []
     try:
+        def abriu() -> bool:
+            return any(tipo == "json" and item.get("t") == "aberta" for tipo, item in vistos)
+
         fim = time.monotonic() + 5
-        while time.monotonic() < fim and ("json", {"t": "aberta"}) not in vistos:
+        while time.monotonic() < fim and not abriu():
             vistos += c.receber()
             time.sleep(0.01)
-        assert ("json", {"t": "aberta"}) in vistos, vistos
+        assert abriu(), vistos
         c.enviar_som(b"\x07\x00" * 1024)
         c.enviar({"t": "parar"})
         fim = time.monotonic() + 5
@@ -125,3 +133,43 @@ def test_vinte_conversas_nao_deixam_nada_para_tras(servidor):
     threads_depois, fds_depois = _threads_e_fds()
     assert threads_depois <= threads + 1, (threads, threads_depois)
     assert fds_depois <= fds + 3, (fds, fds_depois)
+
+
+def _ate(c: ao_vivo.Canal, condicao, segundos: float = 5.0) -> dict:
+    fim = time.monotonic() + segundos
+    while time.monotonic() < fim:
+        for tipo, item in c.receber():
+            if tipo == "json" and condicao(item):
+                return item
+        time.sleep(0.01)
+    raise AssertionError("não chegou")
+
+
+def test_o_robo_cai_volta_por_outra_conexao_e_segue_na_mesma_sessao(servidor):
+    host, segredo = servidor
+    primeira = ao_vivo.Canal(f"ws://{host}{ao_vivo.CAMINHO}", host, segredo, "garra-sala")
+    primeira.abrir("alone", "")
+    senha = _ate(primeira, lambda m: m["t"] == "aberta")["retomar"]
+    primeira.fechar()                                  # o Wi-Fi caiu
+    volta = primeira.outro()
+    try:
+        volta.abrir("alone", "", retomar=senha)        # prova de novo, com a senha
+        assert _ate(volta, lambda m: m["t"] == "estado")["fase"] == "ouvindo"
+        volta.enviar_som(b"\x07\x00" * 1024)
+        volta.enviar({"t": "parar"})
+        fim = _ate(volta, lambda m: m["t"] == "fim")
+    finally:
+        volta.fechar()
+    assert fim["motivo"] == "robot_stop"
+    assert len(ULTIMA["ponte"].sessoes) == 1            # a mesma sessão da OpenAI
+    assert ParFalso.ultimo.som == [b"\x07\x00" * 1024]
+    (linha,) = livro.Livro().sessoes()
+    assert linha["motivo"] == "robot_stop"
+
+
+def test_senha_de_outra_conversa_nao_volta_a_nada(servidor):
+    host, segredo = servidor
+    c = ao_vivo.Canal(f"ws://{host}{ao_vivo.CAMINHO}", host, segredo, "garra-sala")
+    with pytest.raises(ao_vivo.Recusado) as erro:
+        c.abrir("alone", "", retomar="senha-de-uma-conversa-que-acabou")
+    assert erro.value.motivo == "not_resumable"

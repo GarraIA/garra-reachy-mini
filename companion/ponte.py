@@ -312,6 +312,15 @@ _agentes: ponte_agentes.Agentes | None = None
 _hera_registrada = False
 
 
+def _registrar_hera(app: FastAPI) -> None:
+    """A rota da conversa ao vivo, com o olho e o ouvido desta máquina: o modelo
+    de visão descreve o que a câmera mostra, e a sentinela ouve o "pare" e o
+    "Fala Garra" pelo Whisper do servidor de voz."""
+    from .hera import canal as canal_hera, sentinela as sentinela_hera
+    canal_hera.registrar(app, descrever=_descrever_para_hera,
+                         transcrever=sentinela_hera.transcrever_local)
+
+
 def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=None,
            casa=None, musica=None, familia=None, comandos=None,
            registro=None) -> FastAPI:
@@ -958,8 +967,7 @@ def montar(token: str, chave_gateway: str | None, visao_local=None, visao_nuvem=
     # abaixo. O aperto de mão dela tem prova própria (não usa este token).
     global _hera_registrada
     if not _hera_registrada:
-        from .hera import canal as canal_hera
-        canal_hera.registrar(app, descrever=_descrever_para_hera)
+        _registrar_hera(app)
         _hera_registrada = True
 
     @app.api_route("/{caminho:path}",

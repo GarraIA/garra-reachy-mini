@@ -39,8 +39,8 @@ OUVINDO = "listening"
 PENSANDO = "thinking"
 FALANDO = "speaking"
 OCIOSO = "idle"
-# Conversa ao vivo (Hera): o corpo fica parado. Os micro-movimentos só acontecem
-# em OUVINDO, e o balanço da cabeça é desligado.
+# Conversa ao vivo (Hera): sem micro-movimentos (eles só acontecem em OUVINDO). O
+# que o corpo faz nela é o que o nível do dono permite (`ao_vivo_corpo`).
 AO_VIVO = "live"
 
 # ── fase da voz ─────────────────────────────────────────────────────────────
@@ -96,6 +96,7 @@ class Comportamento:
         self.wobbling = wobbling
 
         self._estado = OCIOSO
+        self._antenas_atras = False
         self._fase = FASE_CONECTANDO
         self._fase_motivo: str | None = None
         self._fase_desde = time.time()
@@ -165,6 +166,28 @@ class Comportamento:
         """
         self._mudar(AO_VIVO)
         if self.wobbling:
+            self.ctrl.wobbling_pedir(False)
+
+    def ao_vivo_corpo(self, acao: str) -> None:
+        """O corpo na conversa ao vivo, no nível que o dono escolheu.
+
+        Quem decide QUANDO é `ao_vivo.Atendente`, pela fase e pelo nível; aqui só
+        o como. "speaking": o balanço da cabeça (o daemon o sincroniza com a voz
+        dela) e as antenas de volta, se estavam para trás — enquanto ela fala o
+        chip abafa o microfone. "thinking": antenas para trás. "quiet": sem
+        balanço. Os interruptores do dono valem aqui como em toda parte.
+        """
+        if acao == "speaking":
+            if self.wobbling:
+                self.ctrl.wobbling_pedir(True)
+            if self._antenas_atras:
+                self._antenas_atras = False
+                self._gesto({"action": "move_antennas", "preset": "neutral", "duration": 0.4})
+        elif acao == "thinking":
+            if self.ativo:
+                self._antenas_atras = True
+            self._gesto({"action": "move_antennas", "left": -0.6, "right": -0.6, "duration": 0.4})
+        elif acao == "quiet":
             self.ctrl.wobbling_pedir(False)
 
     def atualizar_fase_de_escuta(self) -> None:

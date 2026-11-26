@@ -558,6 +558,7 @@ def test_toda_chave_do_padrao_sobrevive_a_escrita_pelo_painel() -> None:
         "live_wake_spellings": ["Atenas"],
         "live_wake_strictness": "normal",
         "live_idle_close_s": 45,
+        "live_motion": "speaking",
         "mode": "informative",
     }
     escrito = conversa.perfil_atualizado(base, alteracoes)

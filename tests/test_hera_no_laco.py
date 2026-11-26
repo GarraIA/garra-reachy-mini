@@ -159,7 +159,7 @@ def test_o_chamado_e_decidido_antes_do_portao_e_atendido_fora_do_turno():
         "\"Hera, pare\" tem de ser parada antes até do teste de escuta"
     # Quem conduz a conversa é o laço, dono do microfone — nunca `processar`.
     assert "atendente" not in corpo and "ao_vivo." not in corpo
-    assert MAIN.count("atender_ao_vivo()") >= 3      # a definição e as duas chamadas
+    assert MAIN.count("atender_ao_vivo(") >= 3       # a definição e as duas chamadas
 
 
 # ═══ a conversa de verdade, com um computador de mentira ═════════════════════
@@ -286,8 +286,11 @@ def test_sem_pareamento_nem_tenta_conectar(pareado):
 def test_computador_mudo_encerra_a_conversa(pareado):
     cena, pc = pareado(PcFalso(pings=False, falar=False))
     abrir(cena)
-    assert esperar(lambda: cena.eventos("voice.live.ended"), 6.0)
+    # Mudo por 3 s: o robô tenta voltar UMA vez (com prova e senha) e, mudo de
+    # novo, encerra e avisa.
+    assert esperar(lambda: cena.eventos("voice.live.ended"), 12.0)
     assert cena.eventos("voice.live.ended")[0]["reason"] == "pc_lost"
+    assert pc.tipos().count("ola") == 2 and cena.eventos("voice.live.resumed")
 
 
 def test_o_painel_nao_fala_por_cima_da_hera(pareado):
@@ -317,6 +320,41 @@ def test_depois_da_conversa_o_fala_garra_volta(pareado):
     time.sleep(1.0)        # o dreno do microfone e a margem de eco depois da voz dela
     cena.alguem_fala()
     assert cena.cerebro.recebidas == ["que horas são?"]
+
+
+def test_fala_garra_dito_a_hera_vai_ao_garra_pelo_som_que_o_robo_mandou(pareado):
+    """O computador devolve só o intervalo; o robô ouve de novo, ele mesmo."""
+    cena, pc = pareado(roteiro=("Oi Hera", "Fala Garra, que horas são?"))
+    cena.cerebro.respostas = ["São dez horas."]
+    abrir(cena)
+    cena.mic.dizer()                                 # o "Fala Garra, que horas são?"
+    assert esperar(lambda: len(pc.som) >= 6)
+    pc.empurrar({"t": "fim", "motivo": "handoff_garra", "segundos": 5,
+                 "trecho_ms": [pc.carimbos[0] - 100, pc.carimbos[-1]]})
+    assert esperar(lambda: cena.cerebro.recebidas, 10.0), tipos(cena)
+    assert cena.cerebro.recebidas == ["que horas são?"]
+    (ativou,) = cena.eventos("voice.wake.activated")
+    assert ativou["match"] == "handoff"
+    assert cena.eventos("voice.live.ended")[0]["reason"] == "handoff_garra"
+
+
+def test_fala_garra_sem_trecho_abre_a_conversa_com_o_garra(pareado):
+    cena, pc = pareado(roteiro=("Oi Hera", "que horas são?"))
+    cena.cerebro.respostas = ["São dez horas."]
+    abrir(cena)
+    pc.empurrar({"t": "fim", "motivo": "handoff_garra", "segundos": 5})
+    assert esperar(lambda: cena.eventos("voice.wake.activated"))
+    time.sleep(1.0)
+    cena.alguem_fala()                               # sem a frase: a conversa já está aberta
+    assert cena.cerebro.recebidas == ["que horas são?"]
+
+
+def test_o_nivel_de_movimento_chega_ao_corpo(pareado):
+    cena, pc = pareado(conversa={**COM_HERA, "live_motion": "speaking"})
+    abrir(cena)
+    assert esperar(lambda: "speaking" in cena.app.comportamento.corpo_ao_vivo)
+    pc.empurrar({"t": "fim", "motivo": "idle", "segundos": 3})
+    assert esperar(lambda: cena.eventos("voice.live.ended"))
 
 
 def test_o_pedido_dito_junto_do_chamado_e_reenviado_como_som(pareado):

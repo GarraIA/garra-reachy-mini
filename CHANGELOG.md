@@ -36,6 +36,36 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
   descrição volta para ela falar; o Hermes não entra. Visão desligada, câmera
   sem imagem, modelo fora do ar ou robô antigo viram uma frase dita por ela, nunca
   uma descrição inventada. A imagem não é guardada nem vai a log.
+- **Conversa natural com a Hera** (fase 5):
+  - **Sentinela local** (`companion/hera/sentinela.py`). O mesmo som que sobe
+    para a nuvem passa pelo detector de fala do Garra e pelo Whisper do próprio
+    computador. "Pare" e "Fala Garra" valem por qualquer dos dois ouvidos.
+    Medido: o Whisper escreve "Tchau." para trecho quase mudo, por isso a
+    despedida fica só com a nuvem. O que ela acabou de dizer não conta como
+    comando (eco), e o texto não fica guardado.
+  - **"Fala Garra" durante a Hera passa a conversa ao Garra.** O computador
+    devolve só o intervalo do que foi dito, no relógio do robô. O robô abre a
+    conversa com o Garra (bipe e gesto) e ouve de novo, ele mesmo, o som que
+    tinha mandado: "Fala Garra, apaga a luz" chega ao Garra como "apaga a luz".
+  - **Interrupção.** Falar por cima dela tira da fila o som dela que ainda não
+    saiu (`cortar`). Isso não usa `clear_player`, que pausaria o microfone com a
+    pessoa falando. Quando ela cala, a tela e o corpo voltam a "ouvindo".
+  - **Corpo por nível** (`live_motion`): `still` (parado, o padrão),
+    `speaking` (o balanço da cabeça só enquanto ela fala) e `expressive`
+    (também as antenas ao pensar, com o microfone calado enquanto elas se
+    mexem). Medido no robô: fora da fala dela as antenas aparecem cerca de
+    17 dB acima do silêncio da sala, e a cabeça até 28 dB.
+  - **Reconexão:**
+    - **Queda da sessão da OpenAI:** o computador abre outra uma vez, com o
+      histórico da conversa montado por ele, e o robô toca de novo as notas de
+      entrada.
+    - **Queda do robô:** a conversa espera a volta dele por 8 s. O robô volta
+      por outra conexão, com a prova de posse completa e a senha da conversa,
+      e segue na mesma sessão.
+    - **Na segunda queda**, a conversa acaba e o robô avisa: "A conversa com a
+      Hera caiu."
+    - **Envio travado:** um envio ao robô preso por mais de 2 s conta como
+      conexão morta, para não segurar o robô que voltou.
 
 ### Security
 

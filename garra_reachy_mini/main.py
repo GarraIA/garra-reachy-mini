@@ -1163,10 +1163,14 @@ class GarraReachyMini(ReachyMiniApp):
                 trava_fala=self._lock_fala,
                 # "Hera, o que você está vendo?": um quadro, com as regras da visão
                 # do painel. Quem descreve é o computador.
-                olhar=lambda: self.olho.quadro(Config.carregar().conversa, origem="hera")))
+                olhar=lambda: self.olho.quadro(Config.carregar().conversa, origem="hera"),
+                # O corpo na conversa, no nível do painel (`live_motion`), lido a
+                # cada conversa.
+                corpo=gestos.ao_vivo_corpo,
+                movimento=lambda: conversa.normalizar(Config.carregar().conversa)["live_motion"]))
         self._atendente_ao_vivo = atendente
 
-        def atender_ao_vivo() -> None:
+        def atender_ao_vivo(esperas: list[np.ndarray]) -> None:
             """Atende o chamado anotado pelo turno. Roda na thread do laço, que é
             a única que lê o microfone — e a conversa ao vivo precisa dele."""
             chamado = pedido_ao_vivo.pop("chamado", None)
@@ -1181,6 +1185,7 @@ class GarraReachyMini(ReachyMiniApp):
             except Exception:
                 log.exception("A conversa ao vivo falhou ao atender o chamado")
                 conversou = False
+            ao_garra, atendente.ao_garra = atendente.ao_garra, None
             if conversou:
                 # O que o microfone juntou durante a conversa foi para o
                 # computador, não para o detector: recomeça limpo, e a voz da
@@ -1190,6 +1195,27 @@ class GarraReachyMini(ReachyMiniApp):
                 detector.descartar()
                 sessao_ativacao.falou_ate = time.monotonic()
             gestos.ouvindo()
+            if conversou and ao_garra is not None:
+                passar_ao_garra(ao_garra.get("trecho"), esperas)
+
+        def passar_ao_garra(trecho: np.ndarray | None, esperas: list[np.ndarray]) -> None:
+            """"Fala Garra" dito durante a conversa com a Hera.
+
+            A conversa com o Garra abre aqui, com o bipe e o gesto dele, como se a
+            frase tivesse sido dita agora. O que foi dito a ele vem como SOM: o
+            computador apontou o intervalo, e o robô ouve de novo o que ele mesmo
+            mandou — pelo caminho de sempre (STT, portão, atalhos, agente). Com a
+            sessão aberta, a margem de eco não recusa o que foi dito antes do bipe.
+            """
+            conf_g = Config.carregar()
+            ativ_g = ativacao.Ativacao.de(conf_g.conversa)
+            sessao_ativacao.abrir(time.monotonic(), ativ_g)
+            controlador.eventos.publicar(
+                "voice.wake.activated", window_s=ativ_g.janela_s,
+                session_max_s=ativ_g.sessao_max_s, match="handoff")
+            confirmar_ativacao(conf_g.conversa)
+            if trecho is not None and trecho.size:
+                processar(trecho, esperas)
 
         bipe = ativacao.bipe(sr_out)
 
@@ -1777,7 +1803,7 @@ class GarraReachyMini(ReachyMiniApp):
                     trecho = detector.sem_audio(agora)
                     if trecho is not None:
                         processar(trecho.audio, esperas)
-                        atender_ao_vivo()
+                        atender_ao_vivo(esperas)
                     elif not detector.em_fala:
                         # O que foi ouvido há mais tempo que a janela sai da
                         # memória agora, e não na próxima fala.
@@ -1801,7 +1827,7 @@ class GarraReachyMini(ReachyMiniApp):
                 trecho = detector.bloco(mono, agora)
                 if trecho is not None:
                     processar(trecho.audio, esperas)
-                    atender_ao_vivo()
+                    atender_ao_vivo(esperas)
 
                 if self._acordar.is_set():
                     # Configuração nova. Voltar ao supervisor é o caminho mais

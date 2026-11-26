@@ -12,13 +12,24 @@ dito ficam no computador; aqui chegam só a fase, o "pare", o fim e — quando
 pedem para a Hera olhar — o pedido de UM quadro da câmera, sem a pergunta. Quem
 descreve a imagem é o modelo de visão do computador, o mesmo do "Fala Garra".
 
-Nesta fase o corpo não se mexe durante a conversa: os servos ficam ao lado dos
-microfones, e o que eles fazem vai junto para a nuvem.
+O corpo segue o nível escolhido no painel (`live_motion`). Medido em 25/11/2026:
+fora da fala dela, os servos aparecem no microfone (antenas ~17 dB acima do
+silêncio da sala, a cabeça até 28 dB), e iriam para a nuvem como se fosse
+alguém falando; durante a fala dela o chip abafa o microfone, e o balanço da
+cabeça não subiu o nível. Daí: "parado" (o padrão), "ao falar" (o balanço só
+enquanto ela fala) e "expressivo" (também as antenas ao pensar, com o microfone
+calado enquanto elas se mexem).
+
+Quando o computador some no meio, o robô volta UMA vez pela mesma conversa (a
+senha dela veio no `aberta`, e a prova de posse é feita de novo). Quando alguém
+diz "Fala Garra", o computador devolve só o intervalo do que foi dito, no
+relógio daqui: o robô guarda o som que mandou e o ouve de novo, ele mesmo.
 """
 
 from __future__ import annotations
 
 import base64
+import collections
 import hashlib
 import hmac
 import json
@@ -33,6 +44,7 @@ from urllib.parse import urlsplit
 
 import numpy as np
 
+from .conversa import MOVIMENTOS_AO_VIVO
 from .roteador import Chamado
 
 log = logging.getLogger(__name__)
@@ -48,6 +60,23 @@ PRAZO_APERTO_S = 5.0
 PRAZO_ABERTURA_S = 15.0          # do `aceito` ao `aberta`
 PC_MUDO_S = 3.0                  # sem nada do computador: a conversa caiu
 PRAZO_FIM_S = 3.0                # depois de pedir o fim, quanto se espera a resposta
+# A volta depois de perder o computador. Ele espera o robô por 8 s.
+RETOMAR_S = 8.0
+PAUSA_RETOMAR_S = 0.5
+AVISO_QUEDA = "A conversa com a Hera caiu."
+# Sem voz dela por isto, "falando" volta a "ouvindo" (a tela e o balanço da cabeça).
+CALADA_S = 1.0
+# O corpo durante a conversa (ver o topo).
+NIVEIS_DE_MOVIMENTO = MOVIMENTOS_AO_VIVO
+MUDO_GESTO_S = 0.9               # antenas: 0,4 s de movimento + o servo assentar
+# O som mandado fica guardado por um tempo: é dele que sai o trecho do "Fala Garra".
+GUARDA_S = 15.0
+TRECHO_MAX_MS = 15_000
+MARGEM_TRECHO_MS = 250
+_QUEDAS = ("pc_lost", "connection_lost")
+# Recusas que nenhuma insistência muda: a conversa acabou lá, ou não é o computador.
+_RECUSAS_DEFINITIVAS = ("not_resumable", "bad_pc_proof", "unknown_device", "wrong_host",
+                        "disabled", "not_paired", "bad_hello", "bad_version", "bad_proof")
 
 
 # ─── a prova de posse (gêmea de companion/hera/credencial.py) ────────────────
@@ -139,6 +168,11 @@ class Saida:
     def tocando(self) -> bool:
         return self._relogio() < self._acaba_em
 
+    @property
+    def acaba_em(self) -> float:
+        """Quando o que já foi para o alto-falante termina de tocar."""
+        return self._acaba_em
+
     def por(self, pcm: bytes) -> None:
         self._pendente += pcm
         self._chegou_em = self._relogio()
@@ -204,14 +238,22 @@ class Canal:
     """O WebSocket com o computador. Síncrono, de propósito: vive na thread do laço."""
 
     def __init__(self, url: str, host: str, segredo: str, dispositivo: str, *,
-                 conectar: Callable[..., Any] | None = None, prazo_s: float = PRAZO_APERTO_S) -> None:
+                 conectar: Callable[..., Any] | None = None, prazo_s: float = PRAZO_APERTO_S,
+                 t0: float | None = None) -> None:
         self._url, self._host = url, host
         self._segredo, self._dispositivo = segredo, dispositivo
         self._conectar = conectar
         self._prazo = prazo_s
         self._ws = None
         self._seq = 0
-        self._t0 = time.monotonic()
+        # O relógio dos carimbos de som. Uma conexão de volta usa o da primeira:
+        # o trecho do "Fala Garra" vem nele.
+        self._t0 = time.monotonic() if t0 is None else t0
+
+    def outro(self) -> "Canal":
+        """Uma conexão nova para o mesmo computador, no mesmo relógio."""
+        return Canal(self._url, self._host, self._segredo, self._dispositivo,
+                     conectar=self._conectar, prazo_s=self._prazo, t0=self._t0)
 
     def _receber_json(self) -> dict:
         try:
@@ -226,8 +268,9 @@ class Canal:
             raise Recusado("bad_response")
         return mensagem
 
-    def abrir(self, como: str, pedido: str) -> None:
-        """Conecta e faz o aperto de mão. Levanta `Recusado` com o motivo."""
+    def abrir(self, como: str, pedido: str, retomar: str | None = None) -> None:
+        """Conecta e faz o aperto de mão. Levanta `Recusado` com o motivo.
+        `retomar`: a senha da conversa a que o robô volta depois de cair."""
         try:
             fabrica = self._conectar or conectar
             self._ws = fabrica(self._url, open_timeout=self._prazo, close_timeout=2.0,
@@ -236,9 +279,11 @@ class Canal:
             raise Recusado("unreachable") from None
         try:
             nonce = secrets.token_urlsafe(24)
-            self._ws.send(json.dumps({"t": "ola", "v": 1, "dispositivo": self._dispositivo,
-                                      "host": self._host, "nonce": nonce, "como": como,
-                                      "pedido": pedido[:500]}))
+            ola = {"t": "ola", "v": 1, "dispositivo": self._dispositivo, "host": self._host,
+                   "nonce": nonce, "como": como, "pedido": pedido[:500]}
+            if retomar is not None:
+                ola["retomar"] = retomar
+            self._ws.send(json.dumps(ola))
             desafio = self._receber_json()
             if desafio.get("t") == "fim":
                 raise Recusado(str(desafio.get("motivo") or "refused"))
@@ -259,12 +304,15 @@ class Canal:
             self.fechar()
             raise
 
-    def enviar_som(self, pcm: bytes) -> None:
+    def enviar_som(self, pcm: bytes) -> int:
+        """Manda um bloco do microfone. Devolve o carimbo (ms) que ele levou."""
         self._seq += 1
+        t_ms = int((time.monotonic() - self._t0) * 1000)
         try:
-            self._ws.send(quadro(MICROFONE, self._seq, int((time.monotonic() - self._t0) * 1000), pcm))
+            self._ws.send(quadro(MICROFONE, self._seq, t_ms, pcm))
         except Exception:
             raise CanalCaiu() from None
+        return t_ms
 
     def enviar(self, mensagem: dict) -> None:
         try:
@@ -310,7 +358,8 @@ FASE_CONECTANDO = "live_connecting"
 FASE_OUVINDO = "live_listening"
 FASE_PENSANDO = "live_thinking"
 FASE_FALANDO = "live_speaking"
-_FASES_DO_PC = {"ouvindo": FASE_OUVINDO, "pensando": FASE_PENSANDO, "falando": FASE_FALANDO}
+_FASES_DO_PC = {"ouvindo": FASE_OUVINDO, "pensando": FASE_PENSANDO, "falando": FASE_FALANDO,
+                "conectando": FASE_CONECTANDO}
 
 
 @dataclass
@@ -332,6 +381,10 @@ class Portas:
     # Um quadro da câmera: `(jpeg, prefs, idade_s)` ou algo com `.motivo` (visão
     # desligada, sem câmera, quadro velho). É o `Olho.quadro` do laço.
     olhar: Callable[[], Any] | None = None
+    # O corpo: "speaking" (balanço da cabeça), "thinking" (antenas para trás) ou
+    # "quiet" (sem balanço). Só se pede o que o nível de `movimento()` permite.
+    corpo: Callable[[str], Any] | None = None
+    movimento: Callable[[], str] | None = None
 
 
 class Atendente:
@@ -348,6 +401,14 @@ class Atendente:
         self._parar = threading.Event()
         self._motivo_parada = "robot_stop"
         self.ativo = False
+        # Depois de um "Fala Garra": `{"trecho": som | None}` para o laço passar
+        # ao Garra. `None` quando a conversa acabou por outro motivo.
+        self.ao_garra: dict | None = None
+        self._canal: Canal | None = None
+        self._nivel = "still"
+        self._fase_viva = FASE_CONECTANDO
+        self._falando_desde = 0.0
+        self._mudo_ate = 0.0
 
     def pedir_parada(self, motivo: str = "panel") -> None:
         """PARAR do painel (de outra thread): encerra a conversa em curso."""
@@ -363,6 +424,7 @@ class Atendente:
         microfone, como se a pessoa tivesse acabado de dizer. Medido: só o texto
         no histórico fez a Hera responder em 1 de 4 sessões; com o som, 4 de 4.
         """
+        self.ao_garra = None
         p = self._portas
         if p is None:
             self.indisponivel(chamado, "unsupported")
@@ -380,7 +442,7 @@ class Atendente:
         motivo, segundos, aberta = "unavailable", 0, False
         self._parar.clear()
         self.ativo = True
-        canal = Canal(cred["url"], cred["host"], cred["segredo"], cred["dispositivo"])
+        canal = self._canal = Canal(cred["url"], cred["host"], cred["segredo"], cred["dispositivo"])
         try:
             p.sem_movimento()
             p.fase(FASE_CONECTANDO)
@@ -390,26 +452,113 @@ class Atendente:
             except Recusado as recusa:
                 motivo = recusa.motivo
             else:
-                motivo, segundos, aberta = self._conduzir(canal, p, reenvio)
+                motivo, segundos, aberta = self._conduzir(canal, p, reenvio, chamado.como)
         except Exception:
             log.exception("a conversa ao vivo falhou")
             motivo = "robot_error"
         finally:
-            canal.fechar()
+            (self._canal or canal).fechar()
+            self._canal = None
             self.ativo = False
             p.trava_fala.release()
         if not aberta:
             self.indisponivel(chamado, motivo)
             return False
-        if motivo not in ("stop", "estop"):
+        if motivo not in ("stop", "estop", "handoff_garra"):
             # Três notas descendo: a conversa acabou, o microfone voltou para casa.
+            # Na troca para o Garra quem fala é o bipe dele.
             p.tocar(sinal(p.sr_out, subindo=False))
         self._publicar("voice.live.ended", destination=chamado.destino, reason=motivo,
                        seconds=segundos)
+        if motivo in _QUEDAS:
+            try:
+                self._falar(AVISO_QUEDA)
+            except Exception:
+                log.debug("aviso de queda da conversa ao vivo não foi falado", exc_info=True)
         return True
 
-    def _conduzir(self, canal: Canal, p: Portas,
-                  reenvio: np.ndarray | None = None) -> tuple[str, float, bool]:
+    # ── o corpo e a tela ─────────────────────────────────────────────────────
+    @staticmethod
+    def _nivel_de(p: Portas) -> str:
+        try:
+            nivel = p.movimento() if p.movimento is not None else "still"
+        except Exception:
+            nivel = "still"
+        return nivel if nivel in NIVEIS_DE_MOVIMENTO else "still"
+
+    def _mudar_fase(self, p: Portas, nova: str, agora: float) -> None:
+        """A fase da conversa (tela) e o que o corpo faz nela, pelo nível."""
+        if nova == self._fase_viva:
+            return
+        anterior, self._fase_viva = self._fase_viva, nova
+        p.fase(nova)
+        if nova == FASE_FALANDO:
+            self._falando_desde = agora
+        if self._nivel == "still" or p.corpo is None:
+            return
+        if nova == FASE_FALANDO:
+            acao = "speaking"           # o chip abafa o microfone enquanto ela fala
+        elif nova == FASE_PENSANDO and self._nivel == "expressive":
+            acao = "thinking"
+            # O servo das antenas é ouvido: o microfone não sobe enquanto elas se mexem.
+            self._mudo_ate = agora + MUDO_GESTO_S
+        elif anterior == FASE_FALANDO:
+            acao = "quiet"
+        else:
+            return
+        try:
+            p.corpo(acao)
+        except Exception:
+            log.debug("o corpo não atendeu na conversa ao vivo", exc_info=True)
+
+    # ── o som mandado, para o "Fala Garra" ───────────────────────────────────
+    @staticmethod
+    def _guardar(guardado: collections.deque, t_ms: int, onda: np.ndarray) -> None:
+        guardado.append((t_ms, np.asarray(onda, dtype=np.float32).copy()))
+        while guardado and t_ms - guardado[0][0] > GUARDA_S * 1000:
+            guardado.popleft()
+
+    @staticmethod
+    def _recortar(guardado: collections.deque, trecho: Any) -> np.ndarray | None:
+        """O som do intervalo `[a, b]` (ms, relógio daqui). Intervalo torto: nada."""
+        if not (isinstance(trecho, (list, tuple)) and len(trecho) == 2
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in trecho)):
+            return None
+        a, b = trecho
+        if b <= a or b - a > TRECHO_MAX_MS:
+            return None
+        blocos = [onda for t, onda in guardado if a - MARGEM_TRECHO_MS <= t <= b + MARGEM_TRECHO_MS]
+        return np.concatenate(blocos) if blocos else None
+
+    # ── a volta depois de perder o computador ────────────────────────────────
+    def _voltar(self, canal: Canal, p: Portas, como: str, senha: str) -> Canal | None:
+        """Tenta, por `RETOMAR_S`, voltar à mesma conversa. A prova de posse é
+        feita de novo; a senha só diz a qual conversa. `None` se não deu."""
+        canal.fechar()
+        log.info("a conversa ao vivo perdeu o computador; tentando voltar")
+        prazo = self._relogio() + RETOMAR_S
+        while self._relogio() < prazo:
+            if self._parar.is_set() or p.deve_parar():
+                return None
+            novo = canal.outro()
+            try:
+                novo.abrir(como, "", retomar=senha)
+            except Recusado as recusa:
+                if recusa.motivo in _RECUSAS_DEFINITIVAS:
+                    log.info("o computador não aceitou a volta (%s)", recusa.motivo)
+                    return None
+            except Exception:
+                log.debug("a volta à conversa ao vivo falhou", exc_info=True)
+                novo.fechar()
+            else:
+                log.info("a conversa ao vivo voltou")
+                self._publicar("voice.live.resumed", destination="hera")
+                return novo
+            time.sleep(PAUSA_RETOMAR_S)
+        return None
+
+    def _conduzir(self, canal: Canal, p: Portas, reenvio: np.ndarray | None = None,
+                  como: str = "alone") -> tuple[str, float, bool]:
         """O laço da conversa: microfone sobe, voz desce. `(motivo, segundos, abriu)`."""
         saida = Saida(p.tocar, p.sr_out, relogio=self._relogio)
         a_reenviar = np.asarray(reenvio, dtype=np.float32) if reenvio is not None else np.empty(0, np.float32)
@@ -421,9 +570,32 @@ class Atendente:
         pediu_fim_em: float | None = None
         motivo_local = "robot_stop"
         inicio = 0.0
+        senha: str | None = None
+        voltou = False
+        guardado: collections.deque = collections.deque()
+        self._nivel = self._nivel_de(p)
+        self._fase_viva = FASE_CONECTANDO
+        self._falando_desde = 0.0
+        self._mudo_ate = 0.0
 
         def duracao(agora: float) -> float:
             return round(agora - inicio, 1) if aberta else 0
+
+        def perdeu(agora: float) -> bool:
+            """O computador sumiu. `True` se voltou à mesma conversa."""
+            nonlocal canal, voltou, ultimo_contato
+            saida.cortar()
+            p.cortar()
+            if not aberta or pediu_fim_em is not None or voltou or not senha:
+                return False
+            voltou = True                # uma volta por conversa
+            self._mudar_fase(p, FASE_CONECTANDO, agora)
+            novo = self._voltar(canal, p, como, senha)
+            if novo is None:
+                return False
+            canal = self._canal = novo
+            ultimo_contato = self._relogio()
+            return True
 
         while True:
             agora = self._relogio()
@@ -446,14 +618,17 @@ class Atendente:
                     reenviar, a_reenviar = a_reenviar[:bloco_reenvio], a_reenviar[bloco_reenvio:]
                     proximo_reenvio += 0.064
                 mono = np.empty(0, np.float32)
+            if mono.size and agora < self._mudo_ate:
+                mono = np.zeros_like(mono)       # as antenas se mexendo: silêncio no lugar
             try:
                 if reenviar.size:
-                    canal.enviar_som(para_pcm16(reenviar, p.sr_in))
+                    self._guardar(guardado, canal.enviar_som(para_pcm16(reenviar, p.sr_in)), reenviar)
                 if mono.size and aberta and pediu_fim_em is None:
-                    canal.enviar_som(para_pcm16(mono, p.sr_in))
+                    self._guardar(guardado, canal.enviar_som(para_pcm16(mono, p.sr_in)), mono)
                 itens = canal.receber()
             except CanalCaiu:
-                p.cortar()
+                if perdeu(agora):
+                    continue
                 return ("pc_lost" if pediu_fim_em is None else motivo_local), duracao(agora), aberta
             for tipo, item in itens:
                 ultimo_contato = agora
@@ -462,14 +637,24 @@ class Atendente:
                         saida.por(item)
                     continue
                 t = item.get("t")
-                if t == "aberta" and not aberta:
-                    aberta, inicio = True, agora
+                if t == "aberta":
+                    nova_senha = item.get("retomar")
+                    if isinstance(nova_senha, str) and 0 < len(nova_senha) <= 64:
+                        senha = nova_senha
                     # Três notas subindo: daqui em diante o som da sala vai para a nuvem.
+                    # De novo quando a sessão caiu e o computador abriu outra.
                     p.tocar(sinal(p.sr_out, subindo=True))
-                    p.fase(FASE_OUVINDO)
-                    self._publicar("voice.live.started", destination="hera")
+                    self._mudar_fase(p, FASE_OUVINDO, agora)
+                    if not aberta:
+                        aberta, inicio = True, agora
+                        self._publicar("voice.live.started", destination="hera")
                 elif t == "estado" and item.get("fase") in _FASES_DO_PC:
-                    p.fase(_FASES_DO_PC[item["fase"]])
+                    self._mudar_fase(p, _FASES_DO_PC[item["fase"]], agora)
+                elif t == "cortar":
+                    # Falaram por cima dela: o servidor já a calou. Sai o que ainda
+                    # não foi para o alto-falante — sem `clear_player`, que pausaria
+                    # o microfone com a pessoa falando.
+                    saida.cortar()
                 elif t == "estop":
                     saida.cortar()
                     p.cortar()
@@ -482,16 +667,26 @@ class Atendente:
                 elif t == "olhar":
                     self._mandar_imagem(canal, p, item.get("id"))
                 elif t == "fim":
-                    if pediu_fim_em is None:
+                    motivo = str(item.get("motivo") or "closed")
+                    if motivo == "handoff_garra":
+                        # Quem fala agora é o Garra: ela para onde estiver.
+                        saida.cortar()
+                        p.cortar()
+                        self.ao_garra = {"trecho": self._recortar(guardado, item.get("trecho_ms"))}
+                    elif pediu_fim_em is None:
                         self._esperar_acabar(saida)
                     segundos = item.get("segundos")
-                    return (str(item.get("motivo") or "closed"),
-                            segundos if isinstance(segundos, (int, float)) else duracao(agora), aberta)
+                    return (motivo, segundos if isinstance(segundos, (int, float)) else duracao(agora),
+                            aberta)
             saida.avancar()
+            if (self._fase_viva == FASE_FALANDO and not saida.tocando
+                    and agora - max(saida.acaba_em, self._falando_desde) > CALADA_S):
+                self._mudar_fase(p, FASE_OUVINDO, agora)
             if not aberta and agora > prazo_abrir:
                 return "unavailable", 0, False
             if agora - ultimo_contato > PC_MUDO_S:
-                p.cortar()
+                if perdeu(agora):
+                    continue
                 return "pc_lost", duracao(agora), aberta
             if pediu_fim_em is not None and agora - pediu_fim_em > PRAZO_FIM_S:
                 return motivo_local, duracao(agora), aberta

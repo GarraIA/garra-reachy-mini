@@ -109,7 +109,7 @@ def test_receber_separa_som_de_mensagem_e_nao_bloqueia():
     itens = c.receber()
     assert time.monotonic() - inicio < 0.2
     tipos = [t for t, _ in itens]
-    assert ("json", {"t": "aberta"}) in itens and tipos.count("som") == 10
+    assert any(t == "json" and i["t"] == "aberta" for t, i in itens) and tipos.count("som") == 10
     assert b"".join(i for t, i in itens if t == "som") == FALA_DA_HERA
     assert c.receber() == []
 
@@ -247,6 +247,63 @@ def test_comportamento_ao_vivo_nao_mexe_e_para_os_micro_movimentos():
     assert g.estado == c.AO_VIVO and ctrl.pedidos == [] and ctrl.balanco == [False]
     for fase in ("live_connecting", "live_listening", "live_thinking", "live_speaking"):
         assert fase in c.FASES
+
+
+def _comportamento_de_mentira(wobbling=True, ativo=True):
+    from garra_reachy_mini.robo import comportamento as c
+
+    class Ctrl:
+        def __init__(self):
+            self.pedidos, self.balanco = [], []
+            self._aleatorio = __import__("random").Random(1)
+            self.eventos = type("E", (), {"publicar": lambda *a, **k: None})()
+
+        def submeter(self, nome, params, **k):
+            self.pedidos.append((nome, dict(params)))
+
+        def wobbling_pedir(self, ligado):
+            self.balanco.append(ligado)
+
+    import threading as _t
+    ctrl = Ctrl()
+    g = c.Comportamento(ctrl, ativo=ativo, wobbling=wobbling)
+    g.ao_vivo()
+    ctrl.balanco.clear()
+    return g, ctrl
+
+
+def test_corpo_ao_vivo_balanca_ao_falar_e_aquieta():
+    g, ctrl = _comportamento_de_mentira()
+    g.ao_vivo_corpo("speaking")
+    g.ao_vivo_corpo("quiet")
+    assert ctrl.balanco == [True, False] and ctrl.pedidos == []
+
+
+def test_corpo_ao_vivo_antenas_para_tras_ao_pensar_e_de_volta_quando_ela_fala():
+    g, ctrl = _comportamento_de_mentira()
+    g.ao_vivo_corpo("thinking")
+    g.ao_vivo_corpo("speaking")      # a volta das antenas fica abafada pela fala dela
+    g.ao_vivo_corpo("speaking")      # já no lugar: não mexe de novo
+    assert [n for n, _ in ctrl.pedidos] == ["move_antennas", "move_antennas"]
+    assert ctrl.pedidos[0][1]["left"] < 0 and ctrl.pedidos[1][1]["preset"] == "neutral"
+
+
+def test_corpo_ao_vivo_obedece_os_interruptores_do_dono():
+    g, ctrl = _comportamento_de_mentira(wobbling=False, ativo=False)
+    for acao in ("thinking", "speaking", "quiet", "outra coisa"):
+        g.ao_vivo_corpo(acao)
+    assert ctrl.pedidos == [] and True not in ctrl.balanco
+
+
+def test_nivel_de_movimento_da_conversa_ao_vivo():
+    from garra_reachy_mini import conversa
+    assert conversa.normalizar({})["live_motion"] == "still"
+    assert conversa.normalizar({"live_motion": "speaking"})["live_motion"] == "speaking"
+    assert conversa.normalizar({"live_motion": "dancando"})["live_motion"] == "still"
+    conf = conversa.perfil_atualizado({}, {"live_motion": "expressive"})
+    assert conf["live_motion"] == "expressive"
+    assert conversa.perfil_atualizado(conf, {"live_motion": 3})["live_motion"] == "expressive"
+    assert ao_vivo.NIVEIS_DE_MOVIMENTO == conversa.MOVIMENTOS_AO_VIVO
 
 
 def test_coordenador_corta_sem_turno():

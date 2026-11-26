@@ -119,6 +119,13 @@ PADRAO: dict[str, Any] = {
     # Quanto silêncio encerra a conversa ao vivo. O teto por conversa e por dia
     # é do computador, não daqui.
     "live_idle_close_s": 30,
+    # O corpo durante a conversa ao vivo. Fora da fala dela os servos são
+    # ouvidos pelo microfone, e iriam para a nuvem como se fosse alguém falando
+    # (medido em 25/11/2026: antenas ~17 dB acima do silêncio da sala, cabeça
+    # até 28 dB). still: parado. speaking: o balanço da cabeça só enquanto ela
+    # fala (o chip abafa o microfone nessa hora). expressive: também as antenas
+    # ao pensar, com o microfone calado enquanto elas se mexem.
+    "live_motion": "still",
     # ── microfone e fala ─────────────────────────────────────────────────────
     # Sensibilidade do microfone, de 1 (só voz forte e perto) a 10 (qualquer
     # som). 5 é o detector como sempre foi. Ver `segmentador.Segmentador.ajustar`.
@@ -232,6 +239,8 @@ FRASE_MAX = 64
 FRASES_ALTERNATIVAS_MAX = 4
 # Rigor do chamado da conversa ao vivo (ver `roteador.chamado`).
 RIGORES_AO_VIVO = ("strict", "greeting", "normal")
+# Níveis de movimento na conversa ao vivo (ver `live_motion`).
+MOVIMENTOS_AO_VIVO = ("still", "speaking", "expressive")
 
 # Visão: o provedor é um de três; o endpoint local é uma URL http(s) curta (a
 # ponte confere de novo se é da casa); nome de modelo é o que o Ollama e a
@@ -390,6 +399,8 @@ def _aplicar_ao_vivo(c: dict, bruto: dict) -> None:
             c["live_wake_spellings"] = grafias
     if bruto.get("live_wake_strictness") in RIGORES_AO_VIVO:
         c["live_wake_strictness"] = bruto["live_wake_strictness"]
+    if bruto.get("live_motion") in MOVIMENTOS_AO_VIVO:
+        c["live_motion"] = bruto["live_motion"]
 
 
 def normalizar(bruto: dict | None) -> dict:
