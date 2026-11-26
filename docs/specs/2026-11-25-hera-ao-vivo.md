@@ -266,6 +266,92 @@ produção, microfone e alto-falante reais, quadro do `FrameHub` do app; o chama
 O primeiro "o que você está vendo?" depois de 10 min sem visão paga a carga do
 modelo; ela avisa que está conferindo enquanto isso.
 
+### 6.5 Conversa natural (fase 5, 1.6.0.dev5)
+
+**O corpo e o microfone.** Medido no robô (25/11): o app falou uma frase com e
+sem o balanço da cabeça e mexeu antenas e cabeça em silêncio, enquanto o
+microfone gravava pelo mesmo caminho do app. Nível por bloco de 64 ms:
+
+| Janela | p50 | p90 | máx. |
+|---|---|---|---|
+| Silêncio da sala | −46,5 dB | −34,1 dB | −23,0 dB |
+| Robô falando, cabeça parada | −58,2 dB | −31,3 dB | −14,3 dB |
+| Robô falando, com balanço | −57,6 dB | −47,1 dB | −19,7 dB |
+| Antenas (3 vezes, em silêncio) | −31,6 a −39,8 dB | −25,5 a −29,3 dB | −21,5 dB |
+| Cabeça virando (2 vezes) | −27,3 / −40,2 dB | −18,9 / −36,0 dB | −13,7 dB |
+
+Fora da fala dela o corpo é ouvido: antenas ~17 dB acima do silêncio e a
+cabeça até 28 dB. Os dois iriam para a nuvem como se alguém falasse. Durante a
+fala dela o balanço não subiu o nível, porque o chip abafa o microfone enquanto
+o alto-falante toca. Daí os níveis de `live_motion`:
+
+| Nível | O que o corpo faz |
+|---|---|
+| `still` (padrão) | nada |
+| `speaking` | o balanço da cabeça só enquanto ela fala |
+| `expressive` | o mesmo, mais as antenas ao pensar, com o microfone mandando silêncio por 0,9 s |
+
+O detector do Garra abriu 5 trechos nessa gravação, e o Whisper "ouviu" neles
+"Tchau.", "Tchau, tchau.", "Can you give me another two?" e "Mólicos.". Por isso a
+**sentinela local** reconhece só "pare" e "Fala Garra", e a despedida fica com a
+transcrição da nuvem.
+
+**Sentinela.** O mesmo som que sobe para a nuvem passa, no PC, pelo
+`Segmentador` do Garra e pelo Whisper do servidor de voz (sem dica). Cada trecho
+de até 8 s vira, no máximo, o nome de um comando:
+
+- confiança média abaixo de 0,5 não vale;
+- o que ela disse nos últimos 4 s não conta (eco);
+- o texto não fica guardado nem registrado;
+- vale o comando que qualquer dos dois ouvidos ouvir primeiro.
+
+**"Fala Garra".** O PC manda no `fim` só o intervalo (`trecho_ms`, no relógio
+do robô). O robô guarda o som que mandou (15 s), abre a conversa com o Garra
+(bipe e gesto) e passa o trecho pelo `processar` de sempre. Com a sessão aberta,
+a margem de eco não o recusa. Se a nuvem ouviu antes, o PC espera até 1,5 s pelo
+trecho da sentinela.
+
+**Interrupção.** Fala da pessoa até 1,5 s depois da última fala dela conta
+como interrupção:
+
+- o PC tira da fila o som dela que ainda não foi ao robô e manda `cortar`;
+- o robô descarta o que ainda não foi ao alto-falante, sem `clear_player`, que
+  pausaria o microfone com a pessoa falando;
+- calada por 1 s, a tela e o corpo dela voltam a "ouvindo".
+
+A interrupção acústica, com voz humana por cima do chip, continua sem prova
+(6.1).
+
+**Reconexão.**
+
+- **Sessão da OpenAI caiu:** o PC abre outra uma vez, com o histórico que montou
+  (até 40 mensagens e 6000 caracteres, falas dela como `output_text`). Cada par
+  tem uma geração, e o que o par velho ainda disser não conta. A resposta do
+  Hermes a uma delegação da sessão morta fica de fora.
+- **Robô caiu:** a conversa espera 8 s. O robô volta por outra conexão, com a
+  prova de posse completa e a senha que veio no `aberta`, no mesmo relógio de
+  som. Uma volta por conversa.
+- **Envio preso:** um envio ao robô parado por mais de 2 s conta como conexão
+  morta, para não segurar o robô que voltou.
+- **Segunda queda:** a conversa acaba e o robô diz "A conversa com a Hera caiu.".
+
+Prova da reabertura (PC, sessão real, 24,3 s cobrados):
+
+| Passo | Resultado |
+|---|---|
+| "Oi Hera, meu nome é Ana e a minha cor favorita é verde." | "Entendido, Ana. Obrigada por compartilhar." |
+| Par WebRTC derrubado por baixo | sessão nova aberta 1,0 s depois. A API aceitou o histórico (`user` + `assistant`) |
+| "Hera, qual é o meu nome e qual é a minha cor favorita?" | "Seu nome é Ana e sua cor favorita é verde." |
+| Ao robô | `aberta`, ouvindo, falando, **conectando**, `aberta`, ouvindo, falando, `fim` |
+
+**Achado: o livro contava a menos.** Ao subir, qualquer processo que registrava
+a rota fechava como órfã toda sessão sem fim, inclusive a viva de outro
+processo. A suíte de testes fez isso com uma conversa do dono no ar: o fim real
+(max, 599 s, 12 delegações) se perdeu, e o livro guardou 322 s. Agora cada linha
+guarda o `pid` de quem a abriu, só fecha como órfã a de processo morto, e os
+testes não alcançam mais os dados reais. A linha foi corrigida, com cópia do
+banco antes.
+
 ## 7. O que falta, em fases
 
 | Fase | Entrega |
@@ -273,7 +359,7 @@ modelo; ela avisa que está conferindo enquanto isso.
 | 3 | lado do PC **[feito]**: liberação e tetos, credencial, canal com prova de posse, par WebRTC, condução da sessão, livro de uso, comando do dono, unit `garra-hera-bridge` (instalada desligada) |
 | 4 | modo ao vivo no robô **[feito]**: canal com prova, voz pelo `CoordenadorAudio`, corpo parado, PARAR, reenvio do chamado; implantado (1.6.0.dev3), desligado por padrão |
 | 4b | a Hera olha pela câmera **[feito]** (seção 6.4): um quadro por pedido, descrito pelo modelo de visão da casa; implantado (1.6.0.dev4) |
-| 5 | sentinela ("pare", troca, despedida), interrupção ou plano B, movimento, reconexão |
+| 5 | conversa natural **[feito]** (seção 6.5): sentinela local, "Fala Garra" com o trecho, interrupção (`cortar`), corpo por nível, reconexão das duas pontas; implantado (1.6.0.dev5). Falta a prova no robô com a sessão de verdade (pare, troca, volta) |
 | 6 | painel: cartão Hera, pílula, consumo |
 | 7 | documentação, validação física, versão 1.6.0 |
 

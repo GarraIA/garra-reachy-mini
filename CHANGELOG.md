@@ -67,6 +67,14 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
     - **Envio travado:** um envio ao robô preso por mais de 2 s conta como
       conexão morta, para não segurar o robô que voltou.
 
+### Fixed
+
+- **O livro da Hera não conta mais a menos.** Ao subir, um processo fechava
+  como órfã até a conversa viva de outro processo: a suíte de testes fez isso
+  com uma conversa do dono no ar, e o fim real (599 s) se perdeu. Agora só fica
+  órfã a sessão de processo morto (o livro guarda o `pid` de quem a abriu), e
+  os testes não alcançam os dados reais.
+
 ### Security
 
 - **O robô pareado não muda mais de endereço pela rede.** O painel do robô não
