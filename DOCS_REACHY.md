@@ -726,8 +726,12 @@ sai sempre, com o motivo.
 
 **A Hera não atende quando chamo.**
 "Hera" e "era" são o mesmo som, e no rigor estrito o nome só chama dito sozinho
-ou depois de uma saudação: diga "Oi Hera" ou "Hera." e espere as notas. O "Testar
-escuta" do cartão de Conversa mostra o que o robô entendeu.
+ou depois de uma saudação: diga "Oi Hera" ou "Hera." e espere as notas. Quando
+uma fala começa pelo nome e não chama por falta da saudação ("Hera, que horas
+são?"), o robô publica `voice.live.near_miss` (só a forma e o rigor, nunca o que
+foi dito), o registro do painel avisa na hora e o cartão da Hera mostra
+**Quase chamado**, com quantas vezes desde o último chamado e o que dizer. O
+"Testar escuta" do cartão de Conversa mostra o que o robô entendeu.
 
 **Falo por cima dela e ela não para.**
 Enquanto o alto-falante toca, o chip de áudio abafa o que chega fraco ao

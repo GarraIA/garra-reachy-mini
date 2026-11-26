@@ -138,6 +138,39 @@ def test_hera_pare_e_parada_e_nao_chamado(montar_cena, monkeypatch):
     assert cena.cerebro.recebidas == []
 
 
+# ─── quase chamado: o nome na frente, sem a saudação ─────────────────────────
+def test_nome_com_pedido_sem_saudacao_vira_evento_de_quase_chamado_sem_o_texto(montar_cena, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    cena = montar_cena(COM_HERA, ["Hera, qual é a senha do cofre?"], [])
+    cena.alguem_fala()
+    (quase,) = cena.eventos("voice.live.near_miss")
+    assert (quase["destination"], quase["match"], quase["strictness"], quase["missing"]) == \
+        ("hera", "leading", "strict", "greeting")
+    # Não chamou: nem a Hera nem o Garra receberam nada.
+    assert cena.eventos("voice.live.unavailable") == [] and cena.cerebro.recebidas == []
+    # E o que foi dito não ficou em evento nenhum nem no registro.
+    assert "cofre" not in str(cena.eventos()).lower()
+    assert "cofre" not in caplog.text.lower()
+
+
+@pytest.mark.parametrize("conversa,fala", [
+    (GARRA, "Hera, que horas são?"),                 # Hera desligada: nada a diagnosticar
+    (COM_HERA, "Era uma vez um rei."),               # o nome colado na frase
+    (COM_HERA, "Que horas são?"),
+])
+def test_sem_o_nome_com_pausa_ou_com_a_hera_desligada_nao_ha_quase(montar_cena, conversa, fala):
+    cena = montar_cena(conversa, [fala], [])
+    cena.alguem_fala()
+    assert cena.eventos("voice.live.near_miss") == []
+
+
+def test_o_chamado_de_verdade_nao_e_quase(montar_cena):
+    cena = montar_cena(COM_HERA, ["Oi Hera, que horas são?"], [])
+    chamar(cena)
+    assert cena.eventos("voice.live.near_miss") == []
+
+
 # ─── a ordem no fonte ────────────────────────────────────────────────────────
 MAIN = (Path(__file__).resolve().parent.parent / "garra_reachy_mini" / "main.py").read_text(encoding="utf-8")
 

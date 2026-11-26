@@ -272,6 +272,12 @@ function tratarEvento(e) {
     case 'voice.live.unavailable':
       carregarHera();
       break;
+    // Começou pelo nome da Hera e não chamou (faltou a saudação): o registro
+    // avisa na hora e o cartão explica. Só a forma — o que foi dito não vem.
+    case 'voice.live.near_miss':
+      registrarLog(t('hera.quase_log'));
+      carregarHera();
+      break;
     case 'voice.error':
       if (e.code) estado.erroDeVoz = { code: e.code, at: Date.now() / 1000 };
       pintarFase(estado.fase || {});
@@ -1246,6 +1252,17 @@ function pintarHeraEstado(d) {
       : t('hera.ultima_ok', { motivo: textoDe('hera.motivo_', ult.reason), duracao: duracaoCurta(ult.seconds),
                               hora: horaCurta(ult.at) }),
     !ult ? null : ult.kind === 'ended'));
+  // Quase chamado: começou pelo nome e não chamou por falta da saudação. Em
+  // alerta até o próximo chamado de verdade; depois fica só a hora, sem alarme.
+  const q = d.near_miss;
+  const recentes = q ? Number(q.since_last_call) || 0 : 0;
+  consumo.push(item(t('hera.quase'), !q ? t('hera.quase_nenhum')
+    : recentes ? t('hera.quase_recente', { n: recentes, hora: horaCurta(q.at) })
+      : t('hera.quase_antigo', { hora: horaCurta(q.at) }),
+    recentes ? false : null));
+  if (recentes) {
+    consumo.push(`<div class="dica">${esc(t(`hera.quase_dica_${q.match === 'alone' ? 'alone' : 'leading'}`))}</div>`);
+  }
   consumo.push(`<div class="dica">${esc(t('hera.estimado'))}</div>`);
   $('hera-consumo').innerHTML = consumo.join('');
 

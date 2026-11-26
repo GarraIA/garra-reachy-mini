@@ -1332,6 +1332,20 @@ class GarraReachyMini(ReachyMiniApp):
                     # O pedido veio junto: o som dele sobe para a sessão quando abrir.
                     pedido_ao_vivo["som"] = audio
                 return
+            # ── quase chamado da conversa ao vivo ─────────────────────────
+            # "Hera, que horas são?" no rigor estrito não chama (faltou a
+            # saudação), e quem falou só ouviu silêncio. O evento leva a FORMA
+            # — nunca o que foi dito — para o cartão da Hera explicar. O
+            # enunciado segue o caminho de sempre.
+            quase_hera = roteador.quase(
+                texto, rota_ao_vivo, capturado_em=capturado_em,
+                falou_ate=sessao_ativacao.falou_ate)
+            if quase_hera is not None:
+                log.info("Quase chamado da Hera (%s, rigor %s): faltou a saudação.",
+                         quase_hera.como, quase_hera.rigor)
+                controlador.eventos.publicar(
+                    "voice.live.near_miss", destination=quase_hera.destino,
+                    match=quase_hera.como, strictness=quase_hera.rigor, missing="greeting")
             # O e-stop é reconhecido ANTES da decisão e é o único bypass: um
             # "pare" que dependa de frase de ativação não é um e-stop.
             e_stop = bool(cfg.atalhos_locais

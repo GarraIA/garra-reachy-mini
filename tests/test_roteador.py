@@ -139,6 +139,59 @@ def test_com_a_conversa_ao_vivo_desligada_o_nome_nao_e_tirado():
     assert roteador.parada("Hera, pare", roteador.Rota.de({})) is None
 
 
+# ─── quase chamado: o nome na frente, sem a saudação ─────────────────────────
+# Medido em 26/11/2026: "Hera, que horas são?" não chamou no rigor estrito, e
+# nada no painel dizia por quê. `quase` responde "teria chamado no rigor normal,
+# mas não no de agora" — só a forma, nunca o que foi dito.
+@pytest.mark.parametrize("texto", [
+    "Hera, que horas são?",
+    "Era, tudo bem com você?",
+    "Hera. Me conta uma coisa",
+    "Era, sim.",
+])
+def test_estrito_o_nome_com_pedido_sem_saudacao_e_quase(texto):
+    assert roteador.chamado(texto, rota()) is None
+    assert roteador.quase(texto, rota()) == roteador.Quase("hera", "leading", "strict")
+
+
+@pytest.mark.parametrize("texto", [
+    "Hera", "Era.", "Oi Hera", "Oi Hera, que horas são?",    # chamam: não é quase
+    "Era uma vez um rei.", "Era isso que eu queria.",        # o nome colado na frase
+    "A Hera é uma deusa grega.", "Vera, vem cá.", "Oi, tudo bem?",
+    "Fala Garra, que horas são?", "", "   ", "...",
+])
+def test_o_que_chama_ou_nao_comeca_pelo_nome_com_pausa_nao_e_quase(texto):
+    assert roteador.quase(texto, rota()) is None, texto
+
+
+def test_so_com_saudacao_o_nome_sozinho_tambem_e_quase():
+    r = rota(live_wake_strictness="greeting")
+    assert roteador.quase("Hera.", r) == roteador.Quase("hera", "alone", "greeting")
+    assert roteador.quase("Hera, que horas são?", r).como == "leading"
+    assert roteador.quase("Oi Hera", r) is None
+
+
+def test_no_rigor_normal_e_com_a_hera_desligada_nunca_ha_quase():
+    assert roteador.quase("Hera, que horas são?", rota(live_wake_strictness="normal")) is None
+    assert roteador.quase("Hera, que horas são?", roteador.Rota.de({})) is None
+
+
+def test_hera_pare_e_parada_e_nao_quase():
+    assert roteador.quase("Hera, pare", rota()) is None
+    assert roteador.quase("Era, para!", rota()) is None
+
+
+def test_a_propria_voz_logo_depois_de_falar_nao_e_quase():
+    r = rota()
+    assert roteador.quase("Era, sim.", r, capturado_em=100.0, falou_ate=100.0 - MARGEM_ECO_S / 2) is None
+    assert roteador.quase("Era, sim.", r, capturado_em=100.0, falou_ate=100.0 - MARGEM_ECO_S - 0.1).como == "leading"
+
+
+def test_o_quase_nao_carrega_o_que_foi_dito():
+    q = roteador.quase("Hera, qual é a senha do cofre?", rota())
+    assert "cofre" not in repr(q) and set(vars(q)) == {"destino", "como", "rigor"}
+
+
 # ─── frases escolhidas pelo dono ─────────────────────────────────────────────
 def test_frase_e_grafias_personalizadas():
     r = rota(live_wake_phrase_text="Atena", live_wake_spellings=["Atenas", "A tena"],

@@ -26,7 +26,7 @@ Puro: sem relógio próprio, sem I/O, sem thread.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import conversa
 from .ativacao import MARGEM_ECO_S, _remover_prefixo, tokens
@@ -132,6 +132,33 @@ def chamado(texto: str, rota: Rota, *, capturado_em: float | None = None,
             return Chamado(rota.destino, forma, "alone")
         return Chamado(rota.destino, forma, "leading", _remover_prefixo(texto, n))
     return None
+
+
+@dataclass(frozen=True)
+class Quase:
+    """Quase chamou. Só a forma e o rigor — nada do que foi dito."""
+
+    destino: str
+    como: str            # "leading": o nome e um pedido · "alone": o nome sozinho
+    rigor: str           # o rigor que recusou
+
+
+def quase(texto: str, rota: Rota, *, capturado_em: float | None = None,
+          falou_ate: float | None = None) -> Quase | None:
+    """Quase chamou: teria chamado no rigor normal, e não chama no de agora.
+
+    É o "Hera, que horas são?" do rigor estrito: o nome e o pedido de uma vez,
+    sem a saudação. Quem fala só ouve silêncio; o painel precisa dizer por quê.
+    `None` quando chamou, quando não começa pelo nome com pausa, quando é
+    parada, quando é eco da própria voz ou quando o rigor já é o normal.
+    """
+    if not rota.habilitada or rota.rigor == "normal" or parada(texto, rota) is not None:
+        return None
+    if chamado(texto, rota, capturado_em=capturado_em, falou_ate=falou_ate) is not None:
+        return None
+    solto = chamado(texto, replace(rota, rigor="normal"),
+                    capturado_em=capturado_em, falou_ate=falou_ate)
+    return None if solto is None else Quase(rota.destino, solto.como, rota.rigor)
 
 
 def parada(texto: str, rota: Rota) -> str | None:

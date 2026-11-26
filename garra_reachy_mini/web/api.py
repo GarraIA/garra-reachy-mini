@@ -421,14 +421,30 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
     _CHAVES_DA_HERA = ("live_voice_enabled", "live_wake_phrase_text", "live_wake_phrase_alternatives",
                        "live_wake_strictness", "live_motion")
     _EVENTOS_DA_HERA = frozenset({"voice.live.ended", "voice.live.unavailable"})
+    # Um chamado reconhecido — abriu, ou o computador recusou: a frase estava
+    # certa. É dele para a frente que os quase-chamados contam.
+    _CHAMADOS_DA_HERA = frozenset({"voice.live.connecting", "voice.live.unavailable"})
+    _QUASE_DA_HERA = "voice.live.near_miss"
+
+    def _quase_da_hera(vistos: list[dict[str, Any]]) -> dict[str, Any] | None:
+        quase = [i for i, e in enumerate(vistos) if e["type"] == _QUASE_DA_HERA]
+        if not quase:
+            return None
+        chamados = [i for i, e in enumerate(vistos) if e["type"] in _CHAMADOS_DA_HERA]
+        desde = chamados[-1] if chamados else -1
+        ultimo = vistos[quase[-1]]
+        return {"match": ultimo.get("match"), "strictness": ultimo.get("strictness"),
+                "at": ultimo.get("timestamp"), "since_last_call": sum(1 for i in quase if i > desde)}
 
     @r.get("/hera/status")
     async def hera_status() -> dict[str, Any]:
         from .. import ao_vivo
         conf = _conversa_atual()
         salvo = armazenamento.carregar_config()
-        vistos = ctx.eventos.historico(50, tipos=_EVENTOS_DA_HERA) if ctx.eventos else []
-        ultima = vistos[-1] if vistos else None
+        vistos = ctx.eventos.historico(
+            100, tipos=_EVENTOS_DA_HERA | _CHAMADOS_DA_HERA | {_QUASE_DA_HERA}) if ctx.eventos else []
+        fins = [e for e in vistos if e["type"] in _EVENTOS_DA_HERA]
+        ultima = fins[-1] if fins else None
         base: dict[str, Any] = {
             "settings": {k: conf.get(k) for k in _CHAVES_DA_HERA},
             "paired": ao_vivo.credenciais(salvo, str(salvo.get("gateway_url") or "")) is not None,
@@ -436,6 +452,9 @@ def _rotas_integracoes(ctx: ContextoWeb) -> APIRouter:
                 "kind": "ended" if ultima["type"] == "voice.live.ended" else "unavailable",
                 "reason": ultima.get("reason"), "seconds": ultima.get("seconds"),
                 "at": ultima.get("timestamp")},
+            # Começou pelo nome e não chamou por falta da saudação: a forma e a
+            # hora, nunca o que foi dito (o evento nem carrega isso).
+            "near_miss": _quase_da_hera(vistos),
             "pc": None, "pc_error": None}
         resposta = await repassar("GET", "/api/hera/estado")
         try:

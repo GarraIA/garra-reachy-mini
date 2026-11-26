@@ -198,6 +198,32 @@ def test_a_ultima_conversa_vista_aqui_vem_dos_eventos(painel):
     assert ultima["at"]
 
 
+def _quase(painel, match="leading", rigor="strict"):
+    painel.ctrl.eventos.publicar("voice.live.near_miss", destination="hera", match=match,
+                                 strictness=rigor, missing="greeting")
+
+
+def test_o_quase_chamado_vem_dos_eventos_e_conta_desde_o_ultimo_chamado(painel):
+    assert painel.get("/api/robot/hera/status").json()["near_miss"] is None
+    _quase(painel)
+    _quase(painel)
+    quase = painel.get("/api/robot/hera/status").json()["near_miss"]
+    assert (quase["match"], quase["strictness"], quase["since_last_call"]) == ("leading", "strict", 2)
+    assert quase["at"]
+    # Chamou de verdade: o último quase continua à vista, mas não conta mais.
+    painel.ctrl.eventos.publicar("voice.live.connecting", destination="hera", match="alone")
+    quase = painel.get("/api/robot/hera/status").json()["near_miss"]
+    assert (quase["match"], quase["since_last_call"]) == ("leading", 0)
+    _quase(painel, match="alone", rigor="greeting")
+    quase = painel.get("/api/robot/hera/status").json()["near_miss"]
+    assert (quase["match"], quase["strictness"], quase["since_last_call"]) == ("alone", "greeting", 1)
+    # Recusado pelo computador também foi chamado: a frase estava certa.
+    painel.ctrl.eventos.publicar("voice.live.unavailable", destination="hera", reason="daily_limit", match="alone")
+    assert painel.get("/api/robot/hera/status").json()["near_miss"]["since_last_call"] == 0
+    # …e a última conversa segue sendo só encerrada ou recusada.
+    assert painel.get("/api/robot/hera/status").json()["last"]["kind"] == "unavailable"
+
+
 def test_computador_antigo_sem_a_rota_pede_atualizacao(painel):
     painel.pc.antigo = True
     corpo = painel.get("/api/robot/hera/status").json()
@@ -249,8 +275,18 @@ def test_o_cartao_grava_so_as_chaves_da_hera_pelo_caminho_da_conversa():
 def test_a_pilula_acompanha_a_fase_e_os_eventos_da_conversa_ao_vivo():
     fase = JS[JS.index("function pintarFase"):JS.index("function linhasDe")]
     assert "pintarPilulaDaHera()" in fase
-    for evento in ("voice.live.started", "voice.live.ended", "voice.live.unavailable"):
+    for evento in ("voice.live.started", "voice.live.ended", "voice.live.unavailable", "voice.live.near_miss"):
         assert f"case '{evento}':" in JS, evento
+
+
+def test_o_cartao_mostra_o_quase_chamado_com_a_dica_da_forma():
+    pintar = JS[JS.index("function pintarHeraEstado"):JS.index("async function carregarHera")]
+    assert "d.near_miss" in pintar
+    assert "hera.quase_dica_" in pintar                    # a dica muda com a forma ouvida
+    # O evento também vai para o registro do painel, na hora.
+    caso = JS[JS.index("case 'voice.live.near_miss':"):]
+    caso = caso[:caso.index("break;")]
+    assert "registrarLog(" in caso and "carregarHera()" in caso
 
 
 def test_o_consumo_e_estimativa_e_o_teto_e_do_computador():
@@ -269,6 +305,7 @@ def test_o_consumo_e_estimativa_e_o_teto_e_do_computador():
                       "disabled", "busy", "unreachable", "speech_output_disabled", "unavailable"]),
     ("hera.movimento_", ["still", "speaking", "expressive"]),
     ("hera.rigor_", ["strict", "greeting", "normal"]),
+    ("hera.quase", ["", "_nenhum", "_recente", "_antigo", "_dica_leading", "_dica_alone", "_log"]),
 ])
 def test_os_codigos_tem_texto_nos_dois_idiomas(prefixo, codigos):
     for idioma in ("en", "pt"):

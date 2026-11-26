@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.1 — 2026-11-26
+
+### Added
+
+- **Quase chamado da Hera.** No rigor estrito, "Hera, que horas são?" (o nome
+  e o pedido, sem saudação) não chama, e quem falou só ouvia silêncio. Agora o
+  robô publica `voice.live.near_miss` quando uma fala teria chamado no rigor
+  normal e não chama no atual (`roteador.quase`): só a forma (`leading` ou
+  `alone`), o rigor e o que faltou (`greeting`), nunca o que foi dito. O
+  registro do painel avisa na hora, e o cartão da Hera mostra **Quase chamado**:
+  quantas vezes desde o último chamado de verdade, a hora do último e o que
+  dizer. "Hera, pare" continua sendo parada, a própria voz do robô não conta e,
+  com a Hera desligada ou no rigor normal, não há evento.
+
 ## 1.6.0 — 2026-11-26
 
 O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
