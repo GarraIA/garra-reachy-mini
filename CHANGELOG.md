@@ -69,6 +69,12 @@ O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
 
 ### Fixed
 
+- **O fim da conversa ao vivo não vira mais "queda".** A ponte manda o `fim` e
+  fecha; o robô, que manda o microfone antes de ler, falhava no envio e tomava
+  o fim por queda (motivo `pc_lost` no evento, e agora diria "A conversa com a
+  Hera caiu."). O robô lê o que já chegou antes de concluir que o computador
+  sumiu, e a ponte espera até 2 s o robô fechar do lado dele. Visto na prova
+  no robô, 25/11/2026.
 - **O livro da Hera não conta mais a menos.** Ao subir, um processo fechava
   como órfã até a conversa viva de outro processo: a suíte de testes fez isso
   com uma conversa do dono no ar, e o fim real (599 s) se perdeu. Agora só fica
