@@ -620,16 +620,21 @@ class Atendente:
                 mono = np.empty(0, np.float32)
             if mono.size and agora < self._mudo_ate:
                 mono = np.zeros_like(mono)       # as antenas se mexendo: silêncio no lugar
+            # Falhar ao mandar não é queda enquanto houver o que ler: a ponte manda
+            # o `fim` e fecha logo em seguida, e quem manda o microfone antes de
+            # ler tomava toda despedida por queda (medido no robô, 25/11/2026).
+            caiu = False
             try:
                 if reenviar.size:
                     self._guardar(guardado, canal.enviar_som(para_pcm16(reenviar, p.sr_in)), reenviar)
                 if mono.size and aberta and pediu_fim_em is None:
                     self._guardar(guardado, canal.enviar_som(para_pcm16(mono, p.sr_in)), mono)
+            except CanalCaiu:
+                caiu = True
+            try:
                 itens = canal.receber()
             except CanalCaiu:
-                if perdeu(agora):
-                    continue
-                return ("pc_lost" if pediu_fim_em is None else motivo_local), duracao(agora), aberta
+                itens, caiu = [], True
             for tipo, item in itens:
                 ultimo_contato = agora
                 if tipo == "som":
@@ -678,6 +683,10 @@ class Atendente:
                     segundos = item.get("segundos")
                     return (motivo, segundos if isinstance(segundos, (int, float)) else duracao(agora),
                             aberta)
+            if caiu:
+                if perdeu(agora):
+                    continue
+                return ("pc_lost" if pediu_fim_em is None else motivo_local), duracao(agora), aberta
             saida.avancar()
             if (self._fase_viva == FASE_FALANDO and not saida.tocando
                     and agora - max(saida.acaba_em, self._falando_desde) > CALADA_S):

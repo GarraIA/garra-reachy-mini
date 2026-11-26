@@ -173,3 +173,20 @@ def test_senha_de_outra_conversa_nao_volta_a_nada(servidor):
     with pytest.raises(ao_vivo.Recusado) as erro:
         c.abrir("alone", "", retomar="senha-de-uma-conversa-que-acabou")
     assert erro.value.motivo == "not_resumable"
+
+
+def test_depois_do_fim_a_ponte_espera_o_robo_fechar(servidor):
+    """O robô que ainda manda microfone logo depois do `fim` não encontra a porta
+    fechada: quem fecha é ele, depois de ler o fim (ver o mesmo caso em ao_vivo)."""
+    host, segredo = servidor
+    c = ao_vivo.Canal(f"ws://{host}{ao_vivo.CAMINHO}", host, segredo, "garra-sala")
+    c.abrir("alone", "")
+    try:
+        _ate(c, lambda m: m["t"] == "aberta")
+        c.enviar({"t": "parar"})
+        assert _ate(c, lambda m: m["t"] == "fim")["motivo"] == "robot_stop"
+        for _ in range(6):                              # ~0,5 s de microfone depois do fim
+            c.enviar_som(b"\x01\x00" * 1024)
+            time.sleep(0.08)
+    finally:
+        c.fechar()

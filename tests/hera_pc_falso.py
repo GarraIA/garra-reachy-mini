@@ -45,6 +45,7 @@ class PcFalso:
         self.carimbos: list[int] = []        # t_ms de cada quadro de som, como o robô carimbou
         self.conectou: list[str] = []
         self.fechado = False
+        self.fechando = False      # mandou o fim e fechou: nada sobe, o que já veio ainda se lê
         self._fila: collections.deque = collections.deque()
         self._trava = threading.Lock()
         self._ola: dict | None = None
@@ -58,13 +59,13 @@ class PcFalso:
             if not self.aceita_volta:
                 raise ConnectionRefusedError("o computador não atende")
             # uma conexão nova: a fila velha morreu com a anterior
-            self.fechado, self._ola = False, None
+            self.fechado, self.fechando, self._ola = False, False, None
             with self._trava:
                 self._fila.clear()
         return self
 
     def send(self, mensagem) -> None:
-        if self.fechado:
+        if self.fechado or self.fechando:
             raise Fechada()
         if isinstance(mensagem, (bytes, bytearray)):
             lido = ao_vivo.ler_quadro(bytes(mensagem))
@@ -112,7 +113,7 @@ class PcFalso:
                 if self._fila:
                     item = self._fila.popleft()
                     return item if isinstance(item, (bytes, bytearray)) else json.dumps(item)
-            if self.fechado:
+            if self.fechado or self.fechando:
                 raise Fechada()
             agora = time.monotonic()
             if self.pings and self._ola is not None and agora - self._ultimo_ping > 0.5:
@@ -124,6 +125,11 @@ class PcFalso:
 
     def close(self) -> None:
         self.fechado = True
+
+    def encerrar(self, motivo: str, segundos: int = 3) -> None:
+        """Como a ponte de verdade: manda o fim e fecha a conexão logo em seguida."""
+        self.empurrar({"t": "fim", "motivo": motivo, "segundos": segundos})
+        self.fechando = True
 
     def cair(self) -> None:
         """O Wi-Fi caiu: a conexão morre sem fim nem aviso."""

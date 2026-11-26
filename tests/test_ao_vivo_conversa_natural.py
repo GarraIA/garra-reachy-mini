@@ -35,8 +35,9 @@ def esperar(condicao, segundos: float = 5.0) -> bool:
 class Robo:
     """As portas do laço de voz, com um microfone que entrega 64 ms a cada 64 ms."""
 
-    def __init__(self, nivel: str = "still") -> None:
+    def __init__(self, nivel: str = "still", continuo: bool = False) -> None:
         self.nivel = nivel
+        self.continuo = continuo     # um bloco a cada volta: o robô sempre manda antes de ler
         self.tocadas: list[np.ndarray] = []
         self.cortes = 0
         self.fases: list[str] = []
@@ -50,7 +51,7 @@ class Robo:
 
     def ler_mono(self) -> np.ndarray:
         agora = time.monotonic()
-        if agora < self._proximo:
+        if agora < self._proximo and not self.continuo:
             return np.empty(0, np.float32)
         self._proximo = agora + BLOCO / SR
         self.blocos_lidos += 1
@@ -232,6 +233,22 @@ def test_sessao_reaberta_no_pc_toca_de_novo_as_notas_e_volta_a_ouvir(conversa):
     assert esperar(lambda: c.robo.fases[-1] == ao_vivo.FASE_OUVINDO)
     c.terminar()
     assert c.robo.tipos().count("voice.live.started") == 1
+
+
+# ─── o fim que chega junto com o fechamento ──────────────────────────────────
+@pytest.mark.parametrize("motivo", ["idle", "farewell", "max"])
+def test_fim_seguido_do_fechamento_vale_o_motivo_do_pc_e_nao_e_queda(conversa, motivo):
+    """Medido no robô (25/11): a ponte manda o fim e fecha; o robô, que manda o
+    microfone antes de ler, falhava no envio, tomava aquilo por queda e dizia
+    "A conversa com a Hera caiu." depois de toda despedida."""
+    c = conversa(Robo(continuo=True))
+    assert esperar(lambda: len(c.pc.som) >= 3)
+    c.pc.encerrar(motivo)
+    c.thread.join(8)
+    (fim,) = [k for t, k in c.robo.eventos if t == "voice.live.ended"]
+    assert fim["reason"] == motivo
+    assert c.robo.faladas == []                      # nada de aviso de queda
+    assert c.pc.tipos().count("ola") == 1            # nem tentativa de volta
 
 
 # ─── reconexão: o robô perdeu o computador ───────────────────────────────────

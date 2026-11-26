@@ -707,6 +707,9 @@ class Conversa:
 # ─── a rota ──────────────────────────────────────────────────────────────────
 ESPERA_APERTO_S = 5.0
 ROBO_MUDO_S = 5.0
+# Depois do `fim`, quem fecha é o robô, depois de lê-lo. Fechando primeiro, o envio
+# de microfone que estava a caminho falhava lá, e o robô tomava o fim por queda.
+ESPERA_DESPEDIDA_S = 2.0
 
 
 def _host_e_meu(host: str) -> bool:
@@ -801,7 +804,7 @@ def registrar(app: Any, *, ponte: Any = None, abrir_par: Callable[..., Any] | No
                     conduzindo = asyncio.ensure_future(conversa.conduzir())
                     ouvindo = asyncio.ensure_future(_escutar_robo(ws, conversa, robo))
                     await conduzindo
-                    ouvindo.cancel()
+                    await _despedir(ouvindo)
                 finally:
                     ativas.pop(conversa.retomada, None)
             await ws.close()
@@ -821,8 +824,16 @@ def registrar(app: Any, *, ponte: Any = None, abrir_par: Callable[..., Any] | No
         conversa.reatar(robo)
         ouvindo = asyncio.ensure_future(_escutar_robo(ws, conversa, robo))
         await conversa.terminou()
-        ouvindo.cancel()
+        await _despedir(ouvindo)
         await ws.close()
+
+    async def _despedir(ouvindo: asyncio.Task) -> None:
+        """O `fim` já foi; espera o robô fechar do lado dele (o ouvinte acaba)."""
+        try:
+            await asyncio.wait_for(asyncio.shield(ouvindo), ESPERA_DESPEDIDA_S)
+        except asyncio.TimeoutError:
+            pass
+        ouvindo.cancel()
 
     async def _escutar_robo(ws: WebSocket, conversa: Conversa, robo: _RoboWS) -> None:
         while True:
