@@ -446,6 +446,90 @@ danças.
 
 ---
 
+### A conversa ao vivo com a Hera (1.6.0)
+
+Um segundo chamado. "Fala Garra" abre um turno com o agente escolhido, como
+sempre. **"Hera"** abre uma conversa de voz em tempo real com a Hera, a mesma do
+site do dono: OpenAI Live (`gpt-live-1`, voz `bossa`). Todo trabalho de verdade
+é delegado em texto ao Hermes, com a mesma memória. O desenho, as decisões e as
+medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
+
+```
+pessoa ─► robô (chamado reconhecido aqui) ─► PC :8126 (prova de posse nos dois sentidos)
+             ▲  PCM 16 kHz nos dois sentidos     │ WebRTC (companion) ─► OpenAI Live
+             └──────────────────────────────────┘ delegação em texto ─► Hermes
+```
+
+O robô é só o terminal de áudio. A chave da OpenAI, os tetos, o Hermes e o que
+foi dito ficam no computador. Para o robô vão só a fase, o "pare", o fim e,
+quando pedem para ela olhar, o pedido de UM quadro da câmera (sem a pergunta).
+
+**Ligar (no computador, uma vez):**
+
+```bash
+python -m companion.hera liberar                                # o dono libera
+python -m companion.hera parear --painel http://<ip-do-robo>:8042
+python -m companion.hera perfil                                 # persona e contexto da voz
+systemctl --user enable --now garra-hera-bridge                 # a ponte da Hera
+python -m companion.hera status                                 # confere tudo
+```
+
+Depois, no painel do robô, em **Ajustes › Hera — conversa ao vivo**, marque
+"Ouvir o chamado da Hera neste robô".
+
+**Chamar.** Diga "Hera." sozinho e espere as três notas subindo, ou diga
+saudação + nome com o pedido junto: "Oi Hera, que horas são?". "Hera" e "era"
+são o mesmo som, então no rigor padrão (estrito) "Hera, que horas são?" sem
+saudação não chama, e "Era uma vez…" nunca chama.
+
+**Durante a conversa:**
+
+| Você | O que acontece |
+|---|---|
+| fala por cima dela | o servidor a cala e o robô joga fora o que ainda não tocou. Pelo chip de áudio do robô isso **ainda não foi provado com voz humana** |
+| "pare" | os motores param e a conversa acaba (ouvido pela nuvem ou pela sentinela do PC) |
+| "Fala Garra, apaga a luz" | a conversa passa ao Garra, que recebe "apaga a luz" |
+| "tchau", "pode desligar" | ela se despede e a conversa acaba |
+| silêncio de 30 s | acaba (três notas descendo) |
+| PARAR no painel | acaba na hora |
+
+**Privacidade.** O som da sala só sai de casa entre as três notas subindo e as
+três descendo. Nada é gravado. O robô não recebe transcrição, porque o painel
+dele não pede senha. O livro de uso no PC guarda tempo e motivo, nunca texto. A
+sentinela local transcreve só para achar "pare" e "Fala Garra", e descarta o
+texto.
+
+**O corpo** (`live_motion`, no cartão): parado (padrão), balançar enquanto ela
+fala, ou expressivo. Medido no robô: fora da fala dela os servos aparecem no
+microfone e iriam para a nuvem como se alguém falasse.
+
+**Tetos e custo** (só o computador aumenta: `python -m companion.hera limite
+<nome> <segundos>`, por exemplo `limite daily_s 2700`):
+
+| Teto | Padrão |
+|---|---|
+| por conversa | 10 min |
+| por dia | 30 min |
+| por mês | 5 h |
+| chamados por hora | 12 |
+| chamados vazios seguidos | 3 em 10 min suspendem o chamado por 10 min |
+
+A API cobra cerca de US$ 0,05 por minuto de sessão. O cartão mostra o consumo do
+dia e do mês com o custo estimado.
+
+**Quedas.**
+
+- **Sessão da OpenAI caiu:** o PC abre outra uma vez, com o histórico.
+- **Robô perdeu o PC:** volta à mesma conversa em até 8 s, com a prova completa.
+- **Segunda queda:** a conversa acaba e o robô diz "A conversa com a Hera caiu.".
+
+**Desligar.** Há três jeitos, do mais leve ao mais completo:
+
+1. **Só neste robô:** no painel, desmarque o chamado.
+2. **Para todos os robôs:** `python -m companion.hera desligar` (ou
+   `GARRA_HERA=0` no ambiente do companion).
+3. **Parar a ponte da Hera:** `systemctl --user disable --now garra-hera-bridge`.
+
 ## 9. Segurança
 
 ### Parada de emergência
@@ -624,6 +708,37 @@ e ajuste os candidatos em `EXPRESSOES` no `robo/catalogo.py`.
 
 ---
 
+**"A Hera não está disponível agora."**
+O robô reconheceu o chamado e a conversa não pôde abrir. O motivo está na pílula
+e no "Último chamado" do cartão da Hera (Ajustes):
+
+| Motivo | O que fazer |
+|---|---|
+| não pareada | `python -m companion.hera parear --painel http://<ip-do-robo>:8042` |
+| saída de voz desligada | ligue "Falar respostas" no cartão de Conversa |
+| não liberada no computador | `python -m companion.hera liberar` |
+| teto do dia ou do mês | o dia zera à meia-noite; aumentar é no computador (`limite`) |
+| pausada por chamados falsos | espere 10 min; a TV ou a conversa da sala estão parecendo chamado |
+| computador fora de alcance | `systemctl --user status garra-reachy-companion garra-hera-bridge` |
+
+O aviso falado sai no máximo a cada 30 s; o evento `voice.live.unavailable`
+sai sempre, com o motivo.
+
+**A Hera não atende quando chamo.**
+"Hera" e "era" são o mesmo som, e no rigor estrito o nome só chama dito sozinho
+ou depois de uma saudação: diga "Oi Hera" ou "Hera." e espere as notas. O "Testar
+escuta" do cartão de Conversa mostra o que o robô entendeu.
+
+**Falo por cima dela e ela não para.**
+Enquanto o alto-falante toca, o chip de áudio abafa o que chega fraco ao
+microfone. Fale mais perto ou mais alto, espere ela terminar e diga "pare", ou
+use o PARAR do painel, que vale sempre.
+
+**A conversa caiu no meio.**
+Ela volta uma vez sozinha, a da OpenAI e a do robô com o PC. Na segunda queda o
+robô avisa. Quedas seguidas apontam o Wi-Fi: o PC no cabo ajuda. O log do
+companion diz qual lado caiu.
+
 ## 12. Mapa dos arquivos
 
 | Arquivo | Responsabilidade |
@@ -651,3 +766,12 @@ e ajuste os candidatos em `EXPRESSOES` no `robo/catalogo.py`.
 | `static/reachy.{html,css,js}` | Painel, com os tokens `--garra-*` do console |
 | `garra_reachy_mini.mcp/servidor.py` | Servidor MCP stdio; cliente HTTP da API |
 | `main.py` | Loop de voz + montagem de tudo; dono único do robô |
+| `roteador.py` | O chamado da Hera, decidido antes do portão do "Fala Garra" |
+| `ao_vivo.py` | A conversa ao vivo no robô: canal com prova de posse, som, corpo por nível, a volta depois de cair, o trecho do "Fala Garra" |
+| `companion/hera/canal.py` | **No computador**: a rota `/api/hera/ao-vivo` e a condução da conversa (tetos, delegação, interrupção, reconexão) |
+| `companion/hera/par.py` | **No computador**: o par WebRTC com a OpenAI Live (o "navegador sem tela") |
+| `companion/hera/sentinela.py` | **No computador**: o Whisper local ouvindo "pare" e "Fala Garra" |
+| `companion/hera/olhar.py` | **No computador**: "Hera, o que você está vendo?" — um quadro, descrito pelo olho da casa |
+| `companion/hera/livro.py` | **No computador**: o uso de cada conversa e os tetos; nunca o que foi dito |
+| `companion/hera/registro.py` | **No computador**: liberação, nível de ferramentas e tetos (só o PC aumenta) |
+| `companion/hera/estado.py` | **No computador**: o que o cartão do painel pode saber (consumo, tetos, liberação) |

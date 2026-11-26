@@ -361,7 +361,7 @@ banco antes.
 | 4b | a Hera olha pela câmera **[feito]** (seção 6.4): um quadro por pedido, descrito pelo modelo de visão da casa; implantado (1.6.0.dev4) |
 | 5 | conversa natural **[feito]** (seção 6.5): sentinela local, "Fala Garra" com o trecho, interrupção (`cortar`), corpo por nível, reconexão das duas pontas; implantado (1.6.0.dev5). Falta a prova no robô com a sessão de verdade (pare, troca, volta) |
 | 6 | painel **[feito]**: cartão "Hera — conversa ao vivo" em Ajustes (chamado, frase, rigor, `live_motion`), pílula de estado e fase, consumo do dia e do mês do livro do PC (`GET /api/hera/estado` → `GET /api/robot/hera/status`); implantado (1.6.0.dev7) |
-| 7 | documentação, validação física, versão 1.6.0 |
+| 7 | fechamento **[feito]**: guia da Hera no `DOCS_REACHY.md`; bancada e 2 h de recursos em `docs/validacao-1.6.0.md` (a medição achou e corrigiu um vazamento da câmera de +25 MB/h, anterior à Hera; com a 1.6.0, 2 h sem crescimento); versão 1.6.0 no robô e no PC. Falta o roteiro com voz humana (`docs/validacao-1.6.0.md`, seção 2) |
 
 Dependem do dono: os testes com voz humana (inclusive a interrupção, seção 6.1)
 e a revisão dos arquivos de memória do Hermes antes de ligar a Hera no robô. O
