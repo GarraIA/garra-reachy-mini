@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.6.0 — em desenvolvimento
+## 1.6.0 — 2026-11-26
 
 O desenho e as medições estão em `docs/specs/2026-11-25-hera-ao-vivo.md`.
 
