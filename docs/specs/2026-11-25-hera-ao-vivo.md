@@ -250,6 +250,22 @@ Achado ao preparar a prova: o robô estava com a visão ligada, provedor
 Garra". O provedor passou para "automático" (local primeiro; nuvem segue
 desligada).
 
+Prova no robô (25/11, 1.6.0.dev4 instalado; `Atendente` e `Olho.quadro` de
+produção, microfone e alto-falante reais, quadro do `FrameHub` do app; o chamado
+"Oi Hera, o que você está vendo?" reenviado como som, como em 6.3):
+
+| Medida | Resultado |
+|---|---|
+| Quadro pedido ao robô | 1 (121 KB), evento `vision.requested` com `source: hera` |
+| Descrição pelo modelo local (`qwen2.5vl:7b`), frio | ~14 s da delegação à descrição, quase tudo carga do modelo na GPU |
+| Idem, quente (carregado nos últimos 10 min), medido à parte | 1,0–1,7 s |
+| Primeira fala dela (antes da descrição) | 4,9 s após o início ("estou conferindo agora, só um segundo") |
+| O que o alto-falante tocou (transcrito) | "Vejo uma cozinha, tem um refrigerador, armários, uma porta branca e um carrinho de compras com alguns itens. E dá pra notar um braço com uma camisa de manga longa aparecendo no canto direito." |
+| O Hermes | não foi chamado (1 delegação, atendida pelo olho) |
+
+O primeiro "o que você está vendo?" depois de 10 min sem visão paga a carga do
+modelo; ela avisa que está conferindo enquanto isso.
+
 ## 7. O que falta, em fases
 
 | Fase | Entrega |
