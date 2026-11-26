@@ -114,6 +114,16 @@ def controlador_simulado():
     ctrl.encerrar(timeout=2.0)
 
 
+def pytest_configure(config):
+    """Nenhum teste escreve nos dados do dono (~/.local/share/garra-reachy). Medido
+    em 25/11/2026: a suíte, rodando com uma conversa ao vivo no ar, abriu o livro
+    de verdade e fechou como órfã a conversa do dono. Direto no ambiente, e não
+    por `monkeypatch`: vale até para o teste que desfaz o próprio monkeypatch."""
+    import os
+    import tempfile
+    os.environ["GARRA_REACHY_DADOS"] = tempfile.mkdtemp(prefix="garra-testes-dados-")
+
+
 @pytest.fixture(autouse=True)
 def _sem_spotatui_de_verdade(monkeypatch):
     """Nenhum teste alcança o spotatui instalado neste PC por descuido: quem

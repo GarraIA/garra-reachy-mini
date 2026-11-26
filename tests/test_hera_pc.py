@@ -299,6 +299,67 @@ def test_sessoes_sem_fim_viram_orfas_no_arranque():
     assert lv.pode_abrir(LIMITES, agora=T0 + 60) == (True, None)
 
 
+def _processo_morto() -> int:
+    import subprocess
+    import sys
+    filho = subprocess.Popen([sys.executable, "-c", "pass"])
+    filho.wait()
+    return filho.pid
+
+
+def _dono(lv, pid):
+    import sqlite3
+    with sqlite3.connect(lv.arquivo) as banco:
+        banco.execute("UPDATE sessoes SET pid = ?", (pid,))
+
+
+def test_sessao_viva_de_outro_processo_nao_vira_orfa():
+    """Medido em 25/11/2026: a suíte de testes, rodando com uma conversa no ar,
+    marcou a conversa do dono como órfã — e o fim verdadeiro dela (599 s) se
+    perdeu, deixando o teto do dia contar a menos. Só morre de órfã a sessão de
+    processo que morreu."""
+    lv = livro.Livro()
+    sid = lv.abrir(dispositivo="garra-sala", nivel="web", como="alone", agora=T0)
+    _dono(lv, os.getppid())                         # o processo pai está vivo
+    assert lv.fechar_orfas(agora=T0 + 50) == []
+    lv.fechar(sid, segundos=599.0, motivo="max", agora=T0 + 600)
+    (linha,) = lv.sessoes()
+    assert (linha["motivo"], linha["segundos"]) == ("max", 599.0)
+
+
+def test_sessao_de_processo_morto_vira_orfa():
+    lv = livro.Livro()
+    lv.abrir(dispositivo="garra-sala", nivel="web", como="alone", agora=T0, sessao_openai="sess_1")
+    _dono(lv, _processo_morto())
+    assert [o["sessao_openai"] for o in lv.fechar_orfas(agora=T0 + 50)] == ["sess_1"]
+    assert lv.sessoes()[0]["motivo"] == "orphan_reaped"
+
+
+def test_livro_antigo_ganha_a_coluna_do_dono_e_a_linha_sem_dono_vira_orfa(pasta):
+    import sqlite3
+    arquivo = pasta / "dados" / "hera" / "sessoes.sqlite"
+    arquivo.parent.mkdir(parents=True)
+    with sqlite3.connect(arquivo) as banco:
+        banco.execute(
+            "CREATE TABLE sessoes (id INTEGER PRIMARY KEY AUTOINCREMENT, dispositivo TEXT NOT NULL, "
+            "nivel TEXT NOT NULL, como TEXT NOT NULL, inicio REAL NOT NULL, fim REAL, segundos REAL, "
+            "motivo TEXT, delegacoes INTEGER NOT NULL DEFAULT 0, sessao_openai TEXT)")
+        banco.execute("INSERT INTO sessoes (dispositivo, nivel, como, inicio) VALUES ('garra-sala','web','alone',?)",
+                      (T0,))
+    lv = livro.Livro()
+    assert len(lv.fechar_orfas(agora=T0 + 10)) == 1
+    sid = lv.abrir(dispositivo="garra-sala", nivel="web", como="alone", agora=T0 + 20)
+    with sqlite3.connect(arquivo) as banco:
+        (pid,) = banco.execute("SELECT pid FROM sessoes WHERE id = ?", (sid,)).fetchone()
+    assert pid == os.getpid()
+
+
+def test_os_testes_nao_tocam_os_dados_reais_do_dono(monkeypatch):
+    monkeypatch.undo()                               # nem a fixture deste arquivo
+    real = os.path.expanduser("~/.local/share/garra-reachy")
+    assert os.path.realpath(livro.pasta_dados()) != os.path.realpath(real)
+
+
 # ─── o contrato com a ponte do Painel-Local ──────────────────────────────────
 def _ponte_do_painel():
     """O `server.py` da ponte de voz, se estiver nesta máquina e já tiver o perfil de canal."""

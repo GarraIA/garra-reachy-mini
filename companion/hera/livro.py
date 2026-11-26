@@ -6,7 +6,10 @@ linhas que os tetos são aplicados ANTES de abrir a próxima. Nenhuma palavra do
 que foi dito entra aqui.
 
 SQLite num arquivo 0600; uma conexão curta por operação, para servir a qualquer
-thread sem estado compartilhado.
+thread sem estado compartilhado. Cada linha sabe o processo que a abriu: só é
+órfã a sessão cujo processo morreu (medido em 25/11/2026: outro processo, ao
+subir, fechou como órfã a conversa viva do dono, e o fim verdadeiro se perdeu —
+o teto do dia passou a contar a menos).
 """
 
 from __future__ import annotations
@@ -31,6 +34,18 @@ def pasta_dados() -> Path:
     return Path(os.environ.get("GARRA_REACHY_DADOS", "~/.local/share/garra-reachy")).expanduser()
 
 
+def _de_outro_processo_vivo(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                                  # existe, só não é nosso
+    return True
+
+
 class Livro:
     def __init__(self, arquivo: Path | None = None) -> None:
         self.arquivo = arquivo or pasta_dados() / "hera" / "sessoes.sqlite"
@@ -46,7 +61,11 @@ class Livro:
             "CREATE TABLE IF NOT EXISTS sessoes ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, dispositivo TEXT NOT NULL, nivel TEXT NOT NULL, "
             "como TEXT NOT NULL, inicio REAL NOT NULL, fim REAL, segundos REAL, motivo TEXT, "
-            "delegacoes INTEGER NOT NULL DEFAULT 0, sessao_openai TEXT)")
+            "delegacoes INTEGER NOT NULL DEFAULT 0, sessao_openai TEXT, pid INTEGER)")
+        colunas = {linha["name"] for linha in banco.execute("PRAGMA table_info(sessoes)")}
+        if "pid" not in colunas:                    # livro de antes da coluna
+            with banco:
+                banco.execute("ALTER TABLE sessoes ADD COLUMN pid INTEGER")
         return banco
 
     # ── escrita ──────────────────────────────────────────────────────────────
@@ -54,8 +73,8 @@ class Livro:
               sessao_openai: str | None = None) -> int:
         with closing(self._abrir_banco()) as banco, banco:
             cursor = banco.execute(
-                "INSERT INTO sessoes (dispositivo, nivel, como, inicio, sessao_openai) VALUES (?,?,?,?,?)",
-                (dispositivo, nivel, como, agora, sessao_openai))
+                "INSERT INTO sessoes (dispositivo, nivel, como, inicio, sessao_openai, pid) "
+                "VALUES (?,?,?,?,?,?)", (dispositivo, nivel, como, agora, sessao_openai, os.getpid()))
             return int(cursor.lastrowid)
 
     def anotar(self, sid: int, *, sessao_openai: str) -> None:
@@ -71,12 +90,14 @@ class Livro:
                 (agora, max(0.0, float(segundos)), motivo, int(delegacoes), sid))
 
     def fechar_orfas(self, *, agora: float) -> list[dict[str, Any]]:
-        """Fecha o que ficou aberto (processo que caiu) e devolve para o desligamento na OpenAI."""
+        """Fecha o que ficou aberto por processo que caiu e devolve para o
+        desligamento na OpenAI. Sessão de processo vivo não é órfã: é conversa."""
         with closing(self._abrir_banco()) as banco, banco:
-            orfas = [dict(l) for l in banco.execute("SELECT * FROM sessoes WHERE fim IS NULL")]
-            banco.execute(
+            abertas = [dict(l) for l in banco.execute("SELECT * FROM sessoes WHERE fim IS NULL")]
+            orfas = [l for l in abertas if not _de_outro_processo_vivo(l.get("pid"))]
+            banco.executemany(
                 "UPDATE sessoes SET fim = ?, segundos = MAX(0, ? - inicio), motivo = 'orphan_reaped' "
-                "WHERE fim IS NULL", (agora, agora))
+                "WHERE id = ? AND fim IS NULL", [(agora, agora, l["id"]) for l in orfas])
         return orfas
 
     # ── leitura ──────────────────────────────────────────────────────────────
