@@ -111,9 +111,20 @@ amostras, com a correção da câmera instalada no robô.
 
 - **Com a dev7, o robô teria ganhado ~50 MB no mesmo intervalo.** Com a 1.6.0,
   ganhou 1,5 MB nos primeiros 30 min e parou.
-- **Picos de 10 MB no robô:** a cada ~10 min a memória vai a ~125 MB e volta na
-  amostra seguinte (8 vezes nas 2 h). Eles já apareciam na 1ª medição, por cima
-  da subida. É memória usada e devolvida, não acumulada.
+- **Picos de 10 MB no robô:** em 8 das 120 amostras a memória vai a ~125 MB e
+  volta na amostra seguinte. Eles já apareciam na 1ª medição, por cima da subida.
+  - *O que é o pico:* a memória de trabalho de cada quadro JPEG da câmera. O
+    `read_jpeg()` do SDK monta a imagem de 1280×720, faz cópias e a converte
+    para I420. Isso ocupa ~10 MB por ~50 ms e é devolvido ao fim do quadro. Como
+    o app pede um quadro por segundo mesmo ocioso, isso se repete o tempo todo,
+    sem acumular.
+  - *Por que parecia vir "a cada ~10 min":* serrilhado da amostragem, não um
+    ciclo do app. A amostra é tirada uma vez por minuto e só vê o pico quando
+    cai dentro desses ~50 ms. Os relógios da amostragem e da câmera escorregam
+    devagar um em relação ao outro, então esses acertos saíram espaçados de modo
+    quase regular. Os 8 acertos (~7% das amostras) estão perto da fração do tempo
+    em que há um quadro em montagem (~50 ms por segundo, ~5%).
+  - Não é defeito, e não há o que corrigir.
 - **O PC aquece depois de reiniciar.** O companion foi reiniciado na instalação
   da 1.6.0, minutos antes de a medição começar. Na 1ª medição ele já rodava
   havia horas e oscilou entre 76 e 95 MB.
