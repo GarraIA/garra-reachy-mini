@@ -163,7 +163,7 @@ pelo livro de uso do PC, só lendo.
   (`GET /api/robot/hera/status`) não trazia nenhum quase chamado e nenhuma
   última conversa. O livro de uso do PC guarda as conversas e não zera.
 
-## 2. O roteiro com voz humana (falta)
+## 2. O roteiro com voz humana (em andamento)
 
 Precisa de uma pessoa na sala, a 1 m do robô, falando normalmente. Os testes 1,
 2, 5 a 10 abrem sessões pagas (≈ US$ 0,05 por minuto). O roteiro inteiro usa
@@ -184,7 +184,7 @@ da Hera no painel mostra o último chamado e o consumo.
 | # | Roteiro | Aprova se | Resultado |
 |---|---|---|---|
 | 1 | 30× "Hera." (sozinho) e "Oi Hera" a 1 m, em tom normal | ≥ 24 abrem a conversa (três notas subindo) | |
-| 2 | 20× "Oi Hera, <pergunta>" (hora, clima, uma conta) | ≥ 17 respondem à pergunta certa | |
+| 2 | 20× "Oi Hera, <pergunta>" (hora, clima, uma conta) | ≥ 17 respondem à pergunta certa | **Parcial: 10 de 20** (26/11). **10 de 10 certas**, segundo quem perguntou. Só 4 testaram o chamado, e as 4 abriram. Ainda faltam 10 perguntas; detalhes abaixo da tabela |
 | 3 | 15 min de conversa normal na sala, com frases começando por "Era…" | 0 conversas abertas | |
 | 4 | TV ligada por 30 min, robô ouvindo | ≤ 1 conversa aberta | |
 | 5 | 20× falar por cima dela no meio de uma resposta longa | o som dela para em ≤ 0,5 s em ≥ 18 (o log conta `interrupções`) | |
@@ -194,6 +194,47 @@ da Hera no painel mostra o último chamado e o consumo.
 | 9 | "Pare" 20× com o Garra falando e 20× com a Hera falando | 20/20 no Garra; na Hera, anotar quantas pararam | |
 | 10 | Desligar o Wi-Fi do PC (ou do roteador) por 5 s no meio da conversa | ela volta sozinha; com 20 s fora, o robô avisa em ≤ 10 s que caiu e volta a ouvir o chamado | |
 | 11 | "Fala Garra, que horas são?" com a Hera desligada e depois ligada | responde igual nas duas | |
+
+**Teste 2, primeira metade (26/11/2026, 20h34–20h48, app 1.6.1).** A contagem
+veio de três fontes:
+
+- os eventos do robô;
+- o log do companion;
+- os horários da sessão da Hera no Hermes, sem ler o conteúdo.
+
+| Conversa aberta às | Chamado | Perguntas | Fim |
+|---|---|---|---|
+| 20h34min31s | nome com pedido | 7: 1 respondida pela câmera local, 6 pelo Hermes | silêncio, 321 s |
+| 20h42min23s | nome sozinho | 1 | silêncio, 49 s |
+| 20h43min31s | nome com pedido | 1 | silêncio, 49 s |
+| 20h47min07s | nome sozinho | 1 | silêncio, 59 s |
+
+- **As 10 perguntas viraram 10 delegações, todas com resposta.** Uma foi para a
+  câmera: o olho local, no PC, descreveu a imagem em 1,9 s. As outras 9 foram
+  para o Hermes.
+- **As 10 respostas estavam certas**, segundo quem perguntou e ouviu. Os
+  eventos não guardam o que foi dito nem respondido, então esta conferência é
+  só de quem estava na sala.
+- **O teste ainda não está aprovado.** O critério é de 17 em 20, e ainda faltam
+  10 perguntas. Para o chamado contar, as próximas precisam abrir uma conversa
+  nova cada uma: é preciso esperar a anterior fechar por silêncio.
+- **Só 4 das 10 testaram o chamado.** As outras 6 foram feitas dentro da
+  conversa das 20h34, que ainda estava aberta. Com a conversa aberta, "Oi Hera"
+  não é um chamado novo. Os 4 chamados abriram a conversa em ~1 s cada.
+- **Uma fala curta pode ter sido uma tentativa que falhou.** Às 20h41min20s, o
+  robô recusou uma fala de 1 a 3 s, 1 min antes do chamado das 20h42. Os eventos
+  não guardam o texto, então ela não entra na conta.
+- **A demora está no Hermes.** Cada pergunta levou de 10,8 a 40,9 s lá dentro,
+  com mediana de 13,1 s. A maior parte desse tempo é a primeira chamada do
+  modelo, de 6,9 a 36,7 s. As duas mais lentas foram as primeiras da conversa das
+  20h34: 40,9 e 22,8 s.
+- **A troca de modelo ainda não mostra ganho nos números.** Durante a série,
+  quem testou trocou o modelo da sessão no Hermes, tirando o raciocínio e pondo
+  o modo rápido. O Hermes registra um modelo novo às 20h43 e outro às 20h47.
+  - Depois da troca: 11,9 e 12,8 s.
+  - Antes da troca, sem as duas primeiras da conversa das 20h34: de 10,8 a
+    14,9 s.
+  - Duas perguntas depois da troca são pouco para concluir.
 
 O teste 5 é o que mais importa: com o robô falando, o chip de áudio abafa o que
 chega fraco ao microfone (medido, seção 6.1 do spec). Se a voz humana também for
