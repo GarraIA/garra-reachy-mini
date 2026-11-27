@@ -184,7 +184,7 @@ da Hera no painel mostra o último chamado e o consumo.
 | # | Roteiro | Aprova se | Resultado |
 |---|---|---|---|
 | 1 | 30× "Hera." (sozinho) e "Oi Hera" a 1 m, em tom normal | ≥ 24 abrem a conversa (três notas subindo) | |
-| 2 | 20× "Oi Hera, <pergunta>" (hora, clima, uma conta) | ≥ 17 respondem à pergunta certa | **Aprovado: 20 de 20 certas** (26/11, segundo quem perguntou), com ressalvas. Só 5 das 20 abriram conversa nova, e as 5 abriram. Tocar música e pesquisar na internet não saíram como deveriam. Uma pesquisa passou do prazo de 150 s e a resposta se perdeu. Detalhes abaixo da tabela |
+| 2 | 20× "Oi Hera, <pergunta>" (hora, clima, uma conta) | ≥ 17 respondem à pergunta certa | **Aprovado: 20 de 20 certas** (26/11, segundo quem perguntou), com ressalvas. Só 5 das 20 abriram conversa nova, e as 5 abriram. Tocar música e pesquisar na internet não saíram como deveriam. Uma pesquisa passou do prazo de 150 s e a resposta se perdeu (corrigido no companion `88eefef` e provado com voz às 23h09). Detalhes abaixo da tabela |
 | 3 | 15 min de conversa normal na sala, com frases começando por "Era…" | 0 conversas abertas | |
 | 4 | TV ligada por 30 min, robô ouvindo | ≤ 1 conversa aberta | |
 | 5 | 20× falar por cima dela no meio de uma resposta longa | o som dela para em ≤ 0,5 s em ≥ 18 (o log conta `interrupções`) | |
@@ -271,6 +271,28 @@ Passa o critério de 17 em 20.
 
 - O chamado em si foi testado 5 vezes, e as 5 abriram a conversa.
 - A taxa de acerto do chamado fica para o teste 1.
+
+**A pesquisa longa depois da correção (26/11/2026, 23h09–23h11, companion
+`88eefef`, app 1.6.1).** O pedido foi "Oi Hera, pesquisa na internet as notícias
+de hoje sobre inteligência artificial". As fontes são as do teste 2.
+
+| Hora | O que aconteceu |
+|---|---|
+| 23h08min46s | o robô recusou uma fala de 3 a 10 s, sem chamado (o texto não é guardado) |
+| 23h09min20s | o nome sozinho chamou; a conversa abriu em 2 s, e o pedido veio dentro dela |
+| 23h09min27s | o Hermes recebeu a pergunta |
+| 23h09min47s | 20 s depois, o companion registrou "o Hermes passou de 20 s na delegação; a Hera avisa que segue pesquisando" |
+| 23h10min28s | o Hermes terminou: 61 s e 10 ferramentas (leitura de páginas, terminal) |
+| 23h11min28s | a conversa fechou por silêncio: 124 s, 1 delegação, 0 interrupções |
+
+- **A Hera disse "Estou pesquisando, já te digo" e, depois, deu as notícias**,
+  segundo quem perguntou e ouviu. Então o aviso e a resposta, mandados à mesma
+  delegação com quase um minuto de distância, foram os dois falados.
+- **Nada se perdeu.** O log não tem "o Hermes não atendeu a delegação".
+- **O que esta prova não cobre:** a pesquisa levou 61 s, menos que os 150 s do
+  prazo antigo. Uma resposta depois dos 150 s está provada só nos testes
+  automáticos (`tests/test_hera_ponte.py` e `tests/test_hera_canal.py`), não com
+  voz.
 
 O teste 5 é o que mais importa: com o robô falando, o chip de áudio abafa o que
 chega fraco ao microfone (medido, seção 6.1 do spec). Se a voz humana também for
