@@ -184,7 +184,7 @@ da Hera no painel mostra o último chamado e o consumo.
 | # | Roteiro | Aprova se | Resultado |
 |---|---|---|---|
 | 1 | 30× "Hera." (sozinho) e "Oi Hera" a 1 m, em tom normal | ≥ 24 abrem a conversa (três notas subindo) | |
-| 2 | 20× "Oi Hera, <pergunta>" (hora, clima, uma conta) | ≥ 17 respondem à pergunta certa | **Parcial: 10 de 20** (26/11). **10 de 10 certas**, segundo quem perguntou. Só 4 testaram o chamado, e as 4 abriram. Ainda faltam 10 perguntas; detalhes abaixo da tabela |
+| 2 | 20× "Oi Hera, <pergunta>" (hora, clima, uma conta) | ≥ 17 respondem à pergunta certa | **Aprovado: 20 de 20 certas** (26/11, segundo quem perguntou), com ressalvas. Só 5 das 20 abriram conversa nova, e as 5 abriram. Tocar música e pesquisar na internet não saíram como deveriam. Uma pesquisa passou do prazo de 150 s e a resposta se perdeu. Detalhes abaixo da tabela |
 | 3 | 15 min de conversa normal na sala, com frases começando por "Era…" | 0 conversas abertas | |
 | 4 | TV ligada por 30 min, robô ouvindo | ≤ 1 conversa aberta | |
 | 5 | 20× falar por cima dela no meio de uma resposta longa | o som dela para em ≤ 0,5 s em ≥ 18 (o log conta `interrupções`) | |
@@ -215,9 +215,8 @@ veio de três fontes:
 - **As 10 respostas estavam certas**, segundo quem perguntou e ouviu. Os
   eventos não guardam o que foi dito nem respondido, então esta conferência é
   só de quem estava na sala.
-- **O teste ainda não está aprovado.** O critério é de 17 em 20, e ainda faltam
-  10 perguntas. Para o chamado contar, as próximas precisam abrir uma conversa
-  nova cada uma: é preciso esperar a anterior fechar por silêncio.
+- **Ao fim desta metade, faltavam 10 perguntas** para o critério de 17 em 20.
+  Elas estão na segunda metade, logo abaixo.
 - **Só 4 das 10 testaram o chamado.** As outras 6 foram feitas dentro da
   conversa das 20h34, que ainda estava aberta. Com a conversa aberta, "Oi Hera"
   não é um chamado novo. Os 4 chamados abriram a conversa em ~1 s cada.
@@ -235,6 +234,43 @@ veio de três fontes:
   - Antes da troca, sem as duas primeiras da conversa das 20h34: de 10,8 a
     14,9 s.
   - Duas perguntas depois da troca são pouco para concluir.
+
+**Teste 2, segunda metade (26/11/2026, 21h28–21h36, app 1.6.1).** As fontes são
+as mesmas da primeira metade.
+
+- **As 10 perguntas couberam numa conversa só.** O chamado das 21h28min36s (o
+  nome com o pedido) abriu a conversa em 2 s. Ela terminou por silêncio às
+  21h36min16s, depois de 457 s, com 8 delegações e 1 interrupção.
+  - A ideia era esperar cada conversa fechar entre uma pergunta e outra.
+  - Só que o fim por silêncio pede 30 s seguidos sem fala (`live_idle_close_s`),
+    e isso não aconteceu entre as perguntas.
+- **As 10 respostas estavam certas**, segundo quem perguntou.
+- **Tocar música e pesquisar na internet não saíram como deveriam**, também
+  segundo quem perguntou.
+- **Uma pesquisa passou do prazo, e a resposta se perdeu.**
+  - O Hermes levou 206 s numa delegação que procurou arquivos e leu páginas da
+    web.
+  - O companion espera até 150 s por delegação (`PRAZO_TURNO_S`). Aos 150 s,
+    registrou "o Hermes não atendeu a delegação (unreachable)".
+  - Quando a resposta ficou pronta, a ponte achou a conexão já fechada
+    (`BrokenPipeError`) e a descartou.
+  - O motivo registrado é `unreachable`, mas o que houve foi tempo esgotado.
+- **As perguntas ficaram mais rápidas no Hermes.** Esta metade rodou inteira com
+  o modelo novo.
+  - Aqui, as quatro mais rápidas levaram de 6,3 a 9,0 s. As outras duas que
+    voltaram dentro do prazo levaram 16,4 e 42,5 s.
+  - Na primeira metade, as mais rápidas levaram de 10,8 a 14,9 s. Isso inclui as
+    duas feitas já com o modelo novo: 11,9 e 12,8 s.
+  - Por isso, não dá para atribuir o ganho só ao modelo. Outro fator possível são
+    as perguntas seguidas numa mesma conversa.
+- **Uma fala curta foi recusada às 21h28min10s**, 26 s antes do chamado. Os
+  eventos não guardam o texto, então ela não entra na conta.
+
+**Resultado do teste 2: 20 de 20 respostas certas, segundo quem perguntou.**
+Passa o critério de 17 em 20.
+
+- O chamado em si foi testado 5 vezes, e as 5 abriram a conversa.
+- A taxa de acerto do chamado fica para o teste 1.
 
 O teste 5 é o que mais importa: com o robô falando, o chip de áudio abafa o que
 chega fraco ao microfone (medido, seção 6.1 do spec). Se a voz humana também for
