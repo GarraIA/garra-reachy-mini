@@ -129,6 +129,40 @@ amostras, com a correção da câmera instalada no robô.
   da 1.6.0, minutos antes de a medição começar. Na 1ª medição ele já rodava
   havia horas e oscilou entre 76 e 95 MB.
 
+### Depois de tirar o robô da tomada (app 1.6.1, 26/11/2026, 20h26–20h32)
+
+O robô foi tirado da tomada, desligou e foi religado. Depois, uma pessoa disse
+"Oi Hera, que horas são?" perto dele. Tudo foi conferido pelos eventos do robô e
+pelo livro de uso do PC, só lendo.
+
+**A volta, sem ninguém mexer:**
+
+- O robô ligou às 20h26min08s.
+- O app não sobe junto com o robô. Às 20h26min56s, o vigia do PC viu o robô de
+  volta sem o app e o iniciou.
+- A versão instalada continuou a 1.6.1.
+- O pareamento com o PC continuou valendo, sem erro.
+- A configuração da Hera ficou como estava: ligada, rigor estrito, mesmas frases.
+
+**O chamado: aprovado nesta tentativa.**
+
+| Hora | O robô |
+|---|---|
+| 20h27–20h30 | 5 falas sem chamado, recusadas como fala sem frase de ativação |
+| 20h30min52s | chamado reconhecido: o nome com o pedido junto (`leading`) |
+| 20h30min54s | conversa aberta, 2 s depois |
+| 20h32min18s | fim por silêncio (`idle`), depois de 83 s |
+
+- **A Hera disse a hora certa.** Quem falou confirmou. Os eventos não guardam o
+  que foi dito nem respondido, então isso não aparece neles.
+- **O livro do PC bate com o robô:** 83 s, fim por silêncio.
+- **É uma tentativa avulsa.** Mostra que a Hera volta inteira depois de faltar
+  energia, mas não é taxa de acerto e não conta como o teste 2 do roteiro abaixo.
+- **O histórico de eventos do robô zera ao religar.** Ele fica só na memória. Por
+  isso, logo depois da volta, o status da Hera no robô
+  (`GET /api/robot/hera/status`) não trazia nenhum quase chamado e nenhuma
+  última conversa. O livro de uso do PC guarda as conversas e não zera.
+
 ## 2. O roteiro com voz humana (falta)
 
 Precisa de uma pessoa na sala, a 1 m do robô, falando normalmente. Os testes 1,
