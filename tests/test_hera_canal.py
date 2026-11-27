@@ -83,7 +83,7 @@ class PonteFalsa:
         self.sessoes.append((oferta, historico))
         return ponte_hera.Sessao("sess_teste", "RESPOSTA")
 
-    def turno(self, conversa, texto, contexto=""):
+    def turno(self, conversa, texto, contexto="", *, cancelamento=None):
         self.turnos.append((conversa, texto))
         self.contextos.append(contexto)
         if self.falha:
@@ -279,7 +279,7 @@ def test_o_silencio_nao_encerra_enquanto_o_hermes_trabalha():
     async def cena():
         lento = PonteFalsa()
 
-        def turno_lento(conversa_id, texto, contexto=""):
+        def turno_lento(conversa_id, texto, contexto="", *, cancelamento=None):
             import time
             time.sleep(1.2)                        # mais que o silêncio de 0,6 s
             return ponte_hera.Turno("Pronto.", 1200)
@@ -296,6 +296,132 @@ def test_o_silencio_nao_encerra_enquanto_o_hermes_trabalha():
         return await tarefa
 
     assert asyncio.run(cena())["motivo"] == "robot_stop"
+
+
+# ─── pesquisa que demora ─────────────────────────────────────────────────────
+# 26/11/2026: uma pesquisa na web levou 206 s no Hermes. O companion desistia aos
+# 150 s, a Hera dizia que não conseguiu, e a resposta pronta se perdia.
+def _falas(par, ident="d1"):
+    return [e["content"] for e in par.enviados
+            if e["type"] == "session.commentary.append" and e["delegation_id"] == ident]
+
+
+def test_pesquisa_que_demora_ganha_um_aviso_falado_e_a_resposta_chega_depois(monkeypatch):
+    monkeypatch.setattr(canal, "AVISO_DEMORA_S", 0.3)
+
+    async def cena():
+        lento = PonteFalsa()
+        liberar = __import__("threading").Event()
+
+        def turno_lento(conversa_id, texto, contexto="", *, cancelamento=None):
+            liberar.wait(3)
+            return ponte_hera.Turno("Achei: o show é sábado.", 206000)
+
+        lento.turno = turno_lento
+        c, _ = conversa(lento)
+        tarefa, par = await comecar(c)
+        par.evento(type="session.input_transcript.delta", delta="pesquisa o show")
+        par.evento(type="session.delegation.created", delegation={"id": "d1"})
+        assert await esperar(lambda: _falas(par) == [canal.PESQUISANDO])
+        await asyncio.sleep(0.8)                   # mais que o silêncio de 0,6 s
+        assert not tarefa.done(), "fechou com o Hermes ainda pesquisando"
+        assert _falas(par) == [canal.PESQUISANDO], "o aviso sai uma vez só"
+        liberar.set()
+        assert await esperar(lambda: len(_falas(par)) == 2)
+        c.parar("robot_stop")
+        await tarefa
+        return par
+
+    assert _falas(asyncio.run(cena())) == [canal.PESQUISANDO, "Achei: o show é sábado."]
+
+
+def test_o_aviso_e_o_que_foi_pedido():
+    assert canal.PESQUISANDO == "Estou pesquisando, já te digo."
+
+
+def test_resposta_que_chega_antes_do_aviso_vai_sozinha(monkeypatch):
+    monkeypatch.setattr(canal, "AVISO_DEMORA_S", 0.3)
+
+    async def cena():
+        c, _ = conversa(PonteFalsa())
+        tarefa, par = await comecar(c)
+        par.evento(type="session.input_transcript.delta", delta="que horas são?")
+        par.evento(type="session.delegation.created", delegation={"id": "d1"})
+        assert await esperar(lambda: _falas(par))
+        await asyncio.sleep(0.5)
+        c.parar("robot_stop")
+        await tarefa
+        return par
+
+    assert _falas(asyncio.run(cena())) == ["São dez horas."]
+
+
+def test_conversa_que_acaba_no_meio_da_pesquisa_cancela_o_turno():
+    import threading
+    import time
+
+    async def cena():
+        preso = PonteFalsa()
+        recebidos, voltou = [], threading.Event()
+
+        def turno_preso(conversa_id, texto, contexto="", *, cancelamento=None):
+            recebidos.append(cancelamento)
+            fim = time.monotonic() + 5
+            while not cancelamento.cancelado and time.monotonic() < fim:
+                time.sleep(0.01)
+            voltou.set()
+            raise ponte_hera.ErroDaPonte("cancelled")
+
+        preso.turno = turno_preso
+        c, _ = conversa(preso)
+        tarefa, par = await comecar(c)
+        par.evento(type="session.input_transcript.delta", delta="pesquisa isso")
+        par.evento(type="session.delegation.created", delegation={"id": "d1"})
+        assert await esperar(lambda: recebidos)
+        c.parar("stop")
+        fim = await tarefa
+        assert await esperar(voltou.is_set, 1.0), "a thread do turno ficou presa depois do fim"
+        return fim, recebidos, par
+
+    fim, recebidos, par = asyncio.run(cena())
+    assert fim["motivo"] == "stop"
+    assert isinstance(recebidos[0], ponte_hera.Cancelamento) and recebidos[0].cancelado
+    assert canal.FALHA_DO_HERMES not in _falas(par)
+
+
+def test_tempo_esgotado_aparece_assim_no_registro(caplog):
+    async def cena():
+        c, _ = conversa(PonteFalsa(falha=ponte_hera.ErroDaPonte("timeout", "1800 s")))
+        tarefa, par = await comecar(c)
+        par.evento(type="session.input_transcript.delta", delta="pesquisa isso")
+        par.evento(type="session.delegation.created", delegation={"id": "d1"})
+        assert await esperar(lambda: _falas(par))
+        c.parar("robot_stop")
+        await tarefa
+        return par
+
+    with caplog.at_level("INFO", logger=canal.log.name):
+        par = asyncio.run(cena())
+    assert _falas(par) == [canal.FALHA_DO_HERMES]
+    linhas = [r.getMessage() for r in caplog.records if "delegação" in r.getMessage()]
+    assert linhas and all("tempo esgotado" in linha for linha in linhas)
+    assert not any("unreachable" in linha or "timeout" in linha for linha in linhas)
+
+
+def test_sessao_que_nao_abre_no_prazo_e_indisponivel_para_o_robo():
+    # O robô conhece "unavailable"; "timeout" é palavra só do computador.
+    class SemSessao(PonteFalsa):
+        def sessao(self, oferta, historico=None):
+            raise ponte_hera.ErroDaPonte("timeout", "50 s")
+
+    async def cena():
+        c, robo = conversa(SemSessao())
+        fim = await asyncio.wait_for(c.conduzir(), 4)
+        return fim, robo
+
+    fim, robo = asyncio.run(cena())
+    assert fim["motivo"] == "unavailable"
+    assert robo.json[-1]["motivo"] == "unavailable"
 
 
 def test_teto_da_conversa_nunca_renova():
@@ -630,7 +756,7 @@ def test_resposta_do_hermes_da_sessao_que_caiu_nao_vai_para_a_nova():
         lento = PonteFalsa()
         liberar = __import__("threading").Event()
 
-        def turno_lento(conversa_id, texto, contexto=""):
+        def turno_lento(conversa_id, texto, contexto="", *, cancelamento=None):
             liberar.wait(3)
             return ponte_hera.Turno("Pronto.", 100)
 

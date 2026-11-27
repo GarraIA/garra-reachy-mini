@@ -1,5 +1,27 @@
 # Changelog
 
+## Não lançado
+
+Só no computador: o app do robô não muda.
+
+### Fixed
+
+- **Pesquisa longa da Hera não se perde mais.** O companion esperava um turno
+  do Hermes por no máximo 150 s. No teste 2 do roteiro (26/11/2026), uma
+  pesquisa na web levou 206 s: aos 150 s a Hera disse que não conseguiu, e a
+  resposta pronta foi descartada. Agora o turno dura o que o Hermes precisar,
+  dentro da conversa. Passando de 20 s, a Hera avisa uma vez, em voz alta,
+  "Estou pesquisando, já te digo.", e a resposta sai quando chegar. O silêncio
+  não fecha a conversa enquanto o Hermes trabalha. Quem limita a espera é o
+  teto da conversa (`session_max_s`); quando ela acaba, por teto, "pare" ou
+  despedida, o turno é cancelado (`ponte_hera.Cancelamento`), e a thread que
+  esperava volta na hora. O prazo de `PRAZO_TURNO_S` passou a 1800 s e virou
+  só uma rede de segurança.
+- **O registro diz "tempo esgotado", não "unreachable".** A ponte que recebe o
+  pedido e não responde no prazo agora dá o código `timeout`, separado de
+  `unreachable` (não deu para falar com ela). Para o robô, uma sessão que não
+  abre no prazo continua `unavailable`.
+
 ## 1.6.1 — 2026-11-26
 
 ### Added

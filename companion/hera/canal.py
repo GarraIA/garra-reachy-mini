@@ -45,7 +45,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from . import comandos, credencial, livro as livro_mod, olhar, registro as registro_mod
 from . import sentinela as sentinela_mod
-from .ponte_hera import ErroDaPonte, PonteHera
+from .ponte_hera import Cancelamento, ErroDaPonte, PonteHera
 
 log = logging.getLogger(__name__)
 
@@ -148,6 +148,13 @@ def agora_local(momento: float | None = None) -> str:
             f"{lt.tm_hour:02d}:{lt.tm_min:02d} ({time.strftime('%Z', lt)}).")
 NAO_OUVI = "Não consegui ouvir a pergunta. Pode repetir?"
 PENSANDO = "Consultando."
+# Um turno do Hermes não tem prazo curto: uma pesquisa na web levou 206 s
+# (26/11/2026). Passando disto, a Hera avisa uma vez, em voz alta, e a resposta
+# sai quando chegar. As perguntas comuns levaram de 6 a 41 s.
+AVISO_DEMORA_S = 20.0
+PESQUISANDO = "Estou pesquisando, já te digo."
+# Como uma falha da ponte aparece no registro. O código cru fica para o resto.
+_FALHA_NO_REGISTRO = {"timeout": "tempo esgotado"}
 PEDACO_MAX = 1400              # por `session.commentary.append` (≤ 500 tokens)
 SEGMENTO_S = 1.2               # pausa entre deltas que separa um trecho do outro
 CONFIRMAR_COMANDO_S = 0.7      # um "pare" só vale se a frase acabou ali
@@ -545,10 +552,9 @@ class Conversa:
             if ver:
                 resposta = await self._olhar(texto)
             else:
-                turno = await asyncio.to_thread(self._ponte.turno, self._id, texto, agora_local())
-                resposta = turno.texto.strip() or FALHA_DO_HERMES
+                resposta = await self._perguntar_ao_hermes(texto, ident, par)
         except ErroDaPonte as erro:
-            log.info("o Hermes não atendeu a delegação (%s)", erro.codigo)
+            log.info("o Hermes não atendeu a delegação (%s)", _FALHA_NO_REGISTRO.get(erro.codigo, erro.codigo))
             resposta = FALHA_DO_HERMES
         except Exception:
             log.exception("a delegação ao Hermes falhou")
@@ -562,6 +568,28 @@ class Conversa:
             return
         for pedaco in pedacos(resposta):
             par.enviar({"type": "session.commentary.append", "delegation_id": ident, "content": pedaco})
+
+    async def _perguntar_ao_hermes(self, texto: str, ident: str, par: Any) -> str:
+        """O turno no Hermes, sem prazo curto: dura o que a pesquisa durar, dentro
+        da conversa. Passando de `AVISO_DEMORA_S`, ela avisa uma vez que segue
+        pesquisando. Se a conversa acaba antes, o turno é cancelado e a thread
+        que esperava volta na hora."""
+        cancelamento = Cancelamento()
+        trabalho = asyncio.ensure_future(asyncio.to_thread(
+            self._ponte.turno, self._id, texto, agora_local(), cancelamento=cancelamento))
+        try:
+            pronto, _ = await asyncio.wait({trabalho}, timeout=AVISO_DEMORA_S)
+            if not pronto and self._par is par:
+                log.info("o Hermes passou de %.0f s na delegação; a Hera avisa que segue pesquisando",
+                         AVISO_DEMORA_S)
+                for pedaco in pedacos(PESQUISANDO):
+                    par.enviar({"type": "session.commentary.append", "delegation_id": ident, "content": pedaco})
+            turno = await trabalho
+        except asyncio.CancelledError:
+            cancelamento.cancelar()
+            trabalho.cancel()
+            raise
+        return turno.texto.strip() or FALHA_DO_HERMES
 
     async def _olhar(self, pergunta: str) -> str:
         """UM quadro do robô, descrito aqui. Devolve o que ela vai falar — a
@@ -660,7 +688,8 @@ class Conversa:
                     break
                 await asyncio.sleep(0.05)
         except ErroDaPonte as erro:
-            motivo = erro.codigo
+            # "timeout" é palavra só do computador; o robô conhece "unavailable".
+            motivo = "unavailable" if erro.codigo == "timeout" else erro.codigo
         except asyncio.TimeoutError:
             motivo = "unavailable"
         except Exception:
